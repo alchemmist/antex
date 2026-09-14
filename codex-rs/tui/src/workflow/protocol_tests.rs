@@ -63,3 +63,19 @@ fn supports_month_long_persistent_workflows() {
         Err("max_agent_calls must be between 1 and 50000".to_string())
     );
 }
+
+#[test]
+fn model_fields_preserve_selected_identifiers_and_validate_defaults() {
+    let mut field: WorkflowField = serde_json::from_value(json!({
+        "id": "reviewer", "label": "Reviewer", "type": "model", "default": "custom-model"
+    }))
+    .expect("field");
+    assert!(field.uses_model_picker());
+    assert_eq!(field.validate(), Ok(()));
+    assert_eq!(field.parse_answer(""), Ok(json!("")));
+    assert_eq!(field.parse_answer("model-id"), Ok(json!("model-id")));
+    field.required = true;
+    assert!(field.parse_answer("").is_err());
+    field.default = Some(json!(42));
+    assert!(field.validate().is_err());
+}

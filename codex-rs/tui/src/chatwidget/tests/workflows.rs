@@ -136,3 +136,58 @@ async fn workflow_agent_activity_status_snapshot() {
         render_bottom_popup(&chat, /*width*/ 96)
     );
 }
+
+#[tokio::test]
+async fn workflow_model_picker_uses_catalog_for_legacy_and_model_fields() {
+    for (id, kind) in [
+        ("model", "text"),
+        ("worker_model", "text"),
+        ("reviewer", "model"),
+    ] {
+        let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.4")).await;
+        set_fast_mode_test_catalog(&mut chat);
+        let field = serde_json::from_value(json!({
+            "id": id, "label": "Model", "type": kind, "default": ""
+        }))
+        .expect("field");
+        chat.show_workflow_field("Demo", &field, 0, 1);
+        if id == "model" {
+            assert_chatwidget_snapshot!("workflow_model_picker", render_bottom_popup(&chat, 90));
+        }
+        chat.handle_key_event(KeyCode::Down.into());
+        chat.handle_key_event(KeyCode::Enter.into());
+        let answer = match rx.try_recv().expect("model selection") {
+            AppEvent::WorkflowFieldAnswered(answer) => answer,
+            _ => panic!("expected workflow answer"),
+        };
+        assert!(
+            chat.model_catalog
+                .try_list_models()
+                .expect("catalog")
+                .iter()
+                .any(|model| model.show_in_picker && model.model == answer)
+        );
+        assert_eq!(chat.current_model(), "gpt-5.4");
+    }
+}
+
+#[tokio::test]
+async fn workflow_model_picker_preserves_custom_default_and_optional_inheritance() {
+    for (required, inherit) in [(true, false), (false, false), (false, true)] {
+        let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.4")).await;
+        let field = serde_json::from_value(json!({
+            "id": "worker_model", "label": "Worker", "type": "text",
+            "default": "custom-workflow-model", "required": required
+        }))
+        .expect("field");
+        chat.show_workflow_field("Demo", &field, 0, 1);
+        if inherit {
+            for ch in "Use current Codex model".chars() {
+                chat.handle_key_event(KeyCode::Char(ch).into());
+            }
+        }
+        chat.handle_key_event(KeyCode::Enter.into());
+        assert_matches!(rx.try_recv(), Ok(AppEvent::WorkflowFieldAnswered(answer))
+            if answer == if inherit { "" } else { "custom-workflow-model" });
+    }
+}

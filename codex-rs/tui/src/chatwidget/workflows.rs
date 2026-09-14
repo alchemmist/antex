@@ -94,7 +94,12 @@ impl ChatWidget {
             total,
             field.label
         );
+        if field.uses_model_picker() {
+            self.show_workflow_model_picker(title, field);
+            return;
+        }
         match &field.kind {
+            WorkflowFieldKind::Model => unreachable!("model fields use the model picker"),
             WorkflowFieldKind::Text { placeholder } => {
                 self.show_workflow_text_field(
                     title,

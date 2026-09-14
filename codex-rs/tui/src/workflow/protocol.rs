@@ -49,6 +49,7 @@ pub(crate) struct WorkflowField {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum WorkflowFieldKind {
+    Model,
     Text {
         #[serde(default)]
         placeholder: String,
@@ -151,6 +152,12 @@ impl WorkflowManifest {
 }
 
 impl WorkflowField {
+    pub(crate) fn uses_model_picker(&self) -> bool {
+        matches!(self.kind, WorkflowFieldKind::Model)
+            || (matches!(self.kind, WorkflowFieldKind::Text { .. })
+                && (self.id == "model" || self.id.ends_with("_model")))
+    }
+
     fn validate(&self) -> Result<(), String> {
         match &self.kind {
             WorkflowFieldKind::Text { placeholder } => {
@@ -159,6 +166,18 @@ impl WorkflowField {
                     && !default.is_string()
                 {
                     return Err(format!("text field `{}` has a non-string default", self.id));
+                }
+            }
+            WorkflowFieldKind::Model => {
+                if self
+                    .default
+                    .as_ref()
+                    .is_some_and(|value| !value.is_string())
+                {
+                    return Err(format!(
+                        "model field `{}` has a non-string default",
+                        self.id
+                    ));
                 }
             }
             WorkflowFieldKind::Integer { min, max } => {
@@ -228,7 +247,7 @@ impl WorkflowField {
 
     pub(crate) fn parse_answer(&self, answer: &str) -> Result<Value, String> {
         match &self.kind {
-            WorkflowFieldKind::Text { .. } => {
+            WorkflowFieldKind::Text { .. } | WorkflowFieldKind::Model => {
                 if self.required && answer.trim().is_empty() {
                     return Err(format!("{} is required", self.label));
                 }

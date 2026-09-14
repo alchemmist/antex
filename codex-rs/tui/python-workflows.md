@@ -90,3 +90,20 @@ outside the current workspace, and snapshots the Python source into every run di
 Workflow files are trusted local code. Python itself is not sandboxed and can call arbitrary Python
 or operating-system APIs, so Rust guardrails constrain the `ctx` API but are not a security boundary.
 Only install or run workflows whose source you trust.
+
+Bot PR maintenance returns a compact summary with a `status` of `completed` or
+`needs_user` and a `report_path`. Its full per-repository results remain in the
+checkpoint. The adjacent `workflow.report.md` lists merged/fixed PRs, skipped
+candidates, execution errors, and human blockers with a PR link and next action.
+Confirmed human blockers do not fail the workflow or trigger another repair
+attempt. Invalid reports and unresolved execution errors still fail the run, with
+the report saved before the error is returned. Existing run snapshots keep their
+original behavior; start a new run to use an updated workflow.
+
+Model fields use `"type": "model"` to display a searchable list from the current
+Codex model catalog. Optional model fields include “Use current Codex model”,
+which stores an empty string. Required fields require an explicit selection.
+A configured workflow default remains selectable even if absent from the catalog.
+For existing workflows, text fields named `model` or ending in `_model` use the
+same picker automatically. Other text fields and explicit select options are
+unchanged. Selecting a workflow model does not change the main chat's model.
