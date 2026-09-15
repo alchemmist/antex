@@ -1,0 +1,20 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "antex-context-fragments"
+version.workspace = true
+
+[lib]
+name = "antex_context_fragments"
+path = "src/lib.rs"
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+antex-protocol = { workspace = true }
+antex-utils-string = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }

@@ -233,7 +233,7 @@ def test_shipping_legacy_registration_preserves_the_reserved_protocol_environmen
         "add",
         "mcp_spec_fixture",
         "--env",
-        f"CODEX_MCP_PROTOCOL_VERSION={LEGACY_ENVIRONMENT_SENTINEL}",
+        f"ANTEX_MCP_PROTOCOL_VERSION={LEGACY_ENVIRONMENT_SENTINEL}",
         "--",
         sys.executable,
         "/src/server.py",
@@ -256,7 +256,7 @@ def test_modern_registration_explicitly_opts_into_the_modern_protocol() -> None:
         http_url=None,
     )
 
-    assert f"CODEX_MCP_PROTOCOL_VERSION={MODERN_VERSION}" in command
+    assert f"ANTEX_MCP_PROTOCOL_VERSION={MODERN_VERSION}" in command
 
 
 def test_http_review_registration_requires_a_real_fixture_url() -> None:
@@ -286,7 +286,7 @@ def test_review_cli_supports_the_real_shipping_protocol_and_json_report() -> Non
     assert args.report == Path("/tmp/mcp-review-regressions.json")
 
 
-def test_review_cli_reports_a_missing_codex_binary(
+def test_review_cli_reports_a_missing_antex_binary(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     assert main(["/path/to/nonexistent-review-codex"]) == 2
@@ -570,7 +570,7 @@ def test_review_matrix_appends_all_transport_catalog_boundaries(
     observed: list[tuple[str, str, str]] = []
 
     def fake_run_review_case(
-        codex_binary: Path,
+        antex_binary: Path,
         server_script: Path,
         *,
         mode: str,

@@ -1,0 +1,8 @@
+---
+source: tui/src/chatwidget/tests/plan_mode.rs
+assertion_line: 865
+expression: popup
+---
+ ┃ Ask Antex to do anything
+
+  gpt-5 medium · /tmp/project                   Plan mode (shift+tab to cycle)

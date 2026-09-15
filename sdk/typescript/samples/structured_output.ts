@@ -1,10 +1,10 @@
 #!/usr/bin/env -S NODE_NO_WARNINGS=1 pnpm ts-node-esm --files
 
-import { Codex } from "@openai/codex-sdk";
+import { Antex } from "@alchemmist/antex-sdk";
 
-import { codexPathOverride } from "./helpers.ts";
+import { antexPathOverride } from "./helpers.ts";
 
-const codex = new Codex({ codexPathOverride: codexPathOverride() });
+const codex = new Antex({ antexPathOverride: antexPathOverride() });
 
 const thread = codex.startThread();
 

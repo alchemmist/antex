@@ -4,6 +4,7 @@ import argparse
 import importlib
 import importlib.metadata
 import json
+import os
 import platform
 import re
 import shutil
@@ -21,12 +22,14 @@ _SDK_PYTHON_ROOT = str(Path(__file__).resolve().parents[1])
 if _SDK_PYTHON_ROOT not in sys.path:
     sys.path.insert(0, _SDK_PYTHON_ROOT)
 
-from release_version import normalize_codex_version  # noqa: E402
+from release_version import normalize_antex_version  # noqa: E402
 
-SDK_DISTRIBUTION_NAME = "openai-codex"
-RUNTIME_DISTRIBUTION_NAME = "openai-codex-cli-bin"
-RUNTIME_PACKAGE_ROOT = Path("src") / "codex_cli_bin"
-CODEX_PACKAGE_METADATA = "codex-package.json"
+SDK_DISTRIBUTION_NAME = "antex-sdk"
+RUNTIME_DISTRIBUTION_NAME = "antex-cli-bin"
+SCHEMA_RUNTIME_DISTRIBUTION_NAME = "openai-codex-cli-bin"
+SCHEMA_RUNTIME_VERSION = "0.147.0"
+RUNTIME_PACKAGE_ROOT = Path("src") / "antex_cli_bin"
+ANTEX_PACKAGE_METADATA = "antex-package.json"
 
 
 def repo_root() -> Path:
@@ -56,11 +59,11 @@ def _is_windows() -> bool:
 
 
 def runtime_binary_name() -> str:
-    return "codex.exe" if _is_windows() else "codex"
+    return "antex.exe" if _is_windows() else "antex"
 
 
 def runtime_code_mode_host_name() -> str:
-    return "codex-code-mode-host.exe" if _is_windows() else "codex-code-mode-host"
+    return "antex-code-mode-host.exe" if _is_windows() else "antex-code-mode-host"
 
 
 def staged_runtime_package_root(root: Path) -> Path:
@@ -102,24 +105,24 @@ def pinned_runtime_version() -> str:
             f"Expected exactly one {RUNTIME_DISTRIBUTION_NAME} dependency pin "
             "in sdk/python/pyproject.toml"
         )
-    return normalize_codex_version(pins[0])
+    return normalize_antex_version(pins[0])
 
 
-def pinned_runtime_codex_path() -> Path:
-    """Return the bundled Codex binary from the installed pinned runtime wheel."""
-    expected_version = pinned_runtime_version()
+def pinned_schema_runtime_binary_path() -> Path:
+    """Return the bundled Antex binary from the installed pinned runtime wheel."""
+    expected_version = SCHEMA_RUNTIME_VERSION
     try:
-        installed_version = importlib.metadata.version(RUNTIME_DISTRIBUTION_NAME)
+        installed_version = importlib.metadata.version(SCHEMA_RUNTIME_DISTRIBUTION_NAME)
     except importlib.metadata.PackageNotFoundError as exc:
         raise RuntimeError(
-            f"Install {RUNTIME_DISTRIBUTION_NAME}=={expected_version} before "
+            f"Install {SCHEMA_RUNTIME_DISTRIBUTION_NAME}=={expected_version} before "
             "generating Python SDK types."
         ) from exc
 
-    normalized_installed_version = normalize_codex_version(installed_version)
+    normalized_installed_version = normalize_antex_version(installed_version)
     if normalized_installed_version != expected_version:
         raise RuntimeError(
-            f"Expected {RUNTIME_DISTRIBUTION_NAME}=={expected_version}, "
+            f"Expected {SCHEMA_RUNTIME_DISTRIBUTION_NAME}=={expected_version}, "
             f"but found {installed_version}."
         )
 
@@ -127,13 +130,13 @@ def pinned_runtime_codex_path() -> Path:
         from codex_cli_bin import bundled_codex_path
     except ImportError as exc:
         raise RuntimeError(
-            f"Installed {RUNTIME_DISTRIBUTION_NAME} package does not expose bundled_codex_path."
+            f"Installed {SCHEMA_RUNTIME_DISTRIBUTION_NAME} package does not expose bundled_codex_path."
         ) from exc
 
-    codex_path = bundled_codex_path()
-    if not codex_path.exists():
-        raise RuntimeError(f"Pinned Codex runtime binary not found at {codex_path}.")
-    return codex_path
+    antex_path = bundled_codex_path()
+    if not antex_path.exists():
+        raise RuntimeError(f"Pinned Antex runtime binary not found at {antex_path}.")
+    return antex_path
 
 
 def _copy_package_tree(src: Path, dst: Path) -> None:
@@ -211,9 +214,9 @@ def _rewrite_project_name(pyproject_text: str, name: str) -> str:
 
 
 def stage_python_sdk_package(staging_dir: Path, sdk_version: str) -> Path:
-    package_version = normalize_codex_version(sdk_version)
+    package_version = normalize_antex_version(sdk_version)
     _copy_package_tree(sdk_root(), staging_dir)
-    sdk_bin_dir = staging_dir / "src" / "openai_codex" / "bin"
+    sdk_bin_dir = staging_dir / "src" / "antex_sdk" / "bin"
     if sdk_bin_dir.exists():
         shutil.rmtree(sdk_bin_dir)
 
@@ -231,7 +234,7 @@ def stage_python_runtime_package(
     package_archive: Path,
     platform_tag: str | None = None,
 ) -> Path:
-    package_version = normalize_codex_version(codex_version)
+    package_version = normalize_antex_version(codex_version)
     _copy_package_tree(python_runtime_root(), staging_dir)
 
     pyproject_path = staging_dir / "pyproject.toml"
@@ -242,13 +245,13 @@ def stage_python_runtime_package(
         pyproject_text = _rewrite_runtime_platform_tag(pyproject_text, platform_tag)
     pyproject_path.write_text(pyproject_text)
 
-    _extract_codex_package_archive(package_archive, staged_runtime_package_root(staging_dir))
+    _extract_antex_package_archive(package_archive, staged_runtime_package_root(staging_dir))
     return staging_dir
 
 
-def _extract_codex_package_archive(package_archive: Path, runtime_package_root: Path) -> None:
+def _extract_antex_package_archive(package_archive: Path, runtime_package_root: Path) -> None:
     if not package_archive.name.endswith(".tar.gz"):
-        raise RuntimeError(f"Expected a .tar.gz Codex package archive: {package_archive}")
+        raise RuntimeError(f"Expected a .tar.gz Antex package archive: {package_archive}")
 
     runtime_package_root.mkdir(parents=True, exist_ok=True)
     with tarfile.open(package_archive, "r:gz") as archive:
@@ -257,14 +260,14 @@ def _extract_codex_package_archive(package_archive: Path, runtime_package_root: 
         except TypeError:
             archive.extractall(runtime_package_root)
 
-    _validate_codex_package_layout(runtime_package_root, package_archive)
+    _validate_antex_package_layout(runtime_package_root, package_archive)
 
 
-def _validate_codex_package_layout(package_dir: Path, package_archive: Path) -> None:
+def _validate_antex_package_layout(package_dir: Path, package_archive: Path) -> None:
     missing_entries = []
-    if not (package_dir / CODEX_PACKAGE_METADATA).is_file():
-        missing_entries.append(CODEX_PACKAGE_METADATA)
-    for entry in ("bin", "codex-resources", "codex-path"):
+    if not (package_dir / ANTEX_PACKAGE_METADATA).is_file():
+        missing_entries.append(ANTEX_PACKAGE_METADATA)
+    for entry in ("bin", "antex-resources", "antex-path"):
         if not (package_dir / entry).is_dir():
             missing_entries.append(entry)
     package_binary = package_dir / "bin" / runtime_binary_name()
@@ -275,7 +278,7 @@ def _validate_codex_package_layout(package_dir: Path, package_archive: Path) -> 
         missing_entries.append(str(Path("bin") / runtime_code_mode_host_name()))
     if missing_entries:
         missing = ", ".join(missing_entries)
-        raise RuntimeError(f"Missing Codex package layout entries in {package_archive}: {missing}")
+        raise RuntimeError(f"Missing Antex package layout entries in {package_archive}: {missing}")
 
 
 def _flatten_string_enum_one_of(definition: dict[str, Any]) -> bool:
@@ -529,20 +532,17 @@ def _make_chatgpt_account_email_nullable(schema: dict[str, Any]) -> None:
 
 def generate_schema_from_pinned_runtime(schema_dir: Path) -> Path:
     """Generate app-server schemas by invoking the installed pinned runtime binary."""
-    codex_path = pinned_runtime_codex_path()
+    antex_path = pinned_schema_runtime_binary_path()
     if schema_dir.exists():
         shutil.rmtree(schema_dir)
     schema_dir.mkdir(parents=True)
-    run(
-        [
-            str(codex_path),
-            "app-server",
-            "generate-json-schema",
-            "--out",
-            str(schema_dir),
-        ],
-        cwd=sdk_root(),
-    )
+    with tempfile.TemporaryDirectory(prefix="antex-schema-home-") as schema_home:
+        subprocess.run(
+            [str(antex_path), "app-server", "generate-json-schema", "--out", str(schema_dir)],
+            cwd=sdk_root(),
+            env=os.environ | {"CODEX_HOME": schema_home},
+            check=True,
+        )
     return schema_dir
 
 
@@ -563,7 +563,7 @@ def _normalized_schema_bundle_text(schema_dir: Path) -> str:
 
 def generate_v2_all(schema_dir: Path) -> None:
     """Regenerate the Pydantic v2 protocol model module from runtime schemas."""
-    out_path = sdk_root() / "src" / "openai_codex" / "generated" / "v2_all.py"
+    out_path = sdk_root() / "src" / "antex_sdk" / "generated" / "v2_all.py"
     out_dir = out_path.parent
     old_package_dir = out_dir / "v2_all"
     if old_package_dir.exists():
@@ -732,7 +732,7 @@ def _notification_specs(schema_dir: Path) -> list[tuple[str, str]]:
     """Map each server notification method to its generated payload model class."""
     server_notifications = json.loads((schema_dir / "ServerNotification.json").read_text())
     one_of = server_notifications.get("oneOf", [])
-    generated_source = (sdk_root() / "src" / "openai_codex" / "generated" / "v2_all.py").read_text()
+    generated_source = (sdk_root() / "src" / "antex_sdk" / "generated" / "v2_all.py").read_text()
 
     specs: list[tuple[str, str]] = []
 
@@ -804,7 +804,7 @@ def _type_tuple_source(class_names: list[str]) -> str:
 
 def generate_notification_registry(schema_dir: Path) -> None:
     """Regenerate notification dispatch metadata from the runtime notification schema."""
-    out = sdk_root() / "src" / "openai_codex" / "generated" / "notification_registry.py"
+    out = sdk_root() / "src" / "antex_sdk" / "generated" / "notification_registry.py"
     specs = _notification_specs(schema_dir)
     class_names = sorted({class_name for _, class_name in specs})
     direct_turn_id_types, nested_turn_types = _notification_turn_id_specs(
@@ -931,7 +931,7 @@ def _load_public_fields(
 ) -> list[PublicFieldSpec]:
     """Load generated model fields used to render the ergonomic public methods."""
     exclude = exclude or set()
-    if module_name == "openai_codex.generated.v2_all":
+    if module_name == "antex_sdk.generated.v2_all":
         module = _load_generated_v2_all_module()
     else:
         module = importlib.import_module(module_name)
@@ -958,9 +958,9 @@ def _load_public_fields(
 
 def _load_generated_v2_all_module() -> types.ModuleType:
     """Import the freshly generated v2_all module without importing package init."""
-    module_name = "_openai_codex_generated_v2_all_for_artifacts"
+    module_name = "_antex_sdk_generated_v2_all_for_artifacts"
     sys.modules.pop(module_name, None)
-    module_path = sdk_root() / "src" / "openai_codex" / "generated" / "v2_all.py"
+    module_path = sdk_root() / "src" / "antex_sdk" / "generated" / "v2_all.py"
     spec = importlib.util.spec_from_file_location(module_name, module_path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Failed to load generated module from {module_path}")
@@ -1050,7 +1050,7 @@ def _replace_generated_block(source: str, block_name: str, body: str) -> str:
     return updated
 
 
-def _render_codex_block(
+def _render_antex_block(
     thread_start_fields: list[PublicFieldSpec],
     thread_list_fields: list[PublicFieldSpec],
     resume_fields: list[PublicFieldSpec],
@@ -1063,7 +1063,7 @@ def _render_codex_block(
         *_approval_mode_start_signature_lines(),
         *_kw_signature_lines(thread_start_fields),
         "    ) -> Thread:",
-        '        """Create a new Codex conversation thread."""',
+        '        """Create a new Antex conversation thread."""',
         _approval_mode_assignment_line("_approval_mode_settings"),
         "        params = ThreadStartParams(",
         *_approval_mode_model_arg_lines(),
@@ -1129,7 +1129,7 @@ def _render_codex_block(
     return "\n".join(lines)
 
 
-def _render_async_codex_block(
+def _render_async_antex_block(
     thread_start_fields: list[PublicFieldSpec],
     thread_list_fields: list[PublicFieldSpec],
     resume_fields: list[PublicFieldSpec],
@@ -1142,7 +1142,7 @@ def _render_async_codex_block(
         *_approval_mode_start_signature_lines(),
         *_kw_signature_lines(thread_start_fields),
         "    ) -> AsyncThread:",
-        '        """Create a new Codex conversation thread."""',
+        '        """Create a new Antex conversation thread."""',
         "        await self._ensure_initialized()",
         _approval_mode_assignment_line("_approval_mode_settings"),
         "        params = ThreadStartParams(",
@@ -1252,7 +1252,7 @@ def _render_async_thread_block(
         *_kw_signature_lines(turn_fields),
         "    ) -> AsyncTurnHandle:",
         '        """Start a turn and return a handle for streaming or control."""',
-        "        await self._codex._ensure_initialized()",
+        "        await self._antex._ensure_initialized()",
         "        wire_input = _to_wire_input(_normalize_run_input(input))",
         _approval_mode_assignment_line("_approval_mode_override_settings"),
         "        params = TurnStartParams(",
@@ -1261,12 +1261,12 @@ def _render_async_thread_block(
         *_approval_mode_model_arg_lines(),
         *_model_arg_lines(turn_fields),
         "        )",
-        "        turn = await self._codex._client.turn_start(",
+        "        turn = await self._antex._client.turn_start(",
         "            self.id,",
         "            wire_input,",
         "            params=params,",
         "        )",
-        "        return AsyncTurnHandle(self._codex, self.id, turn.turn.id)",
+        "        return AsyncTurnHandle(self._antex, self.id, turn.turn.id)",
     ]
     return "\n".join(lines)
 
@@ -1274,7 +1274,7 @@ def _render_async_thread_block(
 def generate_public_api_flat_methods() -> None:
     """Regenerate the public convenience methods from generated protocol models."""
     src_dir = sdk_root() / "src"
-    public_api_path = src_dir / "openai_codex" / "api.py"
+    public_api_path = src_dir / "antex_sdk" / "api.py"
     if not public_api_path.exists():
         # PR2 can run codegen before the ergonomic public API layer is added.
         return
@@ -1284,29 +1284,29 @@ def generate_public_api_flat_methods() -> None:
 
     approval_fields = {"approval_policy", "approvals_reviewer"}
     thread_start_fields = _load_public_fields(
-        "openai_codex.generated.v2_all",
+        "antex_sdk.generated.v2_all",
         "ThreadStartParams",
         exclude=approval_fields,
     )
     thread_start_fields = _replace_public_sandbox_field(thread_start_fields, wire_name="sandbox")
     thread_list_fields = _load_public_fields(
-        "openai_codex.generated.v2_all",
+        "antex_sdk.generated.v2_all",
         "ThreadListParams",
     )
     thread_resume_fields = _load_public_fields(
-        "openai_codex.generated.v2_all",
+        "antex_sdk.generated.v2_all",
         "ThreadResumeParams",
         exclude={"thread_id", *approval_fields},
     )
     thread_resume_fields = _replace_public_sandbox_field(thread_resume_fields, wire_name="sandbox")
     thread_fork_fields = _load_public_fields(
-        "openai_codex.generated.v2_all",
+        "antex_sdk.generated.v2_all",
         "ThreadForkParams",
         exclude={"thread_id", "last_turn_id", *approval_fields},
     )
     thread_fork_fields = _replace_public_sandbox_field(thread_fork_fields, wire_name="sandbox")
     turn_start_fields = _load_public_fields(
-        "openai_codex.generated.v2_all",
+        "antex_sdk.generated.v2_all",
         "TurnStartParams",
         # Keep the wire model current without exposing this app-server field
         # through the ergonomic Python API yet.
@@ -1317,8 +1317,8 @@ def generate_public_api_flat_methods() -> None:
     source = public_api_path.read_text()
     source = _replace_generated_block(
         source,
-        "Codex.flat_methods",
-        _render_codex_block(
+        "Antex.flat_methods",
+        _render_antex_block(
             thread_start_fields,
             thread_list_fields,
             thread_resume_fields,
@@ -1327,8 +1327,8 @@ def generate_public_api_flat_methods() -> None:
     )
     source = _replace_generated_block(
         source,
-        "AsyncCodex.flat_methods",
-        _render_async_codex_block(
+        "AsyncAntex.flat_methods",
+        _render_async_antex_block(
             thread_start_fields,
             thread_list_fields,
             thread_resume_fields,
@@ -1400,13 +1400,13 @@ def build_parser() -> argparse.ArgumentParser:
     stage_runtime_parser.add_argument(
         "package_archive",
         type=Path,
-        help="Path to a Codex package .tar.gz archive for this platform.",
+        help="Path to a Antex package .tar.gz archive for this platform.",
     )
     stage_runtime_parser.add_argument(
-        "--codex-version",
+        "--antex-version",
         required=True,
         help=(
-            "Codex release version to write into the staged runtime package. "
+            "Antex release version to write into the staged runtime package. "
             "Accepts PEP 440 versions or release tags such as "
             "rust-v0.116.0-alpha.1.2."
         ),
@@ -1441,12 +1441,12 @@ def run_command(args: argparse.Namespace, ops: CliOps) -> None:
         ops.generate_types()
         ops.stage_python_sdk_package(
             args.staging_dir,
-            normalize_codex_version(args.sdk_version),
+            normalize_antex_version(args.sdk_version),
         )
     elif args.command == "stage-runtime":
         ops.stage_python_runtime_package(
             args.staging_dir,
-            normalize_codex_version(args.codex_version),
+            normalize_antex_version(args.antex_version),
             args.package_archive.resolve(),
             args.platform_tag,
         )

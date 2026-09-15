@@ -1,0 +1,7 @@
+load("//:defs.bzl", "antex_rust_crate")
+
+antex_rust_crate(
+    name = "antex-experimental-api-macros",
+    crate_name = "antex_experimental_api_macros",
+    proc_macro = True,
+)

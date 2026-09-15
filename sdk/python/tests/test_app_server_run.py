@@ -17,8 +17,8 @@ from app_server_helpers import (
     assistant_message_with_phase,
 )
 
-from openai_codex import AsyncCodex, Codex
-from openai_codex.generated.v2_all import MessagePhase
+from antex_sdk import Antex, AsyncAntex
+from antex_sdk.generated.v2_all import MessagePhase
 
 
 def test_sync_thread_run_uses_mock_responses(
@@ -28,8 +28,8 @@ def test_sync_thread_run_uses_mock_responses(
     with AppServerHarness(tmp_path) as harness:
         harness.responses.enqueue_assistant_message("Hello from the mock.", response_id="run-1")
 
-        with Codex(config=harness.app_server_config()) as codex:
-            thread = codex.thread_start()
+        with Antex(config=harness.app_server_config()) as antex:
+            thread = antex.thread_start()
             result = thread.run("hello")
 
         request = harness.responses.single_request()
@@ -72,8 +72,8 @@ def test_run_params_and_usage_cross_app_server_boundary(tmp_path) -> None:
             )
         )
 
-        with Codex(config=harness.app_server_config()) as codex:
-            thread = codex.thread_start()
+        with Antex(config=harness.app_server_config()) as antex:
+            thread = antex.thread_start()
             result = thread.run(
                 "use overrides",
                 model="mock-model-override",
@@ -128,8 +128,8 @@ def test_async_thread_run_uses_mock_responses(
                 response_id="async-run-1",
             )
 
-            async with AsyncCodex(config=harness.app_server_config()) as codex:
-                thread = await codex.thread_start()
+            async with AsyncAntex(config=harness.app_server_config()) as antex:
+                thread = await antex.thread_start()
                 result = await thread.run("async hello")
 
             request = harness.responses.single_request()
@@ -161,8 +161,8 @@ def test_sync_turn_result_uses_last_unknown_phase_message(tmp_path) -> None:
             )
         )
 
-        with Codex(config=harness.app_server_config()) as codex:
-            result = codex.thread_start().run("case: last unknown phase wins")
+        with Antex(config=harness.app_server_config()) as antex:
+            result = antex.thread_start().run("case: last unknown phase wins")
 
     assert {
         "final_response": result.final_response,
@@ -187,8 +187,8 @@ def test_sync_turn_result_preserves_empty_last_message(tmp_path) -> None:
             )
         )
 
-        with Codex(config=harness.app_server_config()) as codex:
-            result = codex.thread_start().run("case: empty last message")
+        with Antex(config=harness.app_server_config()) as antex:
+            result = antex.thread_start().run("case: empty last message")
 
     assert {
         "final_response": result.final_response,
@@ -216,8 +216,8 @@ def test_sync_turn_result_does_not_promote_commentary_only_to_final(tmp_path) ->
             )
         )
 
-        with Codex(config=harness.app_server_config()) as codex:
-            result = codex.thread_start().run("case: commentary only")
+        with Antex(config=harness.app_server_config()) as antex:
+            result = antex.thread_start().run("case: commentary only")
 
     assert {
         "final_response": result.final_response,
@@ -251,8 +251,8 @@ def test_async_turn_result_uses_last_unknown_phase_message(tmp_path) -> None:
                 )
             )
 
-            async with AsyncCodex(config=harness.app_server_config()) as codex:
-                result = await (await codex.thread_start()).run("case: async last unknown phase")
+            async with AsyncAntex(config=harness.app_server_config()) as antex:
+                result = await (await antex.thread_start()).run("case: async last unknown phase")
 
         assert {
             "final_response": result.final_response,
@@ -287,8 +287,8 @@ def test_async_turn_result_does_not_promote_commentary_only_to_final(
                 )
             )
 
-            async with AsyncCodex(config=harness.app_server_config()) as codex:
-                result = await (await codex.thread_start()).run("case: async commentary only")
+            async with AsyncAntex(config=harness.app_server_config()) as antex:
+                result = await (await antex.thread_start()).run("case: async commentary only")
 
         assert {
             "final_response": result.final_response,
@@ -313,8 +313,8 @@ def test_thread_run_raises_when_real_app_server_reports_failed_turn(tmp_path) ->
             )
         )
 
-        with Codex(config=harness.app_server_config()) as codex:
-            thread = codex.thread_start()
+        with Antex(config=harness.app_server_config()) as antex:
+            thread = antex.thread_start()
             with pytest.raises(RuntimeError, match="boom from mock model"):
                 thread.run("trigger failure")
 
@@ -345,8 +345,8 @@ def test_final_answer_phase_survives_real_app_server_mapping(tmp_path) -> None:
             )
         )
 
-        with Codex(config=harness.app_server_config()) as codex:
-            result = codex.thread_start().run("choose final answer")
+        with Antex(config=harness.app_server_config()) as antex:
+            result = antex.thread_start().run("choose final answer")
 
     assert {
         "final_response": result.final_response,

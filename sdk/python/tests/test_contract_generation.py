@@ -8,9 +8,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 GENERATED_TARGETS = [
-    Path("src/openai_codex/generated/notification_registry.py"),
-    Path("src/openai_codex/generated/v2_all.py"),
-    Path("src/openai_codex/api.py"),
+    Path("src/antex_sdk/generated/notification_registry.py"),
+    Path("src/antex_sdk/generated/v2_all.py"),
+    Path("src/antex_sdk/api.py"),
 ]
 
 
@@ -42,7 +42,7 @@ def test_generated_files_are_up_to_date():
     # app-server binary from the checkout or CI environment.
     assert importlib.metadata.version("openai-codex-cli-bin") == "0.147.0"
     env = os.environ.copy()
-    env.pop("CODEX_EXEC_PATH", None)
+    env.pop("ANTEX_EXEC_PATH", None)
     python_bin = str(Path(sys.executable).parent)
     env["PATH"] = f"{python_bin}{os.pathsep}{env.get('PATH', '')}"
 

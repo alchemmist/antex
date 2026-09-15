@@ -1,0 +1,61 @@
+---
+source: tui/src/startup_draft_tests.rs
+assertion_line: 119
+expression: "snapshots.join(\"\\n---\\n\")"
+---
+empty (48 columns):
+╭─ alchemmist antex · unknown ─────╮
+│  loading                         │
+│  loading                         │
+╰──────────────────────────────────╯
+
+
+ ┃ Ask Antex to do anything
+
+  ? for shortcuts
+---
+resuming (48 columns):
+╭─ alchemmist antex · unknown ─────╮
+│  loading                         │
+│  loading                         │
+╰──────────────────────────────────╯
+  Resuming session…
+
+ ┃ Ask Antex to do anything
+
+  ? for shortcuts
+---
+forking (48 columns):
+╭─ alchemmist antex · unknown ─────╮
+│  loading                         │
+│  loading                         │
+╰──────────────────────────────────╯
+  Forking session…
+
+ ┃ draft while loading
+
+
+---
+multiline (48 columns):
+╭─ alchemmist antex · unknown ─────╮
+│  loading                         │
+│  loading                         │
+╰──────────────────────────────────╯
+
+
+ ┃ first startup line
+ ┃ second startup line
+
+
+---
+narrow (18 columns):
+╭─ …unknown ─────╮
+│  loading       │
+│  loading       │
+╰────────────────╯
+
+
+ ┃ first startup
+ ┃ line
+ ┃ second startup
+ ┃ line

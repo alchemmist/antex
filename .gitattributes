@@ -1,3 +1,3 @@
-codex-rs/app-server-protocol/schema/** linguist-generated
-codex-rs/hooks/schema/generated/** linguist-generated
+antex-rs/app-server-protocol/schema/** linguist-generated
+antex-rs/hooks/schema/generated/** linguist-generated
 third_party/voice/sources.json text eol=lf

@@ -10,10 +10,10 @@ from _bootstrap import ensure_local_sdk_src, runtime_config
 
 ensure_local_sdk_src()
 
-from openai_codex import (
-    Codex,
+from antex_sdk import (
+    Antex,
 )
-from openai_codex.types import (
+from antex_sdk.types import (
     Personality,
     ReasoningSummary,
 )
@@ -38,8 +38,8 @@ PROMPT = (
     "Return JSON matching the requested schema."
 )
 
-with Codex(config=runtime_config()) as codex:
-    thread = codex.thread_start(model="gpt-5.4", config={"model_reasoning_effort": "high"})
+with Antex(config=runtime_config()) as antex:
+    thread = antex.thread_start(model="gpt-5.4", config={"model_reasoning_effort": "high"})
 
     turn = thread.turn(
         PROMPT,

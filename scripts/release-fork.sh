@@ -68,7 +68,7 @@ print(version)
 PY
 )"
 
-tag="alchemmist-v${next_version}"
+tag="v${next_version}"
 
 if git rev-parse --verify --quiet "refs/tags/${tag}" >/dev/null; then
   echo "Tag ${tag} already exists." >&2

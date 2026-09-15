@@ -1,0 +1,6 @@
+---
+source: tui/src/app/agents_overview_tests.rs
+assertion_line: 1138
+expression: rendered
+---
+• Background server started. Run `antex agents` in another terminal; this session remains unchanged.

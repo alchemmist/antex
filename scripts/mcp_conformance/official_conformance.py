@@ -252,7 +252,7 @@ def _make_adapter_launcher(
         adapter_command = subprocess.list2cmdline([sys.executable, str(adapter_script)])
         launcher.write_text(
             "@echo off\n"
-            f'set "CODEX_CONFORMANCE_REQUIRE_AUTOMATIC_AUTH={automatic_auth}"\n'
+            f'set "ANTEX_CONFORMANCE_REQUIRE_AUTOMATIC_AUTH={automatic_auth}"\n'
             f"{adapter_command} %*\n",
             encoding="utf-8",
         )
@@ -260,7 +260,7 @@ def _make_adapter_launcher(
         launcher = launcher_dir / "client"
         launcher.write_text(
             "#!/bin/sh\n"
-            f"export CODEX_CONFORMANCE_REQUIRE_AUTOMATIC_AUTH={automatic_auth}\n"
+            f"export ANTEX_CONFORMANCE_REQUIRE_AUTOMATIC_AUTH={automatic_auth}\n"
             f'exec {shlex.quote(sys.executable)} {shlex.quote(str(adapter_script))} "$@"\n',
             encoding="utf-8",
         )
@@ -346,9 +346,9 @@ def _load_adapter_report(report_path: Path) -> tuple[bool, str]:
     try:
         decoded = json.loads(report_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        return False, f"Codex adapter did not write a valid report: {exc}"
+        return False, f"Antex adapter did not write a valid report: {exc}"
     if not isinstance(decoded, dict):
-        return False, "Codex adapter report was not an object"
+        return False, "Antex adapter report was not an object"
     success = decoded.get("success") is True
     steps = decoded.get("steps")
     failed_steps: list[str] = []
@@ -359,11 +359,11 @@ def _load_adapter_report(report_path: Path) -> tuple[bool, str]:
                     f"{step.get('name')}: {step.get('detail', 'failed')}"
                 )
     if success:
-        return True, "Codex adapter completed the scenario"
+        return True, "Antex adapter completed the scenario"
     if failed_steps:
         return False, redact_sensitive_text("; ".join(failed_steps))[-4_000:]
     return False, redact_sensitive_text(
-        str(decoded.get("error") or "Codex adapter failed")
+        str(decoded.get("error") or "Antex adapter failed")
     )[-4_000:]
 
 
@@ -371,7 +371,7 @@ def _run_scenario(
     *,
     conformance_command: Sequence[str],
     adapter_launcher: Path,
-    codex_binary: Path,
+    antex_binary: Path,
     mode: str,
     scenario: str,
     output_dir: Path,
@@ -382,15 +382,15 @@ def _run_scenario(
     scenario_dir = output_dir / _safe_scenario_name(scenario)
     scenario_dir.mkdir(parents=True, exist_ok=True)
     adapter_report = scenario_dir / "codex-adapter.json"
-    adapter_home = scenario_dir / "codex-home"
+    adapter_home = scenario_dir / "antex-home"
     adapter_home.mkdir()
 
     env = dict(base_env)
     env.update(
         {
-            "CODEX_CONFORMANCE_BINARY": str(codex_binary),
-            "CODEX_CONFORMANCE_HOME": str(adapter_home),
-            "CODEX_CONFORMANCE_ADAPTER_REPORT": str(adapter_report),
+            "ANTEX_CONFORMANCE_BINARY": str(antex_binary),
+            "ANTEX_CONFORMANCE_HOME": str(adapter_home),
+            "ANTEX_CONFORMANCE_ADAPTER_REPORT": str(adapter_report),
         }
     )
     command = [
@@ -484,7 +484,7 @@ def run_official_mode(
     *,
     conformance_command: Sequence[str],
     adapter_script: Path,
-    codex_binary: Path,
+    antex_binary: Path,
     mode: str,
     scenarios: Sequence[str],
     output_dir: Path,
@@ -493,7 +493,7 @@ def run_official_mode(
 ) -> list[OfficialScenarioResult]:
     launcher = _make_adapter_launcher(
         adapter_script,
-        require_automatic_auth=base_env.get("CODEX_CONFORMANCE_REQUIRE_AUTOMATIC_AUTH")
+        require_automatic_auth=base_env.get("ANTEX_CONFORMANCE_REQUIRE_AUTOMATIC_AUTH")
         == "1",
     )
     try:
@@ -501,7 +501,7 @@ def run_official_mode(
             _run_scenario(
                 conformance_command=conformance_command,
                 adapter_launcher=launcher,
-                codex_binary=codex_binary,
+                antex_binary=antex_binary,
                 mode=mode,
                 scenario=scenario,
                 output_dir=output_dir,

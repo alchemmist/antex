@@ -35,7 +35,7 @@ def assemble(
         raise ValueError(
             "a full build commit is required; dev builds are not distributable"
         )
-    metadata = json.loads((package / "codex-package.json").read_text())
+    metadata = json.loads((package / "antex-package.json").read_text())
     app_target = metadata["target"]
     targets = {
         f"{arch}-{suffix}": f"{arch}-{suffix.replace('musl', 'gnu')}"
@@ -55,14 +55,14 @@ def assemble(
         "layoutVersion": 1,
         "variant": "codex",
         "entrypoint": entrypoint,
-        "resourcesDir": "codex-resources",
-        "pathDir": "codex-path",
+        "resourcesDir": "antex-resources",
+        "pathDir": "antex-path",
     }
     if any(metadata.get(key) != value for key, value in expected.items()):
         raise ValueError("input is not a canonical Codex package")
     if not metadata["version"].endswith(f"+{commit}"):
         raise ValueError("package version does not match the declared build")
-    if (package / "codex-resources/voice").exists():
+    if (package / "antex-resources/voice").exists():
         raise ValueError("input already contains voice resources")
     for path in package.rglob("*"):
         if path.is_symlink() or not (path.is_file() or path.is_dir()):
@@ -85,12 +85,12 @@ def assemble(
     output.mkdir()  # Exclusive creation: never clean or overwrite a pre-existing output.
     try:
         shutil.copytree(package, output, dirs_exist_ok=True)
-        relative_helper = f"codex-resources/voice/bin/codex-voice-host{suffix}"
+        relative_helper = f"antex-resources/voice/bin/antex-voice-host{suffix}"
         destination = output / relative_helper
         destination.parent.mkdir(parents=True)
         shutil.copy2(helper, destination)
         for relative, expected_digest in inputs.items():
-            copied = output / "codex-resources/voice" / relative
+            copied = output / "antex-resources/voice" / relative
             copied.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(runtime / relative, copied)
             if digest(copied) != expected_digest:
@@ -100,7 +100,7 @@ def assemble(
             with (output / relative).open("rb") as source:
                 digests[relative] = hashlib.file_digest(source, "sha256").hexdigest()
         digests.update(
-            {f"codex-resources/voice/{name}": value for name, value in inputs.items()}
+            {f"antex-resources/voice/{name}": value for name, value in inputs.items()}
         )
         manifest = {
             "schemaVersion": 1,

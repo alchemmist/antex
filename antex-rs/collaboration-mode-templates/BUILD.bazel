@@ -1,0 +1,12 @@
+load("//:defs.bzl", "antex_rust_crate")
+
+antex_rust_crate(
+    name = "collaboration-mode-templates",
+    compile_data = glob(["templates/*.md"]),
+    crate_name = "antex_collaboration_mode_templates",
+)
+
+exports_files(
+    glob(["templates/*.md"]),
+    visibility = ["//visibility:public"],
+)

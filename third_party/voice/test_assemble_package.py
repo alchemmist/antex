@@ -22,8 +22,8 @@ class AssembleTests(unittest.TestCase):
         self.root = Path(temporary.name)
         self.package = self.root / "app"
         (self.package / "bin").mkdir(parents=True)
-        (self.package / "codex-resources").mkdir()
-        (self.package / "codex-path").mkdir()
+        (self.package / "antex-resources").mkdir()
+        (self.package / "antex-path").mkdir()
         self.commit = "a" * 40
         self.metadata = {
             "layoutVersion": 1,
@@ -31,10 +31,10 @@ class AssembleTests(unittest.TestCase):
             "target": "aarch64-unknown-linux-musl",
             "variant": "codex",
             "entrypoint": "bin/codex",
-            "resourcesDir": "codex-resources",
-            "pathDir": "codex-path",
+            "resourcesDir": "antex-resources",
+            "pathDir": "antex-path",
         }
-        (self.package / "codex-package.json").write_text(json.dumps(self.metadata))
+        (self.package / "antex-package.json").write_text(json.dumps(self.metadata))
         (self.package / "bin/codex").write_bytes(b"unchanged app")
         self.helper = self.root / "helper.exe"
         self.helper.write_bytes(b"private helper")
@@ -79,7 +79,7 @@ class AssembleTests(unittest.TestCase):
                 entrypoint = "bin/codex.exe" if windows else "bin/codex"
                 self.metadata.update(target=target, entrypoint=entrypoint)
                 (self.package / entrypoint).write_bytes(b"unchanged app")
-                (self.package / "codex-package.json").write_text(
+                (self.package / "antex-package.json").write_text(
                     json.dumps(self.metadata)
                 )
                 output = self.root / (target + " packaged")
@@ -105,7 +105,7 @@ class AssembleTests(unittest.TestCase):
                     cwd=self.root,
                     env={**os.environ, "PYTHONSAFEPATH": "1"},
                 )
-                voice = output / "codex-resources/voice"
+                voice = output / "antex-resources/voice"
                 self.assertFalse((voice / "unlisted-file").exists())
                 expected = {r["path"]: r["sha256"] for r in receipt["libraries"]}
                 expected["runtime.json"] = digest(runtime / "runtime.json")
@@ -116,14 +116,14 @@ class AssembleTests(unittest.TestCase):
                     {name: digest(runtime / name) for name in expected}, expected
                 )
                 manifest = json.loads((voice / "manifest.json").read_text())
-                helper_name = "codex-voice-host.exe" if windows else "codex-voice-host"
+                helper_name = "antex-voice-host.exe" if windows else "antex-voice-host"
                 self.assertEqual(
                     manifest["sha256"],
                     {
                         entrypoint: digest(self.package / entrypoint),
-                        f"codex-resources/voice/bin/{helper_name}": digest(self.helper),
+                        f"antex-resources/voice/bin/{helper_name}": digest(self.helper),
                         **{
-                            f"codex-resources/voice/{name}": value
+                            f"antex-resources/voice/{name}": value
                             for name, value in expected.items()
                         },
                     },
@@ -144,7 +144,7 @@ class AssembleTests(unittest.TestCase):
         for name in (
             "../outside.so",
             "lib/../outside.so",
-            "bin/codex-voice-host",
+            "bin/antex-voice-host",
             "lib/evil:stream.so",
         ):
             changes.append({"libraries": [{**original["libraries"][0], "path": name}]})
@@ -275,14 +275,14 @@ class AssembleTests(unittest.TestCase):
         )
         self.assertEqual((self.output / "bin/codex").read_bytes(), b"unchanged app")
         self.assertEqual((self.package / "bin/codex").read_bytes(), b"unchanged app")
-        self.assertFalse((self.package / "codex-resources/voice").exists())
+        self.assertFalse((self.package / "antex-resources/voice").exists())
         self.assertEqual(
-            (self.output / "codex-package.json").read_bytes(),
-            (self.package / "codex-package.json").read_bytes(),
+            (self.output / "antex-package.json").read_bytes(),
+            (self.package / "antex-package.json").read_bytes(),
         )
         self.assertEqual(
             json.loads(
-                (self.output / "codex-resources/voice/manifest.json").read_text()
+                (self.output / "antex-resources/voice/manifest.json").read_text()
             ),
             {
                 "schemaVersion": 1,
@@ -292,7 +292,7 @@ class AssembleTests(unittest.TestCase):
                 "appVersion": self.metadata["version"],
                 "sha256": {
                     "bin/codex": hashlib.sha256(b"unchanged app").hexdigest(),
-                    "codex-resources/voice/bin/codex-voice-host": hashlib.sha256(
+                    "antex-resources/voice/bin/antex-voice-host": hashlib.sha256(
                         b"private helper"
                     ).hexdigest(),
                 },
@@ -318,13 +318,13 @@ class AssembleTests(unittest.TestCase):
             target = f"{architecture}-unknown-linux-gnu"
             with self.subTest(target=target):
                 self.metadata["target"] = target
-                (self.package / "codex-package.json").write_text(
+                (self.package / "antex-package.json").write_text(
                     json.dumps(self.metadata)
                 )
                 output = self.root / target
                 assemble(self.package, self.helper, target, self.commit, output)
                 manifest = json.loads(
-                    (output / "codex-resources/voice/manifest.json").read_text()
+                    (output / "antex-resources/voice/manifest.json").read_text()
                 )
                 self.assertEqual(
                     manifest,
@@ -336,7 +336,7 @@ class AssembleTests(unittest.TestCase):
                         "appVersion": self.metadata["version"],
                         "sha256": {
                             "bin/codex": hashlib.sha256(b"unchanged app").hexdigest(),
-                            "codex-resources/voice/bin/codex-voice-host": hashlib.sha256(
+                            "antex-resources/voice/bin/antex-voice-host": hashlib.sha256(
                                 b"private helper"
                             ).hexdigest(),
                         },
@@ -345,7 +345,7 @@ class AssembleTests(unittest.TestCase):
                 self.assertEqual((output / "bin/codex").read_bytes(), b"unchanged app")
                 self.assertEqual(
                     (
-                        output / "codex-resources/voice/bin/codex-voice-host"
+                        output / "antex-resources/voice/bin/antex-voice-host"
                     ).read_bytes(),
                     self.helper.read_bytes(),
                 )

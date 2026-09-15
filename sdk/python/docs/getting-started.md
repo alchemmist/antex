@@ -1,6 +1,6 @@
 # Getting Started
 
-This guide gets a published OpenAI Codex Python SDK installation running
+This guide gets a published OpenAI Antex Python SDK installation running
 with a multi-turn thread.
 
 ## 1. Install
@@ -8,26 +8,26 @@ with a multi-turn thread.
 Install the SDK:
 
 ```bash
-pip install openai-codex
+pip install antex-sdk
 ```
 
 Requirements:
 
 - Python `>=3.10`
-- An existing Codex account session, or one of the login flows below
+- An existing Antex account session, or one of the login flows below
 
-The SDK installs its matching `openai-codex-cli-bin` runtime dependency
-automatically. SDK release versions track the corresponding Codex CLI release.
+The SDK installs its matching `antex-cli-bin` runtime dependency
+automatically. SDK release versions track the corresponding Antex CLI release.
 
 ## 2. Authenticate When Needed
 
-Existing Codex authentication is reused automatically. For ChatGPT browser
+Existing Antex authentication is reused automatically. For ChatGPT browser
 login:
 
 ```python
-from openai_codex import Codex
+from antex_sdk import Antex
 
-with Codex() as codex:
+with Antex() as codex:
     login = codex.login_chatgpt()
     print(login.auth_url)
     print(login.wait().success)
@@ -36,7 +36,7 @@ with Codex() as codex:
 For device-code login:
 
 ```python
-with Codex() as codex:
+with Antex() as codex:
     login = codex.login_chatgpt_device_code()
     print(login.verification_url, login.user_code)
     print(login.wait().success)
@@ -45,7 +45,7 @@ with Codex() as codex:
 For API-key login:
 
 ```python
-with Codex() as codex:
+with Antex() as codex:
     codex.login_api_key("sk-...")
     print(codex.account().account)
 ```
@@ -53,9 +53,9 @@ with Codex() as codex:
 ## 3. Run A Turn
 
 ```python
-from openai_codex import Codex, Sandbox
+from antex_sdk import Antex, Sandbox
 
-with Codex() as codex:
+with Antex() as codex:
     thread = codex.thread_start(sandbox=Sandbox.workspace_write)
     result = thread.run("Say hello in one sentence.")
 
@@ -75,9 +75,9 @@ or interrupting an active turn.
 Use one enum for the initial thread and later turn overrides:
 
 ```python
-from openai_codex import Codex, Sandbox
+from antex_sdk import Antex, Sandbox
 
-with Codex() as codex:
+with Antex() as codex:
     thread = codex.thread_start(sandbox=Sandbox.workspace_write)
     thread.run("Make the requested changes.")
     review = thread.run("Review the diff only.", sandbox=Sandbox.read_only)
@@ -90,15 +90,15 @@ Available presets:
   configured writable roots; this is the normal default for workspace work.
 - `Sandbox.full_access`: run without filesystem access restrictions.
 
-When `sandbox=` is omitted, Codex uses its configured default. A turn override
+When `sandbox=` is omitted, Antex uses its configured default. A turn override
 also applies to subsequent turns on that thread.
 
 ## 5. Continue A Thread
 
 ```python
-from openai_codex import Codex
+from antex_sdk import Antex
 
-with Codex() as codex:
+with Antex() as codex:
     thread = codex.thread_start()
     thread.run("Summarize Rust ownership in two bullets.")
     result = thread.run("Now explain it to a Python developer.")
@@ -108,7 +108,7 @@ with Codex() as codex:
 To resume a stored thread later:
 
 ```python
-with Codex() as codex:
+with Antex() as codex:
     thread = codex.thread_resume("thr_123")
     print(thread.run("Continue where we left off.").final_response)
 ```
@@ -118,11 +118,11 @@ with Codex() as codex:
 ```python
 import asyncio
 
-from openai_codex import AsyncCodex, Sandbox
+from antex_sdk import AsyncAntex, Sandbox
 
 
 async def main() -> None:
-    async with AsyncCodex() as codex:
+    async with AsyncAntex() as codex:
         thread = await codex.thread_start(sandbox=Sandbox.workspace_write)
         result = await thread.run("Continue where we left off.")
         print(result.final_response)
@@ -136,16 +136,16 @@ asyncio.run(main())
 Python's built-in documentation tools cover the curated SDK surface:
 
 ```python
-import openai_codex
-from openai_codex import Codex, CodexConfig
+import antex_sdk
+from antex_sdk import Antex, AntexConfig
 
-help(openai_codex)
-help(Codex)
-help(CodexConfig)
+help(antex_sdk)
+help(Antex)
+help(AntexConfig)
 ```
 
 ```bash
-python -m pydoc openai_codex
+python -m pydoc antex_sdk
 ```
 
 ## Developing From This Repository

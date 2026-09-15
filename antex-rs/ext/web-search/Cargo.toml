@@ -1,0 +1,32 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "antex-web-search-extension"
+version.workspace = true
+
+[lib]
+name = "antex_web_search_extension"
+path = "src/lib.rs"
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+antex-api = { workspace = true }
+antex-core = { workspace = true }
+antex-extension-api = { workspace = true }
+antex-extension-items = { workspace = true }
+antex-login = { workspace = true }
+antex-model-provider = { workspace = true }
+antex-model-provider-info = { workspace = true }
+antex-otel = { workspace = true }
+antex-protocol = { workspace = true }
+antex-tools = { workspace = true }
+http = { workspace = true }
+schemars = { workspace = true }
+serde_json = { workspace = true }
+url = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }

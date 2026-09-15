@@ -3,7 +3,7 @@ name: alchemmist-release
 on:
   push:
     tags:
-      - "alchemmist-v*.*.*"
+      - "v*.*.*"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -19,13 +19,13 @@ jobs:
     timeout-minutes: 90
     defaults:
       run:
-        working-directory: codex-rs
+        working-directory: antex-rs
     env:
       CARGO_INCREMENTAL: "0"
       CARGO_NET_GIT_FETCH_WITH_CLI: "true"
       CARGO_PROFILE_RELEASE_DEBUG: "0"
       CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO: "off"
-      CARGO_TARGET_DIR: ${{ github.workspace }}/codex-rs/target
+      CARGO_TARGET_DIR: ${{ github.workspace }}/antex-rs/target
       TARGET: ${{ matrix.target }}
     strategy:
       fail-fast: false
@@ -53,8 +53,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [[ "${GITHUB_REF_NAME}" =~ ^alchemmist-v[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          tag_version="${GITHUB_REF_NAME#alchemmist-v}"
+          [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          tag_version="${GITHUB_REF_NAME#v}"
           fork_version="$(tr -d '[:space:]' < ../FORK_VERSION)"
           [[ "${tag_version}" == "${fork_version}" ]]
 
@@ -63,36 +63,42 @@ jobs:
         with:
           target: ${{ matrix.target }}
 
-      - name: Build Codex
+      - name: Build Antex
         shell: bash
         run: |
           export STABLE_GIT_COMMIT="${GITHUB_SHA::8}"
           ALCHEMMIST_FORK_VERSION="$(tr -d '[:space:]' < ../FORK_VERSION)"
           export ALCHEMMIST_FORK_VERSION
           cargo build --locked --release --target "${TARGET}" \
-            --bin codex \
-            --bin codex-code-mode-host
+            --bin antex \
+            --bin antex-code-mode-host
+          if [[ "${TARGET}" == *linux* ]]; then
+            cargo build --locked --release --target "${TARGET}" -p antex-bwrap --bin bwrap
+          fi
 
-      - name: Package Codex
+      - name: Package Antex
         shell: bash
         env:
           PLATFORM: ${{ matrix.platform }}
         run: |
           set -euo pipefail
-          archive="codex-${TARGET}.tar.gz"
-          staging="${RUNNER_TEMP}/codex-${TARGET}"
+          archive="antex-${TARGET}.tar.gz"
+          staging="${RUNNER_TEMP}/antex-${TARGET}"
           mkdir -p "${staging}"
-          cp "${CARGO_TARGET_DIR}/${TARGET}/release/codex" "${staging}/codex"
-          cp "${CARGO_TARGET_DIR}/${TARGET}/release/codex-code-mode-host" \
-            "${staging}/codex-code-mode-host"
-          strip "${staging}/codex" "${staging}/codex-code-mode-host"
+          cp "${CARGO_TARGET_DIR}/${TARGET}/release/antex" "${staging}/antex"
+          cp "${CARGO_TARGET_DIR}/${TARGET}/release/antex-code-mode-host" \
+            "${staging}/antex-code-mode-host"
+          strip "${staging}/antex" "${staging}/antex-code-mode-host"
           if [[ "${PLATFORM}" == "mac" ]]; then
-            codesign --force --sign - "${staging}/codex"
-            codesign --force --sign - "${staging}/codex-code-mode-host"
+            codesign --force --sign - "${staging}/antex"
+            codesign --force --sign - "${staging}/antex-code-mode-host"
           fi
-          python3 ../scripts/smoke-code-mode-host.py "${staging}/codex-code-mode-host"
-          tar -C "${staging}" -czf "${RUNNER_TEMP}/${archive}" \
-            codex codex-code-mode-host
+          python3 ../scripts/smoke-code-mode-host.py "${staging}/antex-code-mode-host"
+          if [[ "${PLATFORM}" == "linux" ]]; then
+            mkdir -p "${staging}/antex-resources"
+            cp "${CARGO_TARGET_DIR}/${TARGET}/release/bwrap" "${staging}/antex-resources/bwrap"
+          fi
+          tar -C "${staging}" -czf "${RUNNER_TEMP}/${archive}" .
           if [[ "${PLATFORM}" == "mac" ]]; then
             (cd "${RUNNER_TEMP}" && shasum -a 256 "${archive}" > "${archive}.sha256")
           else
@@ -104,8 +110,8 @@ jobs:
         with:
           name: release-${{ matrix.target }}
           path: |
-            ${{ runner.temp }}/codex-${{ matrix.target }}.tar.gz
-            ${{ runner.temp }}/codex-${{ matrix.target }}.tar.gz.sha256
+            ${{ runner.temp }}/antex-${{ matrix.target }}.tar.gz
+            ${{ runner.temp }}/antex-${{ matrix.target }}.tar.gz.sha256
           if-no-files-found: error
           retention-days: 1
 

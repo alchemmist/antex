@@ -1,0 +1,83 @@
+[package]
+name = "antex-exec"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+autotests = false
+
+[[bin]]
+name = "antex-exec"
+path = "src/main.rs"
+
+[lib]
+name = "antex_exec"
+path = "src/lib.rs"
+doctest = false
+
+[[test]]
+name = "all"
+path = "tests/all.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true, features = ["derive"] }
+antex-arg0 = { workspace = true }
+antex-app-server-client = { workspace = true }
+antex-app-server-protocol = { workspace = true }
+antex-cloud-config = { workspace = true }
+antex-config = { workspace = true }
+antex-core = { workspace = true }
+antex-features = { workspace = true }
+antex-feedback = { workspace = true }
+antex-git-utils = { workspace = true }
+antex-history = { workspace = true }
+antex-login = { workspace = true }
+antex-model-provider-info = { workspace = true }
+antex-otel = { workspace = true }
+antex-protocol = { workspace = true }
+antex-rollout = { workspace = true }
+antex-utils-absolute-path = { workspace = true }
+antex-utils-cli = { workspace = true }
+antex-utils-oss = { workspace = true }
+antex-utils-sandbox-summary = { workspace = true }
+antex-worktree = { workspace = true }
+owo-colors = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+supports-color = { workspace = true }
+tokio = { workspace = true, features = [
+    "io-std",
+    "macros",
+    "process",
+    "rt-multi-thread",
+    "signal",
+] }
+tracing = { workspace = true, features = ["log"] }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+ts-rs = { workspace = true, features = [
+    "uuid-impl",
+    "serde-json-impl",
+    "no-serde-warnings",
+] }
+uuid = { workspace = true }
+
+
+[dev-dependencies]
+assert_cmd = { workspace = true }
+antex-apply-patch = { workspace = true }
+antex-utils-cargo-bin = { workspace = true }
+core_test_support = { workspace = true }
+libc = { workspace = true }
+opentelemetry = { workspace = true }
+opentelemetry_sdk = { workspace = true }
+predicates = { workspace = true }
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }
+tracing-opentelemetry = { workspace = true }
+uuid = { workspace = true }
+walkdir = { workspace = true }
+wiremock = { workspace = true }
+zstd = { workspace = true }

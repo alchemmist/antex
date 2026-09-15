@@ -1,0 +1,31 @@
+[package]
+name = "antex-backend-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+path = "src/lib.rs"
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+http = { workspace = true }
+url = { workspace = true }
+antex-backend-openapi-models = { path = "../antex-backend-openapi-models" }
+antex-api = { workspace = true }
+antex-http-client = { workspace = true }
+antex-login = { workspace = true }
+antex-model-provider = { workspace = true }
+antex-protocol = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = "1"
+tokio = { workspace = true, features = ["macros", "rt"] }
+wiremock = { workspace = true }

@@ -1,0 +1,25 @@
+---
+source: tui/src/chatwidget/tests/status_and_layout.rs
+assertion_line: 5281
+expression: "format!(\"before reveal:\\n{hidden}\\nrunning:\\n{running}\\ncompleted:\\n{}\",\nhook_status_frame(&chat, 80),)"
+---
+before reveal:
+"                                                                                "
+"                                                                                "
+" ┃ Ask Antex to do anything                                                     "
+"                                                                                "
+"  gpt-5.6-sol default · /tmp/project                                            "
+running:
+"                                                                                "
+"• Saving session summary                                                        "
+"                                                                                "
+"                                                                                "
+" ┃ Ask Antex to do anything                                                     "
+"                                                                                "
+"  gpt-5.6-sol default · /tmp/project                                            "
+completed:
+"                                                                                "
+"                                                                                "
+" ┃ Ask Antex to do anything                                                     "
+"                                                                                "
+"  gpt-5.6-sol default · /tmp/project                                            "

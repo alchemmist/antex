@@ -1,0 +1,7 @@
+load("//:defs.bzl", "antex_rust_crate")
+
+antex_rust_crate(
+    name = "otel",
+    crate_name = "antex_otel",
+    integration_test_args = ["--test-threads=1"],
+)

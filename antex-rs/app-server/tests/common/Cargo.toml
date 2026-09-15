@@ -1,0 +1,49 @@
+[package]
+name = "app_test_support"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+path = "lib.rs"
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+base64 = { workspace = true }
+chrono = { workspace = true }
+antex-app-server-protocol = { workspace = true }
+antex-config = { workspace = true }
+antex-core = { workspace = true }
+antex-exec-server = { workspace = true }
+antex-features = { workspace = true }
+antex-login = { workspace = true }
+antex-models-manager = { workspace = true }
+antex-protocol = { workspace = true }
+antex-utils-cargo-bin = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = [
+    "io-util",
+    "io-std",
+    "macros",
+    "net",
+    "process",
+    "rt-multi-thread",
+    "sync",
+    "test-util",
+    "time",
+] }
+tokio-util = { workspace = true }
+url = { workspace = true }
+uuid = { workspace = true }
+wiremock = { workspace = true }
+core_test_support = { path = "../../../core/tests/common" }
+shlex = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }

@@ -1,0 +1,21 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "antex-memories-read"
+version.workspace = true
+
+[lib]
+name = "antex_memories_read"
+path = "src/lib.rs"
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+antex-protocol = { workspace = true }
+antex-shell-command = { workspace = true }
+antex-utils-absolute-path = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }

@@ -1,0 +1,170 @@
+[package]
+name = "antex-tui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+autobins = false
+
+[[bin]]
+name = "antex-tui"
+path = "src/main.rs"
+
+[[bin]]
+name = "md-events"
+path = "src/bin/md-events.rs"
+
+[lib]
+name = "antex_tui"
+path = "src/lib.rs"
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+axum = { workspace = true, default-features = false, features = ["http1", "tokio"] }
+base64 = { workspace = true }
+chrono = { workspace = true, features = ["serde"] }
+clap = { workspace = true, features = ["derive"] }
+antex-ansi-escape = { workspace = true }
+antex-app-server-client = { workspace = true }
+antex-app-server-protocol = { workspace = true }
+antex-arg0 = { workspace = true }
+antex-install-context = { workspace = true }
+antex-cloud-config = { workspace = true }
+antex-config = { workspace = true }
+antex-context-fragments = { workspace = true }
+antex-connectors = { workspace = true }
+antex-core-plugins = { workspace = true }
+antex-history = { workspace = true }
+antex-exec-server = { workspace = true }
+antex-features = { workspace = true }
+antex-feedback = { workspace = true }
+antex-file-watcher = { workspace = true }
+antex-file-search = { workspace = true }
+antex-git-utils = { workspace = true }
+antex-http-client = { workspace = true }
+antex-login = { workspace = true }
+antex-message-history = { workspace = true }
+antex-model-provider = { workspace = true }
+antex-model-provider-info = { workspace = true }
+antex-models-manager = { workspace = true }
+antex-otel = { workspace = true }
+antex-plugin = { workspace = true }
+antex-protocol = { workspace = true }
+antex-rollout = { workspace = true }
+antex-sandboxing = { workspace = true }
+antex-shell-command = { workspace = true }
+antex-state = { workspace = true }
+antex-terminal-detection = { workspace = true }
+antex-utils-approval-presets = { workspace = true }
+antex-uds = { workspace = true }
+antex-utils-absolute-path = { workspace = true }
+antex-utils-cli = { workspace = true }
+antex-utils-elapsed = { workspace = true }
+antex-utils-fuzzy-match = { workspace = true }
+antex-utils-home-dir = { workspace = true }
+antex-utils-oss = { workspace = true }
+antex-utils-path = { workspace = true }
+antex-utils-path-uri = { workspace = true }
+antex-utils-plugins = { workspace = true }
+antex-utils-sandbox-summary = { workspace = true }
+antex-utils-sleep-inhibitor = { workspace = true }
+antex-utils-string = { workspace = true }
+color-eyre = { workspace = true }
+crossterm = { workspace = true, features = ["bracketed-paste", "event-stream"] }
+derive_more = { workspace = true, features = ["is_variant"] }
+diffy = { workspace = true }
+dirs = { workspace = true }
+dunce = { workspace = true }
+image = { workspace = true, features = ["jpeg", "png", "gif", "webp"] }
+itertools = { workspace = true }
+lazy_static = { workspace = true }
+pathdiff = { workspace = true }
+pulldown-cmark = { workspace = true, features = ["html"] }
+rand = { workspace = true }
+ratatui = { workspace = true, features = [
+    "scrolling-regions",
+    "unstable-backend-writer",
+    "unstable-rendered-line-info",
+    "unstable-widget-ref",
+] }
+ratatui-macros = { workspace = true }
+regex-lite = { workspace = true }
+rmcp = { workspace = true, features = ["server", "transport-streamable-http-server"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+sha2 = { workspace = true }
+shlex = { workspace = true }
+strum = { workspace = true }
+strum_macros = { workspace = true }
+supports-color = { workspace = true }
+tempfile = { workspace = true }
+textwrap = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = [
+    "io-std",
+    "macros",
+    "process",
+    "rt-multi-thread",
+    "signal",
+    "test-util",
+    "time",
+] }
+tokio-stream = { workspace = true, features = ["sync"] }
+toml = { workspace = true }
+tracing = { workspace = true, features = ["log"] }
+tracing-appender = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+syntect = "5"
+two-face = { version = "0.5", default-features = false, features = ["syntect-default-onig"] }
+unicode-segmentation = { workspace = true }
+unicode-width = { workspace = true }
+url = { workspace = true }
+urlencoding = { workspace = true }
+webbrowser = { workspace = true }
+uuid = { workspace = true }
+
+antex-windows-sandbox = { workspace = true }
+tokio-util = { workspace = true, features = ["time"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+which = { workspace = true }
+windows-sys = { version = "0.52", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Console",
+    "Win32_System_IO",
+    "Win32_System_Pipes",
+    "Win32_System_Threading",
+] }
+winsplit = "0.1"
+
+# Clipboard support via `arboard` is not available on Android/Termux.
+# Only include it for non-Android targets so the crate builds on Android.
+[target.'cfg(not(target_os = "android"))'.dependencies]
+arboard = { workspace = true }
+
+
+[dev-dependencies]
+app_test_support = { workspace = true }
+antex-mcp = { workspace = true }
+core_test_support = { workspace = true }
+antex-utils-cargo-bin = { workspace = true }
+assert_matches = { workspace = true }
+chrono = { workspace = true, features = ["serde"] }
+futures = { workspace = true }
+http = { workspace = true }
+insta = { workspace = true }
+pretty_assertions = { workspace = true }
+rand = { workspace = true }
+serial_test = { workspace = true }
+tokio-tungstenite = { workspace = true }
+vt100 = { workspace = true }
+uuid = { workspace = true }
+wiremock = { workspace = true }

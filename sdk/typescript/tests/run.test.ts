@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { codexExecSpy } from "./codexExecSpy";
+import { antexExecSpy } from "./antexExecSpy";
 import { describe, expect, it } from "@jest/globals";
 
 import {
@@ -14,9 +14,9 @@ import {
   startResponsesTestProxy,
   SseResponseBody,
 } from "./responsesProxy";
-import { createMockClient, createTestClient } from "./testCodex";
+import { createMockClient, createTestClient } from "./testAntex";
 
-describe("Codex", () => {
+describe("Antex", () => {
   it("returns thread events", async () => {
     const { url, close } = await startResponsesTestProxy({
       statusCode: 200,
@@ -196,7 +196,7 @@ describe("Codex", () => {
       ],
     });
 
-    const { args: spawnArgs, restore } = codexExecSpy();
+    const { args: spawnArgs, restore } = antexExecSpy();
     const { client, cleanup } = createMockClient(url);
 
     try {
@@ -243,7 +243,7 @@ describe("Codex", () => {
         ],
       });
 
-      const { args: spawnArgs, restore } = codexExecSpy();
+      const { args: spawnArgs, restore } = antexExecSpy();
       const { client, cleanup } = createMockClient(url);
 
       try {
@@ -275,7 +275,7 @@ describe("Codex", () => {
       ],
     });
 
-    const { args: spawnArgs, restore } = codexExecSpy();
+    const { args: spawnArgs, restore } = antexExecSpy();
     const { client, cleanup } = createMockClient(url);
 
     try {
@@ -306,7 +306,7 @@ describe("Codex", () => {
       ],
     });
 
-    const { args: spawnArgs, restore } = codexExecSpy();
+    const { args: spawnArgs, restore } = antexExecSpy();
     const { client, cleanup } = createMockClient(url);
 
     try {
@@ -337,7 +337,7 @@ describe("Codex", () => {
       ],
     });
 
-    const { args: spawnArgs, restore } = codexExecSpy();
+    const { args: spawnArgs, restore } = antexExecSpy();
     const { client, cleanup } = createMockClient(url);
 
     try {
@@ -368,7 +368,7 @@ describe("Codex", () => {
       ],
     });
 
-    const { args: spawnArgs, restore } = codexExecSpy();
+    const { args: spawnArgs, restore } = antexExecSpy();
     const { client, cleanup } = createMockClient(url);
 
     try {
@@ -399,7 +399,7 @@ describe("Codex", () => {
       ],
     });
 
-    const { args: spawnArgs, restore } = codexExecSpy();
+    const { args: spawnArgs, restore } = antexExecSpy();
     const { client, cleanup } = createMockClient(url);
 
     try {
@@ -418,7 +418,7 @@ describe("Codex", () => {
     }
   });
 
-  it("passes CodexOptions config overrides as TOML --config flags", async () => {
+  it("passes AntexOptions config overrides as TOML --config flags", async () => {
     const { url, close } = await startResponsesTestProxy({
       statusCode: 200,
       responseBodies: [
@@ -430,7 +430,7 @@ describe("Codex", () => {
       ],
     });
 
-    const { args: spawnArgs, restore } = codexExecSpy();
+    const { args: spawnArgs, restore } = antexExecSpy();
     const { client, cleanup } = createTestClient({
       baseUrl: url,
       apiKey: "test",
@@ -459,7 +459,7 @@ describe("Codex", () => {
     }
   });
 
-  it("lets thread options override CodexOptions config overrides", async () => {
+  it("lets thread options override AntexOptions config overrides", async () => {
     const { url, close } = await startResponsesTestProxy({
       statusCode: 200,
       responseBodies: [
@@ -471,7 +471,7 @@ describe("Codex", () => {
       ],
     });
 
-    const { args: spawnArgs, restore } = codexExecSpy();
+    const { args: spawnArgs, restore } = antexExecSpy();
     const { client, cleanup } = createTestClient({
       baseUrl: url,
       apiKey: "test",
@@ -509,9 +509,9 @@ describe("Codex", () => {
     });
 
     // TODO(anp): Add the sandbox helper to the SDK workflow so this can use a deny-read override.
-    const writablePath = path.join(os.tmpdir(), "codex-sdk-config.env");
+    const writablePath = path.join(os.tmpdir(), "antex-sdk-config.env");
     const permissionOverride = `permissions.sdk_test.filesystem={":root"="read",${JSON.stringify(writablePath)}="write"}`;
-    const { args: spawnArgs, restore } = codexExecSpy();
+    const { args: spawnArgs, restore } = antexExecSpy();
     const { client, cleanup } = createTestClient({
       baseUrl: url,
       apiKey: "test",
@@ -550,7 +550,7 @@ describe("Codex", () => {
       ],
     });
 
-    const { args: spawnArgs, restore } = codexExecSpy();
+    const { args: spawnArgs, restore } = antexExecSpy();
     const { client, cleanup } = createMockClient(url);
 
     try {
@@ -592,7 +592,7 @@ describe("Codex", () => {
       ],
     });
 
-    const { args: spawnArgs, restore } = codexExecSpy();
+    const { args: spawnArgs, restore } = antexExecSpy();
 
     const schema = {
       type: "object",
@@ -678,8 +678,8 @@ describe("Codex", () => {
       ],
     });
 
-    const { args: spawnArgs, restore } = codexExecSpy();
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-images-"));
+    const { args: spawnArgs, restore } = antexExecSpy();
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "antex-images-"));
     const imagesDirectoryEntries: [string, string] = [
       path.join(tempDir, "first.png"),
       path.join(tempDir, "second.jpg"),
@@ -725,8 +725,8 @@ describe("Codex", () => {
       ],
     });
 
-    const { args: spawnArgs, restore } = codexExecSpy();
-    const workingDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "codex-working-dir-"));
+    const { args: spawnArgs, restore } = antexExecSpy();
+    const workingDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "antex-working-dir-"));
     const { client, cleanup } = createTestClient({
       baseUrl: url,
       apiKey: "test",
@@ -760,7 +760,7 @@ describe("Codex", () => {
         ),
       ],
     });
-    const workingDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "codex-working-dir-"));
+    const workingDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "antex-working-dir-"));
     const { client, cleanup } = createTestClient({
       baseUrl: url,
       apiKey: "test",

@@ -1,0 +1,22 @@
+load("//:defs.bzl", "MACOS_WEBRTC_RUSTC_LINK_FLAGS", "antex_rust_crate")
+load("//bazel/platforms:release_binaries.bzl", "multiplatform_binaries")
+load("//bazel/rules:e2e_benchmark.bzl", "antex_e2e_benchmark")
+
+antex_rust_crate(
+    name = "cli",
+    crate_name = "antex_cli",
+    extra_binaries = [
+        "//antex-rs/bwrap:bwrap",
+    ],
+    rustc_flags_extra = MACOS_WEBRTC_RUSTC_LINK_FLAGS,
+    test_data_extra = glob(["src/**/snapshots/**"]),
+)
+
+multiplatform_binaries(
+    name = "antex",
+)
+
+antex_e2e_benchmark(
+    name = "antex-help",
+    binaries = [":antex"],
+)

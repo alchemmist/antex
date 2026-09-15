@@ -1,0 +1,76 @@
+---
+source: tui/src/startup_draft_tests.rs
+assertion_line: 203
+expression: "snapshots.join(\"\\n---\\n\")"
+---
+resume lookup fallback:
+before:
+╭─ alchemmist antex · unknown ─────╮
+│  loading                         │
+│  loading                         │
+╰──────────────────────────────────╯
+  Resuming session…
+
+ ┃ draft while loading
+
+
+after:
+╭─ alchemmist antex · unknown ─────╮
+│  loading                         │
+│  loading                         │
+╰──────────────────────────────────╯
+
+
+ ┃ draft while loading
+
+
+---
+fork lookup fallback:
+before:
+╭─ alchemmist antex · unknown ─────╮
+│  loading                         │
+│  loading                         │
+╰──────────────────────────────────╯
+  Forking session…
+
+ ┃ draft while loading
+
+
+after:
+╭─ alchemmist antex · unknown ─────╮
+│  loading                         │
+│  loading                         │
+╰──────────────────────────────────╯
+
+
+ ┃ draft while loading
+
+
+---
+resume picker cancellation:
+before:
+hidden while picker owns input
+after:
+╭─ alchemmist antex · unknown ─────╮
+│  loading                         │
+│  loading                         │
+╰──────────────────────────────────╯
+
+
+ ┃ Ask Antex to do anything
+
+  ? for shortcuts
+---
+fork picker cancellation:
+before:
+hidden while picker owns input
+after:
+╭─ alchemmist antex · unknown ─────╮
+│  loading                         │
+│  loading                         │
+╰──────────────────────────────────╯
+
+
+ ┃ Ask Antex to do anything
+
+  ? for shortcuts

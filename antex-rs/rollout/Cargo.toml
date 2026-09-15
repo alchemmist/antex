@@ -1,0 +1,52 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "antex-rollout"
+version.workspace = true
+
+[lib]
+doctest = false
+name = "antex_rollout"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+chrono = { workspace = true, features = ["serde"] }
+antex-extension-items = { workspace = true }
+antex-file-search = { workspace = true }
+antex-git-utils = { workspace = true }
+antex-history = { workspace = true }
+antex-otel = { workspace = true }
+antex-protocol = { workspace = true }
+antex-state = { workspace = true }
+antex-utils-absolute-path = { workspace = true }
+antex-utils-path = { workspace = true }
+regex = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+tempfile = { workspace = true }
+time = { workspace = true, features = [
+    "formatting",
+    "local-offset",
+    "macros",
+    "parsing",
+] }
+tokio = { workspace = true, features = [
+    "fs",
+    "io-util",
+    "macros",
+    "process",
+    "rt",
+    "sync",
+    "time",
+] }
+tracing = { workspace = true }
+uuid = { workspace = true }
+zstd = { workspace = true }
+
+[dev-dependencies]
+antex-utils-absolute-path = { workspace = true }
+pretty_assertions = { workspace = true }

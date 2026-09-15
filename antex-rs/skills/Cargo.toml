@@ -1,0 +1,29 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "antex-skills"
+version.workspace = true
+build = "build.rs"
+
+[lib]
+doctest = false
+name = "antex_skills"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+antex-protocol = { workspace = true }
+antex-shell-command = { workspace = true }
+antex-utils-absolute-path = { workspace = true }
+antex-utils-path-uri = { workspace = true }
+include_dir = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_yaml = { workspace = true }
+shlex = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }

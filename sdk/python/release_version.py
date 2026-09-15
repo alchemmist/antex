@@ -6,15 +6,15 @@ import sys
 from pathlib import Path
 from typing import Sequence
 
-_PYTHON_RUNTIME_VERSION_PATTERN = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+(?:a[0-9]+(?:\.post[0-9]+)?)?")
-_NORMALIZED_CODEX_VERSION_PATTERN = re.compile(
-    r"[0-9]+(?:\.[0-9]+)*(?:(?:a|b|rc)[0-9]+)?(?:\.post[0-9]+)?"
+PYTHON_RUNTIME_VERSION_PATTERN = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+(?:a[0-9]+(?:\.post[0-9]+)?)?")
+NORMALIZED_ANTEX_VERSION_PATTERN = re.compile(
+    r"[0-9]+(?:\.[0-9]+)*(?:(?:a|b|rc)[0-9]+)?(?:\.post[0-9]+)?(?:\.dev[0-9]+)?"
 )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Resolve a Python runtime package version to its Codex release tag."
+        description="Resolve a Python runtime package version to its Antex release tag."
     )
     parser.add_argument("python_version")
     parser.add_argument("--github-output", type=Path, required=True)
@@ -33,21 +33,21 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def resolve_python_runtime_release(python_version: str) -> tuple[str, str]:
-    if _PYTHON_RUNTIME_VERSION_PATTERN.fullmatch(python_version) is None:
+    if PYTHON_RUNTIME_VERSION_PATTERN.fullmatch(python_version) is None:
         raise RuntimeError(
             "Python runtime version must be stable, a numbered alpha, or an "
             "alpha post-release, for example 0.136.0, 0.136.0a2, or "
             f"0.136.0a2.post1; found {python_version}"
         )
-    return python_version, codex_release_tag(python_version)
+    return python_version, antex_release_tag(python_version)
 
 
-def codex_release_tag(version: str) -> str:
-    return f"rust-v{codex_release_version(version)}"
+def antex_release_tag(version: str) -> str:
+    return f"v{antex_release_version(version)}"
 
 
-def codex_release_version(version: str) -> str:
-    normalized = normalize_codex_version(version)
+def antex_release_version(version: str) -> str:
+    normalized = normalize_antex_version(version)
     alpha_hotfix = re.fullmatch(
         r"([0-9]+(?:\.[0-9]+)*)a([0-9]+)\.post([0-9]+)",
         normalized,
@@ -65,8 +65,11 @@ def codex_release_version(version: str) -> str:
     return f"{base}-{prerelease_name}.{number}"
 
 
-def normalize_codex_version(version: str) -> str:
+def normalize_antex_version(version: str) -> str:
     normalized = version.strip()
+    normalized = re.sub(
+        r"-dev(?:\.([0-9]+))?$", lambda match: ".dev" + (match.group(1) or "0"), normalized
+    )
     if normalized.startswith("rust-v"):
         normalized = normalized.removeprefix("rust-v")
     elif normalized.startswith("v"):
@@ -77,8 +80,8 @@ def normalize_codex_version(version: str) -> str:
     normalized = re.sub(r"-beta\.?([0-9]+)$", r"b\1", normalized)
     normalized = re.sub(r"-rc\.?([0-9]+)$", r"rc\1", normalized)
 
-    if _NORMALIZED_CODEX_VERSION_PATTERN.fullmatch(normalized) is None:
-        raise RuntimeError(f"Could not normalize Codex version {version!r} to a PEP 440 version")
+    if NORMALIZED_ANTEX_VERSION_PATTERN.fullmatch(normalized) is None:
+        raise RuntimeError(f"Could not normalize Antex version {version!r} to a PEP 440 version")
     return normalized
 
 

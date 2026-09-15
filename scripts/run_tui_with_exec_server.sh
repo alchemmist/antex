@@ -3,9 +3,9 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cargo_root="$repo_root/codex-rs"
-listen_url="${CODEX_EXEC_SERVER_LISTEN_URL:-ws://127.0.0.1:0}"
-start_timeout_seconds="${CODEX_EXEC_SERVER_START_TIMEOUT_SECONDS:-120}"
+cargo_root="$repo_root/antex-rs"
+listen_url="${ANTEX_EXEC_SERVER_LISTEN_URL:-ws://127.0.0.1:0}"
+start_timeout_seconds="${ANTEX_EXEC_SERVER_START_TIMEOUT_SECONDS:-120}"
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/codex-tui-with-exec-server.XXXXXX")"
 stdout_log="$tmp_dir/exec-server.stdout"
 stderr_log="$tmp_dir/exec-server.stderr"
@@ -24,7 +24,7 @@ trap cleanup EXIT INT TERM HUP
 
 (
   cd "$cargo_root"
-  cargo run -p codex-cli --bin codex -- exec-server --listen "$listen_url"
+  cargo run -p antex-cli --bin codex -- exec-server --listen "$listen_url"
 ) >"$stdout_log" 2>"$stderr_log" &
 server_pid="$!"
 
@@ -54,8 +54,8 @@ if [[ -z "$exec_server_url" ]]; then
   exit 1
 fi
 
-export CODEX_EXEC_SERVER_URL="$exec_server_url"
-echo "Starting codex-tui with CODEX_EXEC_SERVER_URL=$CODEX_EXEC_SERVER_URL" >&2
+export ANTEX_EXEC_SERVER_URL="$exec_server_url"
+echo "Starting antex-tui with ANTEX_EXEC_SERVER_URL=$ANTEX_EXEC_SERVER_URL" >&2
 
 cd "$cargo_root"
-cargo run -p codex-tui --bin codex-tui -- -c mcp_oauth_credentials_store=file "$@"
+cargo run -p antex-tui --bin antex-tui -- -c mcp_oauth_credentials_store=file "$@"

@@ -1,0 +1,19 @@
+---
+source: tui/src/startup_draft_tests.rs
+assertion_line: 699
+expression: frames
+---
+before onboarding: hidden (0x0 viewport)
+---
+after onboarding:
+ ▀▄       ▄▀
+  ▄▀█████▀▄    ╭─ alchemmist antex · unknown ─────╮
+▄█▀▀█████▀▀█▄  │  loading                         │
+▀▀▄▄▀▀▀▀▀▄▄▀▀  │  loading                         │
+  ██  ▄  ██    ╰──────────────────────────────────╯
+   ▀▀▀ ▀▀▀
+
+
+ ┃ Ask Antex to do anything
+
+  ? for shortcuts

@@ -1,0 +1,6 @@
+load("//:defs.bzl", "antex_rust_crate")
+
+antex_rust_crate(
+    name = "pty",
+    crate_name = "antex_utils_pty",
+)

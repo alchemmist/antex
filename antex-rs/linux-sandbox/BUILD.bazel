@@ -1,0 +1,13 @@
+load("//:defs.bzl", "antex_rust_crate")
+
+antex_rust_crate(
+    name = "linux-sandbox",
+    crate_name = "antex_linux_sandbox",
+    extra_binaries = [
+        "//antex-rs/bwrap:bwrap",
+    ],
+    rustc_env_files = select({
+        "@platforms//os:linux": ["//antex-rs/bwrap:bwrap-sha256-env"],
+        "//conditions:default": [],
+    }),
+)

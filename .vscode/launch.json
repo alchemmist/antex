@@ -6,8 +6,8 @@
       "request": "launch",
       "name": "Cargo launch",
       "cargo": {
-        "cwd": "${workspaceFolder}/codex-rs",
-        "args": ["build", "--bin=codex-tui"]
+        "cwd": "${workspaceFolder}/antex-rs",
+        "args": ["build", "--bin=antex-tui"]
       },
       "args": []
     },

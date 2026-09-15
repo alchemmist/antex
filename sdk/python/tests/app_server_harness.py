@@ -10,7 +10,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-from openai_codex import CodexConfig
+from antex_sdk import AntexConfig
 
 Json = dict[str, Any]
 
@@ -208,7 +208,7 @@ class AppServerHarness:
 
     def __init__(self, tmp_path: Path, *, requires_openai_auth: bool = False) -> None:
         self.tmp_path = tmp_path
-        self.codex_home = tmp_path / "codex-home"
+        self.codex_home = tmp_path / "antex-home"
         self.workspace = tmp_path / "workspace"
         self.requires_openai_auth = requires_openai_auth
         self.responses = MockResponsesServer()
@@ -225,13 +225,13 @@ class AppServerHarness:
         shutil.rmtree(self.codex_home, ignore_errors=True)
         shutil.rmtree(self.workspace, ignore_errors=True)
 
-    def app_server_config(self) -> CodexConfig:
+    def app_server_config(self) -> AntexConfig:
         """Build SDK config for an isolated pinned-runtime app-server process."""
-        return CodexConfig(
+        return AntexConfig(
             cwd=str(self.workspace),
             env={
-                "CODEX_HOME": str(self.codex_home),
-                "CODEX_APP_SERVER_DISABLE_MANAGED_CONFIG": "1",
+                "ANTEX_HOME": str(self.codex_home),
+                "ANTEX_APP_SERVER_DISABLE_MANAGED_CONFIG": "1",
                 "RUST_LOG": "warn",
             },
         )

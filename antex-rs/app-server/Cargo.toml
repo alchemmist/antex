@@ -1,0 +1,151 @@
+[package]
+name = "antex-app-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "antex-app-server"
+path = "src/main.rs"
+
+[[bin]]
+name = "antex-app-server-test-notify-capture"
+path = "src/bin/notify_capture.rs"
+
+[[bin]]
+name = "exec-server"
+path = "src/bin/exec_server.rs"
+
+[lib]
+name = "antex_app_server"
+path = "src/lib.rs"
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+base64 = { workspace = true }
+axum = { workspace = true, default-features = false, features = [
+    "http1",
+    "json",
+    "tokio",
+    "ws",
+] }
+antex-analytics = { workspace = true }
+antex-agent-extension = { workspace = true }
+antex-arg0 = { workspace = true }
+antex-aws-auth = { workspace = true }
+antex-cloud-config = { workspace = true }
+antex-code-mode = { workspace = true }
+antex-config = { workspace = true }
+antex-connectors = { workspace = true }
+antex-core = { workspace = true }
+antex-core-plugins = { workspace = true }
+antex-diagnostics = { workspace = true }
+antex-home = { workspace = true }
+antex-exec-server = { workspace = true }
+antex-extension-api = { workspace = true }
+antex-external-agent-migration = { workspace = true }
+antex-features = { workspace = true }
+antex-goal-extension = { workspace = true }
+antex-git-attribution = { workspace = true }
+antex-guardian-v2 = { workspace = true }
+antex-git-utils = { workspace = true }
+antex-file-watcher = { workspace = true }
+antex-hooks = { workspace = true }
+antex-history-notes-extension = { workspace = true }
+antex-http-client = { workspace = true }
+antex-otel = { workspace = true }
+antex-plugin = { workspace = true }
+antex-shell-command = { workspace = true }
+antex-skills = { workspace = true }
+antex-skills-extension = { workspace = true }
+antex-utils-cli = { workspace = true }
+antex-utils-pty = { workspace = true }
+antex-backend-client = { workspace = true }
+antex-file-search = { workspace = true }
+antex-chatgpt = { workspace = true }
+antex-login = { workspace = true }
+antex-image-generation-extension = { workspace = true }
+antex-memories-extension = { workspace = true }
+antex-web-search-extension = { workspace = true }
+antex-memories-write = { workspace = true }
+antex-mcp = { workspace = true }
+antex-mcp-extension = { workspace = true }
+antex-model-provider = { workspace = true }
+antex-models-manager = { workspace = true }
+antex-protocol = { workspace = true }
+antex-queue-extension = { workspace = true }
+antex-app-server-protocol = { workspace = true }
+antex-app-server-transport = { workspace = true }
+antex-feedback = { workspace = true }
+antex-rmcp-client = { workspace = true }
+antex-rollout = { workspace = true }
+antex-sandboxing = { workspace = true }
+antex-state = { workspace = true }
+antex-thread-store = { workspace = true }
+antex-tools = { workspace = true }
+antex-utils-absolute-path = { workspace = true }
+antex-utils-json-to-toml = { workspace = true }
+antex-utils-path-uri = { workspace = true }
+chrono = { workspace = true }
+clap = { workspace = true, features = ["derive"] }
+futures = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+tempfile = { workspace = true }
+thiserror = { workspace = true }
+time = { workspace = true }
+toml = { workspace = true }
+toml_edit = { workspace = true }
+tokio = { workspace = true, features = [
+    "io-std",
+    "macros",
+    "process",
+    "rt-multi-thread",
+    "signal",
+] }
+tokio-util = { workspace = true }
+tracing = { workspace = true, features = ["log"] }
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt", "json"] }
+url = { workspace = true }
+uuid = { workspace = true, features = ["serde", "v7"] }
+
+[target.'cfg(all(target_os = "linux", target_env = "musl", any(target_arch = "x86_64", target_arch = "aarch64")))'.dependencies]
+tikv-jemallocator = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+antex-windows-sandbox = { workspace = true }
+
+[dev-dependencies]
+app_test_support = { workspace = true }
+axum = { workspace = true, default-features = false, features = [
+    "http1",
+    "json",
+    "tokio",
+] }
+base64 = { workspace = true }
+antex-model-provider-info = { workspace = true }
+antex-utils-cargo-bin = { workspace = true }
+core_test_support = { workspace = true }
+flate2 = { workspace = true }
+hmac = { workspace = true }
+http = { workspace = true }
+opentelemetry = { workspace = true }
+opentelemetry_sdk = { workspace = true }
+pretty_assertions = { workspace = true }
+rmcp = { workspace = true, default-features = false, features = [
+    "elicitation",
+    "server",
+    "transport-streamable-http-server",
+] }
+serial_test = { workspace = true }
+shlex = { workspace = true }
+tar = { workspace = true }
+test-case = "3.3.1"
+tokio-tungstenite = { workspace = true }
+tracing-opentelemetry = { workspace = true }
+wiremock = { workspace = true }

@@ -1,0 +1,7 @@
+load("//:defs.bzl", "antex_rust_crate")
+
+antex_rust_crate(
+    name = "test-binary-support",
+    crate_name = "antex_test_binary_support",
+    crate_srcs = ["lib.rs"],
+)

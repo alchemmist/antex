@@ -1,0 +1,24 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "antex-connectors-extension"
+version.workspace = true
+
+[lib]
+name = "antex_connectors_extension"
+path = "src/lib.rs"
+doctest = false
+test = false
+
+[lints]
+workspace = true
+
+[dependencies]
+antex-connectors = { workspace = true }
+antex-core-plugins = { workspace = true }
+antex-file-system = { workspace = true }
+antex-plugin = { workspace = true }
+antex-utils-path-uri = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }

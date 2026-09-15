@@ -37,12 +37,12 @@ In VS Code, choose **Dev Containers: Open Folder in Container...** and select `.
 To build the contributor image locally for x64 and then run it with the repo mounted under `/workspace`:
 
 ```shell
-CODEX_DOCKER_IMAGE_NAME=codex-linux-dev
-docker build --platform=linux/amd64 -t "$CODEX_DOCKER_IMAGE_NAME" ./.devcontainer
-docker run --platform=linux/amd64 --rm -it -e CARGO_TARGET_DIR=/workspace/codex-rs/target-amd64 -v "$PWD":/workspace -w /workspace/codex-rs "$CODEX_DOCKER_IMAGE_NAME"
+ANTEX_DOCKER_IMAGE_NAME=codex-linux-dev
+docker build --platform=linux/amd64 -t "$ANTEX_DOCKER_IMAGE_NAME" ./.devcontainer
+docker run --platform=linux/amd64 --rm -it -e CARGO_TARGET_DIR=/workspace/antex-rs/target-amd64 -v "$PWD":/workspace -w /workspace/antex-rs "$ANTEX_DOCKER_IMAGE_NAME"
 ```
 
-Note that `/workspace/target` will contain the binaries built for your host platform, so we include `-e CARGO_TARGET_DIR=/workspace/codex-rs/target-amd64` in the `docker run` command so that the binaries built inside your container are written to a separate directory.
+Note that `/workspace/target` will contain the binaries built for your host platform, so we include `-e CARGO_TARGET_DIR=/workspace/antex-rs/target-amd64` in the `docker run` command so that the binaries built inside your container are written to a separate directory.
 
 For arm64, specify `--platform=linux/arm64` instead for both `docker build` and `docker run`.
 

@@ -1,0 +1,6 @@
+load("//:defs.bzl", "antex_rust_crate")
+
+antex_rust_crate(
+    name = "approval-presets",
+    crate_name = "antex_utils_approval_presets",
+)

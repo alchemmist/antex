@@ -4,17 +4,17 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::Mutex;
 
+use antex_exec_server::ANTEX_EXEC_SERVER_NOISE_AUTH_TOKEN_ENV_VAR;
+use antex_exec_server::ANTEX_EXEC_SERVER_NOISE_ENVIRONMENT_ID_ENV_VAR;
+use antex_exec_server::ANTEX_EXEC_SERVER_NOISE_REGISTRY_URL_ENV_VAR;
+use antex_exec_server::ANTEX_EXEC_SERVER_URL_ENV_VAR;
+use antex_exec_server_test_support::relay::TEST_TIMEOUT as VERSION_SKEW_TIMEOUT;
+use antex_exec_server_test_support::relay::accept_websocket;
+use antex_exec_server_test_support::relay::assert_relay_data_is_encrypted;
+use antex_exec_server_test_support::relay::proxy_relay_frames;
+use antex_exec_server_test_support::relay::registered_executor_public_key;
 use anyhow::Context;
 use anyhow::Result;
-use codex_exec_server::CODEX_EXEC_SERVER_NOISE_AUTH_TOKEN_ENV_VAR;
-use codex_exec_server::CODEX_EXEC_SERVER_NOISE_ENVIRONMENT_ID_ENV_VAR;
-use codex_exec_server::CODEX_EXEC_SERVER_NOISE_REGISTRY_URL_ENV_VAR;
-use codex_exec_server::CODEX_EXEC_SERVER_URL_ENV_VAR;
-use codex_exec_server_test_support::relay::TEST_TIMEOUT as VERSION_SKEW_TIMEOUT;
-use codex_exec_server_test_support::relay::accept_websocket;
-use codex_exec_server_test_support::relay::assert_relay_data_is_encrypted;
-use codex_exec_server_test_support::relay::proxy_relay_frames;
-use codex_exec_server_test_support::relay::registered_executor_public_key;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
 use serde_json::json;
@@ -39,9 +39,9 @@ const ENVIRONMENT_ID: &str = "env-noise-relay-test";
 const EXECUTOR_REGISTRATION_ID: &str = "registration-1";
 const HARNESS_KEY_AUTHORIZATION: &str = "harness-key-authorization";
 const REGISTRY_TOKEN: &str = "registry-token";
-const RELEASED_CODEX_ENV_VAR: &str = "CODEX_TEST_RELEASED_CODEX";
-const CURRENT_CODEX_ENV_VAR: &str = "CODEX_TEST_CURRENT_CODEX";
-const EXECUTOR_MARKER_ENV_VAR: &str = "CODEX_EXECUTOR_VERSION_SKEW_MARKER";
+const RELEASED_CODEX_ENV_VAR: &str = "ANTEX_TEST_RELEASED_CODEX";
+const CURRENT_CODEX_ENV_VAR: &str = "ANTEX_TEST_CURRENT_CODEX";
+const EXECUTOR_MARKER_ENV_VAR: &str = "ANTEX_EXECUTOR_VERSION_SKEW_MARKER";
 const EXPECTED_OUTPUT: &str = "executor-version-skew-ok";
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -82,11 +82,11 @@ fn version_skew_binaries() -> Result<Option<(PathBuf, PathBuf)>> {
 }
 
 async fn assert_noise_version_skew(app_binary: &Path, executor_binary: &Path) -> Result<()> {
-    let codex_home = TempDir::new()?;
-    let model = mock_model(codex_home.path()).await?;
+    let antex_home = TempDir::new()?;
+    let model = mock_model(antex_home.path()).await?;
     let model_url = model.uri();
     std::fs::write(
-        codex_home.path().join("config.toml"),
+        antex_home.path().join("config.toml"),
         format!(
             r#"
 model = "mock-model"
@@ -140,9 +140,9 @@ stream_max_retries = 0
             "--environment-id",
             ENVIRONMENT_ID,
         ])
-        .current_dir(codex_home.path())
-        .env("CODEX_HOME", codex_home.path())
-        .env("CODEX_API_KEY", REGISTRY_TOKEN)
+        .current_dir(antex_home.path())
+        .env("ANTEX_HOME", antex_home.path())
+        .env("ANTEX_API_KEY", REGISTRY_TOKEN)
         .env(EXECUTOR_MARKER_ENV_VAR, EXPECTED_OUTPUT)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -182,20 +182,20 @@ stream_max_retries = 0
 
     let mut app_server = Command::new(app_binary)
         .arg("app-server")
-        .current_dir(codex_home.path())
-        .env("CODEX_HOME", codex_home.path())
-        .env("CODEX_API_KEY", REGISTRY_TOKEN)
+        .current_dir(antex_home.path())
+        .env("ANTEX_HOME", antex_home.path())
+        .env("ANTEX_API_KEY", REGISTRY_TOKEN)
         .env(
-            "CODEX_APP_SERVER_MANAGED_CONFIG_PATH",
-            codex_home.path().join("managed_config.toml"),
+            "ANTEX_APP_SERVER_MANAGED_CONFIG_PATH",
+            antex_home.path().join("managed_config.toml"),
         )
-        .env(CODEX_EXEC_SERVER_NOISE_REGISTRY_URL_ENV_VAR, &registry_url)
+        .env(ANTEX_EXEC_SERVER_NOISE_REGISTRY_URL_ENV_VAR, &registry_url)
         .env(
-            CODEX_EXEC_SERVER_NOISE_ENVIRONMENT_ID_ENV_VAR,
+            ANTEX_EXEC_SERVER_NOISE_ENVIRONMENT_ID_ENV_VAR,
             ENVIRONMENT_ID,
         )
-        .env(CODEX_EXEC_SERVER_NOISE_AUTH_TOKEN_ENV_VAR, REGISTRY_TOKEN)
-        .env_remove(CODEX_EXEC_SERVER_URL_ENV_VAR)
+        .env(ANTEX_EXEC_SERVER_NOISE_AUTH_TOKEN_ENV_VAR, REGISTRY_TOKEN)
+        .env_remove(ANTEX_EXEC_SERVER_URL_ENV_VAR)
         .env_remove(EXECUTOR_MARKER_ENV_VAR)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -228,7 +228,7 @@ stream_max_retries = 0
         &mut notifications,
         /*id*/ 2,
         "thread/start",
-        json!({"cwd": codex_home.path()}),
+        json!({"cwd": antex_home.path()}),
     )
     .await?;
     let thread_id = thread["thread"]["id"]
@@ -263,7 +263,7 @@ stream_max_retries = 0
     }
 
     assert_eq!(
-        std::fs::read_to_string(codex_home.path().join("version-skew-output.txt"))?,
+        std::fs::read_to_string(antex_home.path().join("version-skew-output.txt"))?,
         EXPECTED_OUTPUT
     );
     assert_relay_data_is_encrypted(&captured_frames)?;
@@ -306,11 +306,11 @@ async fn app_server_request(
     }
 }
 
-async fn mock_model(codex_home: &Path) -> Result<MockServer> {
+async fn mock_model(antex_home: &Path) -> Result<MockServer> {
     let server = MockServer::start().await;
     let arguments = serde_json::to_string(&json!({
         "cmd": format!("printf '%s' \"${EXECUTOR_MARKER_ENV_VAR}\" > version-skew-output.txt"),
-        "workdir": codex_home,
+        "workdir": antex_home,
         "yield_time_ms": 5_000,
     }))?;
     let completed = |id| {

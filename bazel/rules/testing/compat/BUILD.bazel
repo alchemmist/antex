@@ -17,10 +17,10 @@ rust_test(
         "@platforms//cpu:x86_64",
         "@platforms//os:linux",
     ],
-    visibility = ["//codex-rs/exec-server:__pkg__"],
+    visibility = ["//antex-rs/exec-server:__pkg__"],
     deps = [
-        "//codex-rs/exec-server",
-        "//codex-rs/exec-server/tests/support",
+        "//antex-rs/exec-server",
+        "//antex-rs/exec-server/tests/support",
         "@crates//:anyhow",
         "@crates//:pretty_assertions",
         "@crates//:serde_json",

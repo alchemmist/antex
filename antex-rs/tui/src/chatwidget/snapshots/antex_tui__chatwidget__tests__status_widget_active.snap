@@ -1,0 +1,12 @@
+---
+source: tui/src/chatwidget/tests/status_and_layout.rs
+assertion_line: 2765
+expression: normalized_backend_snapshot(terminal.backend())
+---
+"                                                                                "
+"• Analyzing (0s • esc to interrupt)                                             "
+"                                                                                "
+"                                                                                "
+" ┃ Ask Antex to do anything                                                     "
+"                                                                                "
+"  gpt-5.6-sol default · /tmp/project                                            "

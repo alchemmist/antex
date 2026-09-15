@@ -292,8 +292,8 @@ fn ui() {
 
 #[test]
 fn workspace_crate_filter_accepts_first_party_names_only() {
-    assert!(is_workspace_crate_name("codex_core"));
-    assert!(is_workspace_crate_name("codex_tui"));
+    assert!(is_workspace_crate_name("antex_core"));
+    assert!(is_workspace_crate_name("antex_tui"));
     assert!(is_workspace_crate_name("core_test_support"));
     assert!(!is_workspace_crate_name("std"));
     assert!(!is_workspace_crate_name("tokio"));
