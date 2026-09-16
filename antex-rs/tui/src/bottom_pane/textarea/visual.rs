@@ -22,6 +22,7 @@ pub(super) enum VimVisualKind {
 pub(super) struct VimVisualState {
     pub(super) anchor: usize,
     pub(super) kind: VimVisualKind,
+    pending_g: bool,
 }
 
 impl TextArea {
@@ -29,6 +30,7 @@ impl TextArea {
         self.vim_visual = Some(VimVisualState {
             anchor: self.cursor_pos,
             kind,
+            pending_g: false,
         });
         self.vim_pending = VimPending::None;
     }
@@ -43,6 +45,52 @@ impl TextArea {
         if matches!(self.vim_pending, VimPending::Find { .. }) {
             let pending = std::mem::replace(&mut self.vim_pending, VimPending::None);
             self.handle_vim_pending_command(pending, event);
+            return;
+        }
+
+        if let Some(visual) = self.vim_visual.as_mut()
+            && std::mem::take(&mut visual.pending_g)
+        {
+            let uppercase = visual_shift_key(event, 'u');
+            if uppercase || visual_key(event, 'u') {
+                let ranges = self.vim_visual_ranges();
+                let cursor = ranges.first().map_or(self.cursor_pos, |range| range.start);
+                let mut replacements = Vec::new();
+                for range in ranges {
+                    for (offset, grapheme) in
+                        self.text[range.clone()].grapheme_indices(/*is_extended*/ true)
+                    {
+                        let start = range.start + offset;
+                        let end = start + grapheme.len();
+                        if self
+                            .elements
+                            .iter()
+                            .any(|element| element.range.start < end && start < element.range.end)
+                        {
+                            continue;
+                        }
+                        let replacement = if uppercase {
+                            grapheme.to_uppercase()
+                        } else {
+                            grapheme.to_lowercase()
+                        };
+                        if replacement != grapheme {
+                            replacements.push((start..end, replacement));
+                        }
+                    }
+                }
+                for (range, replacement) in replacements.into_iter().rev() {
+                    self.replace_range_raw(range, &replacement);
+                }
+                self.set_cursor(cursor.min(self.text.len()));
+                self.enter_vim_normal_mode();
+            }
+            return;
+        }
+        if visual_key(event, 'g') {
+            if let Some(visual) = self.vim_visual.as_mut() {
+                visual.pending_g = true;
+            }
             return;
         }
 
@@ -268,7 +316,7 @@ fn display_column_range(
     let mut display_col = 0;
     let mut start = None;
     let mut end = None;
-    for (offset, grapheme) in line.grapheme_indices(true) {
+    for (offset, grapheme) in line.grapheme_indices(/*is_extended*/ true) {
         let next_col = display_col + super::display_width(grapheme);
         if start.is_none() && next_col > start_col {
             start = Some(line_start + offset);

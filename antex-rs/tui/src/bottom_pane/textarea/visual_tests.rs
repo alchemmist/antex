@@ -108,3 +108,62 @@ fn visual_selection_rendering_uses_quiet_terminal_gray() {
 
     insta::assert_snapshot!(rendered, @"[a][l][p][h][a]");
 }
+
+#[test]
+fn visual_case_commands_transform_unicode_selection_and_exit() {
+    let mut textarea = visual_textarea("straße привет tail", /*cursor*/ 0);
+    keys(&mut textarea, "vegU");
+    assert_eq!(textarea.text(), "STRASSE привет tail");
+    assert_eq!(textarea.vim_mode_label(), Some("Normal"));
+    assert_eq!(textarea.cursor(), 0);
+    keys(&mut textarea, "vegu");
+    assert_eq!(textarea.text(), "strasse привет tail");
+    keys(&mut textarea, "wvegU");
+    assert_eq!(textarea.text(), "strasse ПРИВЕТ tail");
+    let area = Rect::new(0, 0, /*width*/ 24, /*height*/ 1);
+    let mut buffer = Buffer::empty(area);
+    WidgetRef::render_ref(&&textarea, area, &mut buffer);
+    let rendered = (0..area.width)
+        .map(|x| buffer[(x, 0)].symbol())
+        .collect::<String>();
+    insta::assert_snapshot!(rendered.trim_end(), @"strasse ПРИВЕТ tail");
+}
+
+#[test]
+fn visual_case_prefix_cancels_on_escape_and_unknown_key() {
+    let mut textarea = visual_textarea("hello", /*cursor*/ 0);
+    keys(&mut textarea, "veg");
+    textarea.input(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    keys(&mut textarea, "0vegx");
+    assert_eq!(textarea.text(), "hello");
+    assert!(textarea.is_vim_visual_mode());
+    keys(&mut textarea, "gU");
+    assert_eq!(textarea.text(), "HELLO");
+}
+
+#[test]
+fn line_and_block_visual_case_commands_preserve_unselected_text() {
+    let mut textarea = visual_textarea("ab cd\nef gh\nkeep", /*cursor*/ 0);
+    textarea.input(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::CONTROL));
+    keys(&mut textarea, "ljgU");
+    assert_eq!(textarea.text(), "AB cd\nEF gh\nkeep");
+    textarea.input(KeyEvent::new(KeyCode::Char('V'), KeyModifiers::SHIFT));
+    keys(&mut textarea, "jgu");
+    assert_eq!(textarea.text(), "ab cd\nef gh\nkeep");
+}
+
+#[test]
+fn visual_case_change_preserves_attachment_markers() {
+    let mut textarea = visual_textarea("before ", /*cursor*/ 7);
+    textarea.insert_element("[photo.png]");
+    textarea.insert_str(" after");
+    textarea.set_cursor(0);
+    keys(&mut textarea, "v$g");
+    textarea.input(KeyEvent::new(KeyCode::Char('U'), KeyModifiers::SHIFT));
+    assert_eq!(textarea.text(), "BEFORE [photo.png] AFTER");
+    assert_eq!(textarea.elements.len(), 1);
+    assert_eq!(
+        &textarea.text()[textarea.elements[0].range.clone()],
+        "[photo.png]"
+    );
+}
