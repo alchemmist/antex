@@ -283,3 +283,52 @@ async fn read_only_files_and_private_directory_permissions_survive_migration() -
     );
     Ok(())
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn internal_sqlite_symlinks_are_rejected_before_publication() -> anyhow::Result<()> {
+    use antex_state::SqliteConfig;
+    use antex_utils_absolute_path::AbsolutePathBuf;
+
+    for relative in [false, true] {
+        let root = tempdir()?;
+        let source = root.path().join(".codex");
+        let destination = root.path().join(".antex");
+        fs::create_dir(&source)?;
+        let source = source.canonicalize()?;
+        let config = SqliteConfig::from_sqlite_home(AbsolutePathBuf::from_absolute_path(&source)?);
+        let database = config.state_db_path();
+        let pool = config.open_read_write_pool(&database).await?;
+        sqlx::query("CREATE TABLE threads (rollout_path TEXT)")
+            .execute(&pool)
+            .await?;
+        sqlx::query("INSERT INTO threads VALUES (?)")
+            .bind(source.join("sessions/one.jsonl").to_string_lossy().as_ref())
+            .execute(&pool)
+            .await?;
+        pool.close().await;
+        let target = source.join("internal.sqlite");
+        fs::rename(&database, &target)?;
+        let original = fs::read(&target)?;
+        let link = if relative {
+            std::path::PathBuf::from("internal.sqlite")
+        } else {
+            target.clone()
+        };
+        std::os::unix::fs::symlink(&link, &database)?;
+        let result = prepare(inspect(&source, &destination)?).await;
+        let error = match result {
+            Ok(_) => anyhow::bail!("migration accepted a SQLite symlink"),
+            Err(error) => error,
+        };
+        assert!(
+            error
+                .to_string()
+                .contains("SQLite symlink requires a separate migration")
+        );
+        assert!(!destination.exists());
+        assert_eq!(fs::read(&target)?, original);
+        assert_eq!(fs::read_link(&database)?, link);
+    }
+    Ok(())
+}

@@ -18,14 +18,14 @@ pub(crate) async fn rewrite_paths(
         .ok_or_else(|| anyhow::anyhow!("destination path must be UTF-8 for SQLite migration"))?;
     let prefix = format!("{source}{}", std::path::MAIN_SEPARATOR);
     for database in config.runtime_db_paths() {
+        ensure!(
+            !database.path.is_symlink(),
+            "SQLite symlink requires a separate migration: {}",
+            database.path.display()
+        );
         if !database.path.is_file() {
             continue;
         }
-        ensure!(
-            !database.path.is_symlink(),
-            "external SQLite symlink requires a separate migration: {}",
-            database.path.display()
-        );
         let pool = config.open_read_write_pool(&database.path).await?;
         let result = async {
             let checks = sqlx::query_scalar::<_, String>("PRAGMA integrity_check")
