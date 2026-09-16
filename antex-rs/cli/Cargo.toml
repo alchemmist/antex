@@ -1,0 +1,139 @@
+[package]
+name = "antex-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+build = "build.rs"
+default-run = "antex"
+
+[[bin]]
+name = "antex"
+path = "src/main.rs"
+
+[[bin]]
+name = "logs_client"
+path = "src/bin/logs_client.rs"
+
+[lib]
+name = "antex_cli"
+path = "src/lib.rs"
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+antex-home-migration = { workspace = true }
+dirs = { workspace = true }
+anyhow = { workspace = true }
+chrono = { workspace = true }
+clap = { workspace = true, features = ["derive", "env"] }
+clap_complete = { workspace = true }
+antex-app-server = { workspace = true }
+antex-app-server-daemon = { workspace = true }
+antex-app-server-protocol = { workspace = true }
+antex-app-server-test-client = { workspace = true }
+antex-arg0 = { workspace = true }
+antex-build-info = { workspace = true }
+antex-api = { workspace = true }
+antex-aws-auth = { workspace = true }
+antex-chatgpt = { workspace = true }
+antex-cloud-config = { workspace = true }
+antex-cloud-tasks = { path = "../cloud-tasks" }
+antex-utils-cli = { workspace = true }
+antex-config = { workspace = true }
+antex-core = { workspace = true }
+antex-core-plugins = { workspace = true }
+antex-history = { workspace = true }
+antex-home = { workspace = true }
+antex-http-client = { workspace = true }
+antex-exec = { workspace = true }
+antex-exec-server = { workspace = true }
+antex-execpolicy = { workspace = true }
+antex-extension-api = { workspace = true }
+antex-features = { workspace = true }
+antex-git-attribution = { workspace = true }
+antex-git-utils = { workspace = true }
+antex-install-context = { workspace = true }
+antex-login = { workspace = true }
+antex-memories-write = { workspace = true }
+antex-mcp = { workspace = true }
+antex-mcp-server = { workspace = true }
+antex-model-provider = { workspace = true }
+antex-models-manager = { workspace = true }
+antex-plugin = { workspace = true }
+antex-protocol = { workspace = true }
+antex-responses-api-proxy = { workspace = true }
+antex-rmcp-client = { workspace = true }
+antex-rollout = { workspace = true }
+antex-rollout-trace = { workspace = true }
+antex-sandboxing = { workspace = true }
+antex-skills-extension = { workspace = true }
+antex-state = { workspace = true }
+antex-stdio-to-uds = { workspace = true }
+antex-terminal-detection = { workspace = true }
+antex-thread-store = { workspace = true }
+antex-tui = { workspace = true }
+antex-utils-absolute-path = { workspace = true }
+antex-utils-path = { workspace = true }
+crossterm = { workspace = true }
+http = { workspace = true }
+libc = { workspace = true }
+os_info = { workspace = true }
+owo-colors = { workspace = true }
+regex-lite = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+supports-color = { workspace = true }
+sys-locale = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = [
+    "io-std",
+    "macros",
+    "net",
+    "process",
+    "rt-multi-thread",
+    "signal",
+    "time",
+] }
+toml = { workspace = true }
+tracing = { workspace = true }
+tracing-appender = { workspace = true }
+tracing-subscriber = { workspace = true }
+unicode-segmentation = { workspace = true }
+url = { workspace = true }
+which = { workspace = true }
+
+[target.'cfg(all(target_os = "linux", target_env = "musl", any(target_arch = "x86_64", target_arch = "aarch64")))'.dependencies]
+tikv-jemallocator = { workspace = true }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+antex_windows_sandbox = { package = "antex-windows-sandbox", path = "../windows-sandbox-rs" }
+windows-sys = { version = "0.52", features = [
+    "Win32_Foundation",
+    "Win32_Storage_Packaging_Appx",
+    "Win32_System_Console",
+    "Win32_System_Threading",
+] }
+
+[dev-dependencies]
+app_test_support = { workspace = true }
+assert_cmd = { workspace = true }
+assert_matches = { workspace = true }
+antex-utils-cargo-bin = { workspace = true }
+antex-utils-pty = { workspace = true }
+flate2 = { workspace = true }
+futures = { workspace = true }
+insta = { workspace = true }
+predicates = { workspace = true }
+pretty_assertions = { workspace = true }
+sqlx = { workspace = true }
+tar = { workspace = true }
+tokio-tungstenite = { workspace = true }
+wiremock = { workspace = true }
+zstd = { workspace = true }
+
+[package.metadata.cargo-shear]
+# These Rust sources are intentionally Bazel-only macrobenchmarks rather than
+# Cargo targets.
+ignored-paths = ["e2e_benches/*.rs"]

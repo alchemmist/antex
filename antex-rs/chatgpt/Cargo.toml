@@ -1,0 +1,31 @@
+[package]
+name = "antex-chatgpt"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true, features = ["derive"] }
+antex-connectors = { workspace = true }
+antex-core = { workspace = true }
+antex-git-utils = { workspace = true }
+antex-http-client = { workspace = true }
+antex-login = { workspace = true }
+antex-model-provider = { workspace = true }
+antex-plugin = { workspace = true }
+antex-utils-cli = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+tokio = { workspace = true, features = ["full"] }
+
+[dev-dependencies]
+antex-utils-cargo-bin = { workspace = true }
+pretty_assertions = { workspace = true }
+serde_json = { workspace = true }
+tempfile = { workspace = true }
+
+[lib]
+doctest = false

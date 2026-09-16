@@ -1,0 +1,39 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "antex-tools"
+version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+bitflags = { workspace = true }
+antex-code-mode = { workspace = true }
+antex-connectors = { workspace = true }
+antex-features = { workspace = true }
+antex-file-system = { workspace = true }
+antex-extension-items = { workspace = true }
+antex-protocol = { workspace = true }
+antex-utils-absolute-path = { workspace = true }
+antex-utils-output-truncation = { workspace = true }
+antex-utils-string = { workspace = true }
+jsonptr = { workspace = true }
+rmcp = { workspace = true, default-features = false, features = [
+    "base64",
+    "macros",
+    "schemars",
+    "server",
+] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["raw_value"] }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+urlencoding = { workspace = true }
+
+[dev-dependencies]
+antex-utils-cargo-bin = { workspace = true }
+pretty_assertions = { workspace = true }
+
+[lib]
+doctest = false

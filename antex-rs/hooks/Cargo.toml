@@ -1,0 +1,40 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "antex-hooks"
+version.workspace = true
+
+[lib]
+doctest = false
+name = "antex_hooks"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+async-channel = { workspace = true }
+chrono = { workspace = true, features = ["serde"] }
+antex-config = { workspace = true }
+antex-plugin = { workspace = true }
+antex-protocol = { workspace = true }
+antex-utils-absolute-path = { workspace = true }
+antex-utils-output-truncation = { workspace = true }
+antex-utils-path-uri = { workspace = true }
+futures = { workspace = true, features = ["alloc"] }
+regex = { workspace = true }
+schemars = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["fs", "io-util", "process", "sync", "time"] }
+tracing = { workspace = true }
+uuid = { workspace = true, features = ["v4"] }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+
+[target.'cfg(any(unix, windows))'.dependencies]
+antex-utils-pty = { workspace = true }

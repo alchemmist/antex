@@ -1,0 +1,6 @@
+---
+source: tui/src/chatwidget/tests/guardian.rs
+assertion_line: 190
+expression: lines_to_single_string(timeout)
+---
+✗ Review timed out before antex could send input to terminal 42: "confirm\n"

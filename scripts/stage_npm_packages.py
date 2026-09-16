@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stage one or more Codex npm packages for release."""
+"""Stage one or more Antex npm packages for release."""
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -17,7 +17,7 @@ from typing import Sequence
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-BUILD_SCRIPT = REPO_ROOT / "codex-cli" / "scripts" / "build_npm_package.py"
+BUILD_SCRIPT = REPO_ROOT / "antex-cli" / "scripts" / "build_npm_package.py"
 WORKFLOW_NAME = ".github/workflows/rust-release.yml"
 GITHUB_REPO = "openai/codex"
 BINARY_TARGETS = (
@@ -36,9 +36,9 @@ _BUILD_MODULE = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_BUILD_MODULE)
 PACKAGE_NATIVE_COMPONENTS = getattr(_BUILD_MODULE, "PACKAGE_NATIVE_COMPONENTS", {})
 PACKAGE_EXPANSIONS = getattr(_BUILD_MODULE, "PACKAGE_EXPANSIONS", {})
-CODEX_PLATFORM_PACKAGES = getattr(_BUILD_MODULE, "CODEX_PLATFORM_PACKAGES", {})
-CODEX_PACKAGE_COMPONENT = getattr(
-    _BUILD_MODULE, "CODEX_PACKAGE_COMPONENT", "codex-package"
+ANTEX_PLATFORM_PACKAGES = getattr(_BUILD_MODULE, "ANTEX_PLATFORM_PACKAGES", {})
+ANTEX_PACKAGE_COMPONENT = getattr(
+    _BUILD_MODULE, "ANTEX_PACKAGE_COMPONENT", "codex-package"
 )
 
 
@@ -56,10 +56,10 @@ class WorkflowArtifact:
 
 
 BINARY_COMPONENTS = {
-    "codex-responses-api-proxy": BinaryComponent(
-        artifact_prefix="codex-responses-api-proxy",
-        dest_dir="codex-responses-api-proxy",
-        binary_basename="codex-responses-api-proxy",
+    "antex-responses-api-proxy": BinaryComponent(
+        artifact_prefix="antex-responses-api-proxy",
+        dest_dir="antex-responses-api-proxy",
+        binary_basename="antex-responses-api-proxy",
     ),
 }
 
@@ -213,8 +213,8 @@ def install_from_workflow_artifacts(
 ) -> None:
     artifacts = select_target_artifacts(workflow_id, components)
     download_artifacts(workflow_id, artifacts_dir, artifacts)
-    if CODEX_PACKAGE_COMPONENT in components:
-        install_codex_package_archives(artifacts_dir, vendor_dir, BINARY_TARGETS)
+    if ANTEX_PACKAGE_COMPONENT in components:
+        install_antex_package_archives(artifacts_dir, vendor_dir, BINARY_TARGETS)
     install_binary_components(
         artifacts_dir,
         vendor_dir,
@@ -226,7 +226,7 @@ def select_target_artifacts(
     workflow_id: str,
     components: Sequence[str],
 ) -> list[WorkflowArtifact]:
-    needs_target_artifacts = CODEX_PACKAGE_COMPONENT in components or any(
+    needs_target_artifacts = ANTEX_PACKAGE_COMPONENT in components or any(
         component in BINARY_COMPONENTS for component in components
     )
     if not needs_target_artifacts:
@@ -309,7 +309,7 @@ def download_artifacts(
         )
 
 
-def install_codex_package_archives(
+def install_antex_package_archives(
     artifacts_dir: Path,
     vendor_dir: Path,
     targets: Sequence[str],
@@ -318,14 +318,14 @@ def install_codex_package_archives(
         return
 
     print(
-        "Installing Codex package archives for targets: " + ", ".join(targets),
+        "Installing Antex package archives for targets: " + ", ".join(targets),
         flush=True,
     )
     max_workers = min(len(targets), max(1, (os.cpu_count() or 1)))
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
             executor.submit(
-                install_single_codex_package_archive,
+                install_single_antex_package_archive,
                 artifacts_dir,
                 vendor_dir,
                 target,
@@ -337,7 +337,7 @@ def install_codex_package_archives(
             print(f"  installed {installed_path}", flush=True)
 
 
-def install_single_codex_package_archive(
+def install_single_antex_package_archive(
     artifacts_dir: Path,
     vendor_dir: Path,
     target: str,
@@ -472,7 +472,7 @@ def run_command(cmd: list[str]) -> None:
 
 
 def tarball_name_for_package(package: str, version: str) -> str:
-    if package in CODEX_PLATFORM_PACKAGES:
+    if package in ANTEX_PLATFORM_PACKAGES:
         platform = package.removeprefix("codex-")
         return f"codex-npm-{platform}-{version}.tgz"
     return f"{package}-npm-{version}.tgz"

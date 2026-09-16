@@ -1,0 +1,52 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "antex-mcp"
+version.workspace = true
+
+[lib]
+name = "antex_mcp"
+path = "src/lib.rs"
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+arc-swap = { workspace = true }
+async-channel = { workspace = true }
+antex-async-utils = { workspace = true }
+antex-api = { workspace = true }
+antex-config = { workspace = true }
+antex-connectors = { workspace = true }
+antex-diagnostics = { workspace = true }
+antex-exec-server = { workspace = true }
+antex-login = { workspace = true }
+antex-model-provider = { workspace = true }
+antex-otel = { workspace = true }
+antex-protocol = { workspace = true }
+antex-rmcp-client = { workspace = true }
+antex-utils-path-uri = { workspace = true }
+antex-utils-plugins = { workspace = true }
+futures = { workspace = true }
+lru = { workspace = true }
+regex-lite = { workspace = true }
+rmcp = { workspace = true, default-features = false, features = ["base64", "macros", "schemars", "server"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+sha1 = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "macros", "rt-multi-thread"] }
+tokio-util = { workspace = true, features = ["rt"] }
+tracing = { workspace = true }
+url = { workspace = true }
+
+[dev-dependencies]
+assert_matches = { workspace = true }
+antex-exec-server-test-support = { workspace = true }
+antex-plugin = { workspace = true }
+insta = { workspace = true }
+pretty_assertions = { workspace = true }
+rmcp = { workspace = true, default-features = false, features = ["base64", "macros", "schemars", "server"] }
+tempfile = { workspace = true }

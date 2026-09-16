@@ -1,0 +1,6 @@
+load("//:defs.bzl", "antex_rust_crate")
+
+antex_rust_crate(
+    name = "app-server-client",
+    crate_name = "antex_app_server_client",
+)

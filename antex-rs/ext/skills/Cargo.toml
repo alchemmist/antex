@@ -1,0 +1,49 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "antex-skills-extension"
+version.workspace = true
+
+[lib]
+name = "antex_skills_extension"
+path = "src/lib.rs"
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+antex-analytics = { workspace = true }
+antex-config = { workspace = true }
+antex-exec-server = { workspace = true }
+antex-extension-api = { workspace = true }
+antex-mcp = { workspace = true }
+antex-otel = { workspace = true }
+antex-protocol = { workspace = true }
+antex-skills = { workspace = true }
+antex-tools = { workspace = true }
+antex-utils-absolute-path = { workspace = true }
+antex-utils-path-uri = { workspace = true }
+antex-utils-plugins = { workspace = true }
+antex-utils-string = { workspace = true }
+dirs = { workspace = true }
+futures = { workspace = true }
+schemars = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+tokio = { workspace = true, features = ["sync", "time"] }
+toml = { workspace = true }
+tracing = { workspace = true }
+url = { workspace = true }
+
+[dev-dependencies]
+assert_matches = { workspace = true }
+antex-models-manager = { workspace = true }
+antex-utils-cargo-bin = { workspace = true }
+dunce = { workspace = true }
+insta = { workspace = true }
+opentelemetry_sdk = { workspace = true }
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

@@ -1,0 +1,33 @@
+---
+source: tui/src/history_cell/tests.rs
+expression: rendered
+---
+Ant01:
+wide:
+  ▀▄     ▄▀    ╭─ alchemmist antex · unknown ─────╮
+   ▄▀▄▄▄▀▄     │  gpt-5.6-sol · low               │
+ ▄█▀▀███▀▀█▄   │  /tmp/project                    │
+ ▀▀▄▄▀▀▀▄▄▀▀   │  YOLO · context 1M               │
+  ▄█▀   ▀█▄    ╰──────────────────────────────────╯
+ ▀▀       ▀▀
+narrow:
+╭─ alchemmist antex · unknown ─────╮
+│  gpt-5.6-sol · low               │
+│  /tmp/project                    │
+│  YOLO · context 1M               │
+╰──────────────────────────────────╯
+---
+Ant03:
+wide:
+ ▀▄       ▄▀   ╭─ alchemmist antex · unknown ─────╮
+  ▄▀█████▀▄    │  gpt-5.6-sol · low               │
+▄█▀▀█████▀▀█▄  │  /tmp/project                    │
+▀▀▄▄▀▀▀▀▀▄▄▀▀  │  YOLO · context 1M               │
+  ██  ▄  ██    ╰──────────────────────────────────╯
+   ▀▀▀ ▀▀▀
+narrow:
+╭─ alchemmist antex · unknown ─────╮
+│  gpt-5.6-sol · low               │
+│  /tmp/project                    │
+│  YOLO · context 1M               │
+╰──────────────────────────────────╯

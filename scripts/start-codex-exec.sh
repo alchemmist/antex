@@ -22,8 +22,8 @@ remote_host="$1"
 shift
 
 remote_path='~/code/codex-sync'
-local_exec_server_port="${CODEX_REMOTE_EXEC_SERVER_LOCAL_PORT:-8765}"
-remote_exec_server_start_timeout_seconds="${CODEX_REMOTE_EXEC_SERVER_START_TIMEOUT_SECONDS:-15}"
+local_exec_server_port="${ANTEX_REMOTE_EXEC_SERVER_LOCAL_PORT:-8765}"
+remote_exec_server_start_timeout_seconds="${ANTEX_REMOTE_EXEC_SERVER_START_TIMEOUT_SECONDS:-15}"
 
 remote_exec_server_pid=''
 remote_exec_server_log_path=''
@@ -77,7 +77,7 @@ rsync \
   --human-readable \
   --itemize-changes \
   --exclude '.git/' \
-  --exclude 'codex-rs/target/' \
+  --exclude 'antex-rs/target/' \
   --filter=':- .gitignore' \
   "$@" \
   "${repo_root}/" \
@@ -98,10 +98,10 @@ remote_exec_server_log_path="$1"
 remote_exec_server_pid_path="$2"
 remote_exec_server_start_timeout_seconds="$3"
 remote_repo_root="$HOME/code/codex-sync"
-remote_codex_rs="$remote_repo_root/codex-rs"
+remote_codex_rs="$remote_repo_root/antex-rs"
 
 cd "${remote_codex_rs}"
-cargo build -p codex-cli --bin codex
+cargo build -p antex-cli --bin codex
 
 rm -f "${remote_exec_server_log_path}" "${remote_exec_server_pid_path}"
 nohup ./target/debug/codex exec-server --listen ws://127.0.0.1:0 \
@@ -170,7 +170,7 @@ echo "Remote exec server: ${listen_url}"
 echo "Remote exec server log: ${remote_exec_server_log_path}"
 echo "Press Ctrl-C to stop the SSH tunnel and remote exec server."
 echo "Start codex via: "
-printf '  CODEX_EXEC_SERVER_URL=ws://127.0.0.1:%s codex -C %q\n' \
+printf '  ANTEX_EXEC_SERVER_URL=ws://127.0.0.1:%s codex -C %q\n' \
   "${local_exec_server_port}" \
   "${remote_repo_root}"
 

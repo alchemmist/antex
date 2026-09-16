@@ -11,7 +11,7 @@ filegroup(
 filegroup(
     name = "package",
     srcs = glob([
-        "codex-package.json",
+        "antex-package.json",
         {binaries},
         {resources},
         {path},
@@ -29,7 +29,7 @@ def _codex_release_repository_impl(repository_ctx):
         ],
         sha256 = repository_ctx.attr.sha256,
     )
-    manifest = json.decode(repository_ctx.read("codex-package.json"))
+    manifest = json.decode(repository_ctx.read("antex-package.json"))
     entrypoint = manifest["entrypoint"]
     binaries = entrypoint.rpartition("/")[0] + "/**"
     repository_ctx.file(

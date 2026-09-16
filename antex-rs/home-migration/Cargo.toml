@@ -1,0 +1,30 @@
+[package]
+name = "antex-home-migration"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+antex-keyring-store = { workspace = true }
+antex-secrets = { workspace = true }
+antex-state = { workspace = true }
+antex-utils-absolute-path = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+sqlx = { workspace = true }
+tempfile = { workspace = true }
+toml_edit = { workspace = true }
+url = { workspace = true }
+walkdir = { workspace = true }
+
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+rustix = { workspace = true, features = ["fs"] }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+tokio = { workspace = true }

@@ -21,7 +21,7 @@ For Linux-to-macOS ARM64 consumer builds, use `make build-macos-arm64` (or
 transition using the legacy host `--cpu`, which can produce an x64 snapshot
 inside an ARM64 executable. The named configuration also sets `v8_target_cpu=arm64`.
 Before installing cross-built binaries, run `python3 scripts/smoke-code-mode-host.py
-/path/to/codex-code-mode-host` on the destination Mac. This opens a real V8 isolate,
+/path/to/antex-code-mode-host` on the destination Mac. This opens a real V8 isolate,
 executes JavaScript, and round-trips a nested tool; `--help` cannot detect snapshot
 initialization failures.
 
@@ -34,7 +34,7 @@ Current pinned versions:
 
 Use this as the maintainer flow for a version bump:
 
-1. Bump the `v8` crate version and refresh `codex-rs/Cargo.lock`.
+1. Bump the `v8` crate version and refresh `antex-rs/Cargo.lock`.
 2. Update the Bazel versioned inputs in `MODULE.bazel`, then refresh the
    matching checksum manifest and generated checksums as described below.
 3. Publish a release-candidate PR and validate that `v8-canary` passes.
@@ -122,4 +122,4 @@ hardcodes a `v<crate_version>` tag layout, while our artifacts are published
 under `rusty-v8-v<crate_version>`.
 
 Do not mix artifacts across crate versions. The archive and binding must match
-the exact resolved `v8` crate version in `codex-rs/Cargo.lock`.
+the exact resolved `v8` crate version in `antex-rs/Cargo.lock`.

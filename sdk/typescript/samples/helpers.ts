@@ -1,8 +1,8 @@
 import path from "node:path";
 
-export function codexPathOverride() {
+export function antexPathOverride() {
   return (
-    process.env.CODEX_EXECUTABLE ??
-    path.join(process.cwd(), "..", "..", "codex-rs", "target", "debug", "codex")
+    process.env.ANTEX_EXECUTABLE ??
+    path.join(process.cwd(), "..", "..", "antex-rs", "target", "debug", "codex")
   );
 }

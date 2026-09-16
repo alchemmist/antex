@@ -9,15 +9,15 @@ from _bootstrap import ensure_local_sdk_src, runtime_config
 
 ensure_local_sdk_src()
 
-from openai_codex import Codex
+from antex_sdk import Antex
 
-with Codex(config=runtime_config()) as codex:
+with Antex(config=runtime_config()) as antex:
     # Create an initial thread and turn so we have a real thread to resume.
-    original = codex.thread_start(model="gpt-5.4", config={"model_reasoning_effort": "high"})
+    original = antex.thread_start(model="gpt-5.4", config={"model_reasoning_effort": "high"})
     first = original.turn("Tell me one fact about Saturn.").run()
     print("Created thread:", original.id)
 
     # Resume the existing thread by ID.
-    resumed = codex.thread_resume(original.id)
+    resumed = antex.thread_resume(original.id)
     second = resumed.turn("Continue with one more fact.").run()
     print(second.final_response)

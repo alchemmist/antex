@@ -1,0 +1,10 @@
+---
+source: tui/src/app/tests.rs
+expression: rendered
+---
+ ▀▄       ▄▀
+  ▄▀█████▀▄    ╭─ alchemmist antex · unknown ─────╮
+▄█▀▀█████▀▀█▄  │  gpt-test · high                 │
+▀▀▄▄▀▀▀▀▀▄▄▀▀  │  /tmp/project                    │
+  ██  ▄  ██    ╰──────────────────────────────────╯
+   ▀▀▀ ▀▀▀

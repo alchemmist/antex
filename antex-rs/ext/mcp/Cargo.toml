@@ -1,0 +1,43 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "antex-mcp-extension"
+version.workspace = true
+
+[lib]
+name = "antex_mcp_extension"
+path = "src/lib.rs"
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+antex-core = { workspace = true }
+antex-core-plugins = { workspace = true }
+antex-config = { workspace = true }
+antex-connectors = { workspace = true }
+antex-connectors-extension = { workspace = true }
+antex-exec-server = { workspace = true }
+antex-extension-api = { workspace = true }
+antex-features = { workspace = true }
+antex-mcp = { workspace = true }
+antex-plugin = { workspace = true }
+antex-protocol = { workspace = true }
+antex-utils-absolute-path = { workspace = true }
+antex-utils-path-uri = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true, features = ["sync"] }
+
+[dev-dependencies]
+axum = { workspace = true }
+antex-exec-server-test-support = { workspace = true }
+antex-login = { workspace = true }
+futures = { workspace = true }
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tokio-util = { workspace = true, features = ["rt"] }

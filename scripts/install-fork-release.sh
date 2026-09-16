@@ -3,8 +3,8 @@
 set -euo pipefail
 
 platform="${1:-}"
-install_dir="${CODEX_INSTALL_DIR:-$HOME/.local/bin}"
-repository="${CODEX_RELEASE_REPOSITORY:-alchemmist/codex}"
+install_dir="${ANTEX_INSTALL_DIR:-$HOME/.local/bin}"
+repository="${ANTEX_RELEASE_REPOSITORY:-alchemmist/antex}"
 
 case "$platform" in
   mac)
@@ -27,18 +27,20 @@ case "$platform" in
     ;;
 esac
 
-archive="codex-${target}.tar.gz"
-base_url="${CODEX_RELEASE_BASE_URL:-https://github.com/${repository}/releases/latest/download}"
-temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/alchemmist-codex-install.XXXXXX")"
+archive="antex-${target}.tar.gz"
+base_url="${ANTEX_RELEASE_BASE_URL:-https://github.com/${repository}/releases/latest/download}"
+temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/alchemmist-antex-install.XXXXXX")"
 curl_options=(
   --fail
   --silent
   --show-error
   --retry 3
-  --retry-all-errors
   --retry-delay 1
   --connect-timeout 8
 )
+if curl --help all 2>/dev/null | grep -q -- --retry-all-errors; then
+  curl_options+=(--retry-all-errors)
+fi
 
 cleanup() {
   rm -rf -- "$temp_dir"
@@ -119,19 +121,28 @@ else
 fi
 
 tar -C "$temp_dir" -xzf "${temp_dir}/${archive}"
-for binary in codex codex-code-mode-host; do
+for binary in antex antex-code-mode-host; do
   if [[ ! -f "${temp_dir}/${binary}" ]]; then
     echo "Release archive is missing ${binary}." >&2
     exit 1
   fi
 done
+if [[ "$platform" == "linux" && ! -f "${temp_dir}/antex-resources/bwrap" ]]; then
+  echo "Release archive is missing antex-resources/bwrap." >&2
+  exit 1
+fi
 install -d "$install_dir"
-install -m 755 "${temp_dir}/codex" "${install_dir}/codex"
-install -m 755 "${temp_dir}/codex-code-mode-host" "${install_dir}/codex-code-mode-host"
+install -m 755 "${temp_dir}/antex" "${install_dir}/antex"
+install -m 755 "${temp_dir}/antex-code-mode-host" "${install_dir}/antex-code-mode-host"
 
-if [[ "$platform" == "mac" ]]; then
-  xattr -d com.apple.quarantine "${install_dir}/codex" 2>/dev/null || true
-  xattr -d com.apple.quarantine "${install_dir}/codex-code-mode-host" 2>/dev/null || true
+if [[ "$platform" == "linux" ]]; then
+  install -d "${install_dir}/antex-resources"
+  install -m 755 "${temp_dir}/antex-resources/bwrap" "${install_dir}/antex-resources/bwrap"
 fi
 
-echo "Installed Codex and Code Mode host from the latest ${repository} release."
+if [[ "$platform" == "mac" ]]; then
+  xattr -d com.apple.quarantine "${install_dir}/antex" 2>/dev/null || true
+  xattr -d com.apple.quarantine "${install_dir}/antex-code-mode-host" 2>/dev/null || true
+fi
+
+echo "Installed Antex and Code Mode host from the latest ${repository} release."

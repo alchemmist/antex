@@ -1,0 +1,20 @@
+[package]
+name = "antex-file-system"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+bytes = { workspace = true }
+antex-protocol = { workspace = true }
+antex-utils-absolute-path = { workspace = true }
+antex-utils-path-uri = { workspace = true }
+futures = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+
+[lib]
+test = false
+doctest = false

@@ -1,0 +1,8 @@
+load("//:defs.bzl", "antex_rust_crate")
+
+antex_rust_crate(
+    name = "support",
+    compile_data = ["//antex-rs/exec-server:src/proto/codex.exec_server.relay.v1.rs"],
+    crate_name = "antex_exec_server_test_support",
+    crate_srcs = glob(["*.rs"]),
+)

@@ -64,20 +64,20 @@ def _load_release_version_module():
     return module
 
 
-def _write_fake_codex_package(package_dir: Path, script) -> Path:
+def _write_fake_antex_package(package_dir: Path, script) -> Path:
     (package_dir / "bin").mkdir(parents=True)
-    (package_dir / "codex-resources").mkdir()
-    (package_dir / "codex-path").mkdir()
-    (package_dir / "codex-package.json").write_text('{"variant":"codex"}\n')
+    (package_dir / "antex-resources").mkdir()
+    (package_dir / "antex-path").mkdir()
+    (package_dir / "antex-package.json").write_text('{"variant":"codex"}\n')
     (package_dir / "bin" / script.runtime_binary_name()).write_text("fake codex\n")
     (package_dir / "bin" / script.runtime_code_mode_host_name()).write_text("fake code mode host\n")
-    (package_dir / "codex-resources" / "bwrap").write_text("fake bwrap\n")
-    (package_dir / "codex-path" / "rg").write_text("fake rg\n")
+    (package_dir / "antex-resources" / "bwrap").write_text("fake bwrap\n")
+    (package_dir / "antex-path" / "rg").write_text("fake rg\n")
     return package_dir
 
 
-def _write_fake_codex_package_archive(tmp_path: Path, script) -> Path:
-    package_dir = _write_fake_codex_package(tmp_path / "codex-package", script)
+def _write_fake_antex_package_archive(tmp_path: Path, script) -> Path:
+    package_dir = _write_fake_antex_package(tmp_path / "codex-package", script)
     archive_path = tmp_path / "codex-package.tar.gz"
     _write_package_archive(package_dir, archive_path)
     return archive_path
@@ -122,7 +122,7 @@ def test_root_fmt_recipes_use_shared_formatter_driver() -> None:
         ],
     }
     expected = {
-        "working_directory": 'set working-directory := "codex-rs"',
+        "working_directory": 'set working-directory := "antex-rs"',
         "fmt_comment": (
             "# Format the justfile, Rust, Bazel/Starlark, Python SDK code, and Python scripts."
         ),
@@ -147,8 +147,8 @@ def test_root_format_driver_covers_all_formatter_groups(
     script = _load_root_format_script_module()
     for name in (
         "bazel/rules/example.rs",
-        "codex-rs/src/lib.rs",
-        "codex-rs/new file.rs",
+        "antex-rs/src/lib.rs",
+        "antex-rs/new file.rs",
     ):
         path = tmp_path / name
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -167,8 +167,8 @@ def test_root_format_driver_covers_all_formatter_groups(
         assert cwd == tmp_path
         if args == git_ls_files_args + ["--", "*.rs"]:
             return (
-                b"codex-rs/src/lib.rs\0bazel/rules/example.rs\0"
-                b"codex-rs/new file.rs\0codex-rs/deleted.rs\0"
+                b"antex-rs/src/lib.rs\0bazel/rules/example.rs\0"
+                b"antex-rs/new file.rs\0antex-rs/deleted.rs\0"
             )
         assert args == git_ls_files_args
         return b"MODULE.bazel\0README.md\0third_party/v8/libcxx.BUILD.bazel\0"
@@ -236,7 +236,7 @@ def test_root_format_driver_covers_all_formatter_groups(
         "--edition",
         "2024",
         "--config-path",
-        str(tmp_path / "codex-rs/rustfmt.toml"),
+        str(tmp_path / "antex-rs/rustfmt.toml"),
         "--config",
         "imports_granularity=Item,skip_children=true",
     )
@@ -246,10 +246,10 @@ def test_root_format_driver_covers_all_formatter_groups(
         os.path.join("src", "lib.rs"),
     )
     assert formatters[1].commands == (
-        script.Command(rustfmt_args + rust_files, tmp_path / "codex-rs"),
+        script.Command(rustfmt_args + rust_files, tmp_path / "antex-rs"),
     )
     assert checks[1].commands == (
-        script.Command(rustfmt_args + ("--check",) + rust_files, tmp_path / "codex-rs"),
+        script.Command(rustfmt_args + ("--check",) + rust_files, tmp_path / "antex-rs"),
     )
     format_buildifier_args = formatters[2].commands[-1].args
     check_buildifier_args = checks[2].commands[-1].args
@@ -483,7 +483,7 @@ def test_generate_v2_all_uses_titles_for_generated_names() -> None:
 
 
 def test_generated_chatgpt_account_email_is_required_nullable() -> None:
-    from openai_codex.generated.v2_all import ChatgptAccount
+    from antex_sdk.generated.v2_all import ChatgptAccount
 
     account = ChatgptAccount.model_validate({"email": None, "planType": "pro", "type": "chatgpt"})
     assert account.email is None
@@ -494,7 +494,7 @@ def test_generated_chatgpt_account_email_is_required_nullable() -> None:
 
 
 def test_runtime_package_template_has_no_checked_in_binaries() -> None:
-    runtime_root = ROOT.parent / "python-runtime" / "src" / "codex_cli_bin"
+    runtime_root = ROOT.parent / "python-runtime" / "src" / "antex_cli_bin"
     assert sorted(
         path.name
         for path in runtime_root.rglob("*")
@@ -511,14 +511,14 @@ def test_examples_readme_points_to_runtime_version_source_of_truth() -> None:
 def test_runtime_distribution_name_is_consistent() -> None:
     script = _load_update_script_module()
     runtime_setup = _load_runtime_setup_module()
-    from openai_codex import _version, client as client_module
+    from antex_sdk import _version, client as client_module
 
-    assert script.SDK_DISTRIBUTION_NAME == "openai-codex"
-    assert runtime_setup.SDK_PACKAGE_NAME == "openai-codex"
-    assert _version.DISTRIBUTION_NAME == "openai-codex"
-    assert script.RUNTIME_DISTRIBUTION_NAME == "openai-codex-cli-bin"
-    assert runtime_setup.PACKAGE_NAME == "openai-codex-cli-bin"
-    assert client_module.RUNTIME_PKG_NAME == "openai-codex-cli-bin"
+    assert script.SDK_DISTRIBUTION_NAME == "antex-sdk"
+    assert runtime_setup.SDK_PACKAGE_NAME == "antex-sdk"
+    assert _version.DISTRIBUTION_NAME == "antex-sdk"
+    assert script.RUNTIME_DISTRIBUTION_NAME == "antex-cli-bin"
+    assert runtime_setup.PACKAGE_NAME == "antex-cli-bin"
+    assert client_module.RUNTIME_PKG_NAME == "antex-cli-bin"
     assert (
         "importlib.metadata.version('codex-cli-bin')"
         not in (ROOT / "_runtime_setup.py").read_text()
@@ -536,10 +536,10 @@ def test_source_sdk_template_pins_published_runtime() -> None:
         "dependencies": pyproject["project"]["dependencies"],
     } == {
         "sdk_template_version": "0.0.0-dev",
-        "runtime_pin": "0.147.0",
+        "runtime_pin": "0.0.0.dev0",
         "dependencies": [
             "pydantic>=2.12",
-            "openai-codex-cli-bin==0.147.0",
+            "antex-cli-bin==0.0.0-dev",
         ],
     }
 
@@ -555,13 +555,13 @@ def test_source_sdk_package_declares_stable_documentation() -> None:
         in pyproject["project"]["classifiers"],
         "license": pyproject["project"]["license"],
         "documentation": pyproject["project"]["urls"]["Documentation"],
-        "readme_is_stable": "# OpenAI Codex Python SDK\n" in readme,
+        "readme_is_stable": "# Antex Python SDK\n" in readme,
         "local_license_file": (ROOT / "LICENSE").exists(),
     } == {
-        "description": "Python SDK for Codex",
+        "description": "Python SDK for Antex",
         "is_stable": True,
         "license": "Apache-2.0",
-        "documentation": "https://github.com/openai/codex/tree/main/sdk/python/docs",
+        "documentation": "https://github.com/alchemmist/antex/tree/main/sdk/python/docs",
         "readme_is_stable": True,
         "local_license_file": False,
     }
@@ -602,34 +602,32 @@ def test_runtime_setup_reads_independent_runtime_pin_and_release_tags() -> None:
         "package_name": runtime_setup.PACKAGE_NAME,
         "sdk_template_version": pyproject["project"]["version"],
         "runtime_pin": runtime_setup.pinned_runtime_version(),
-        "normalized_release_version": runtime_setup._normalized_package_version(
-            "rust-v0.116.0-alpha.1"
-        ),
+        "normalized_release_version": runtime_setup._normalized_package_version("v0.116.0-alpha.1"),
         "normalized_alpha_hotfix_version": runtime_setup._normalized_package_version(
-            "rust-v0.116.0-alpha.1.2"
+            "v0.116.0-alpha.1.2"
         ),
         "release_tag": runtime_setup._release_tag("0.116.0a1"),
         "alpha_hotfix_release_tag": runtime_setup._release_tag("0.116.0a1.post2"),
     } == {
-        "package_name": "openai-codex-cli-bin",
+        "package_name": "antex-cli-bin",
         "sdk_template_version": "0.0.0-dev",
-        "runtime_pin": "0.147.0",
+        "runtime_pin": "0.0.0.dev0",
         "normalized_release_version": "0.116.0a1",
         "normalized_alpha_hotfix_version": "0.116.0a1.post2",
-        "release_tag": "rust-v0.116.0-alpha.1",
-        "alpha_hotfix_release_tag": "rust-v0.116.0-alpha.1.2",
+        "release_tag": "v0.116.0-alpha.1",
+        "alpha_hotfix_release_tag": "v0.116.0-alpha.1.2",
     }
 
 
 @pytest.mark.parametrize(
     ("system", "machine", "asset_name"),
     [
-        ("Darwin", "arm64", "codex-package-aarch64-apple-darwin.tar.gz"),
-        ("Linux", "x86_64", "codex-package-x86_64-unknown-linux-musl.tar.gz"),
-        ("Windows", "AMD64", "codex-package-x86_64-pc-windows-msvc.tar.gz"),
+        ("Darwin", "arm64", "antex-package-aarch64-apple-darwin.tar.gz"),
+        ("Linux", "x86_64", "antex-package-x86_64-unknown-linux-musl.tar.gz"),
+        ("Windows", "AMD64", "antex-package-x86_64-pc-windows-msvc.tar.gz"),
     ],
 )
-def test_runtime_setup_downloads_codex_package_archives(
+def test_runtime_setup_downloads_antex_package_archives(
     monkeypatch: pytest.MonkeyPatch,
     system: str,
     machine: str,
@@ -687,14 +685,14 @@ def test_runtime_package_is_wheel_only_and_builds_platform_specific_wheels() -> 
         elif isinstance(node.value, ast.JoinedStr):
             build_data_assignments[node.targets[0].slice.value] = "joined-string"
 
-    assert pyproject["project"]["name"] == "openai-codex-cli-bin"
+    assert pyproject["project"]["name"] == "antex-cli-bin"
     assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"] == {
-        "packages": ["src/codex_cli_bin"],
+        "packages": ["src/antex_cli_bin"],
         "include": [
-            "src/codex_cli_bin/codex-package.json",
-            "src/codex_cli_bin/bin/**",
-            "src/codex_cli_bin/codex-resources/**",
-            "src/codex_cli_bin/codex-path/**",
+            "src/antex_cli_bin/antex-package.json",
+            "src/antex_cli_bin/bin/**",
+            "src/antex_cli_bin/antex-resources/**",
+            "src/antex_cli_bin/antex-path/**",
         ],
         "hooks": {"custom": {}},
     }
@@ -713,7 +711,7 @@ def test_stage_runtime_release_copies_package_layout_and_sets_version(
     tmp_path: Path,
 ) -> None:
     script = _load_update_script_module()
-    package_archive = _write_fake_codex_package_archive(tmp_path, script)
+    package_archive = _write_fake_antex_package_archive(tmp_path, script)
 
     staged = script.stage_python_runtime_package(
         tmp_path / "runtime-stage",
@@ -723,11 +721,11 @@ def test_stage_runtime_release_copies_package_layout_and_sets_version(
     package_root = script.staged_runtime_package_root(staged)
 
     assert {
-        "metadata": (package_root / "codex-package.json").read_text(),
+        "metadata": (package_root / "antex-package.json").read_text(),
         "codex": (package_root / "bin" / script.runtime_binary_name()).read_text(),
         "code_mode_host": (package_root / "bin" / script.runtime_code_mode_host_name()).read_text(),
-        "bwrap": (package_root / "codex-resources" / "bwrap").read_text(),
-        "rg": (package_root / "codex-path" / "rg").read_text(),
+        "bwrap": (package_root / "antex-resources" / "bwrap").read_text(),
+        "rg": (package_root / "antex-path" / "rg").read_text(),
     } == {
         "metadata": '{"variant":"codex"}\n',
         "codex": "fake codex\n",
@@ -735,30 +733,30 @@ def test_stage_runtime_release_copies_package_layout_and_sets_version(
         "bwrap": "fake bwrap\n",
         "rg": "fake rg\n",
     }
-    assert 'name = "openai-codex-cli-bin"' in (staged / "pyproject.toml").read_text()
+    assert 'name = "antex-cli-bin"' in (staged / "pyproject.toml").read_text()
     assert 'version = "1.2.3"' in (staged / "pyproject.toml").read_text()
 
 
-def test_normalize_codex_version_accepts_release_tags_and_pep440_versions() -> None:
+def test_normalize_antex_version_accepts_release_tags_and_pep440_versions() -> None:
     script = _load_update_script_module()
 
-    assert script.normalize_codex_version("rust-v0.116.0-alpha.1") == "0.116.0a1"
-    assert script.normalize_codex_version("rust-v0.116.0-alpha.1.2") == "0.116.0a1.post2"
-    assert script.normalize_codex_version("v0.116.0-beta.2") == "0.116.0b2"
-    assert script.normalize_codex_version("0.116.0rc3") == "0.116.0rc3"
-    assert script.normalize_codex_version("0.116.0") == "0.116.0"
+    assert script.normalize_antex_version("v0.116.0-alpha.1") == "0.116.0a1"
+    assert script.normalize_antex_version("v0.116.0-alpha.1.2") == "0.116.0a1.post2"
+    assert script.normalize_antex_version("v0.116.0-beta.2") == "0.116.0b2"
+    assert script.normalize_antex_version("0.116.0rc3") == "0.116.0rc3"
+    assert script.normalize_antex_version("0.116.0") == "0.116.0"
 
 
-def test_release_version_conversions_map_python_versions_to_codex_tags() -> None:
+def test_release_version_conversions_map_python_versions_to_antex_tags() -> None:
     release_version = _load_release_version_module()
 
     assert {
-        version: release_version.codex_release_tag(version)
+        version: release_version.antex_release_tag(version)
         for version in ["0.116.0", "0.116.0a1", "0.116.0a1.post2"]
     } == {
-        "0.116.0": "rust-v0.116.0",
-        "0.116.0a1": "rust-v0.116.0-alpha.1",
-        "0.116.0a1.post2": "rust-v0.116.0-alpha.1.2",
+        "0.116.0": "v0.116.0",
+        "0.116.0a1": "v0.116.0-alpha.1",
+        "0.116.0a1.post2": "v0.116.0-alpha.1.2",
     }
 
 
@@ -787,7 +785,7 @@ def test_release_version_cli_writes_python_runtime_outputs(tmp_path: Path) -> No
         "returncode": 0,
         "stdout": "",
         "stderr": "",
-        "github_output": ("python_version=0.116.0a1.post2\nrelease_tag=rust-v0.116.0-alpha.1.2\n"),
+        "github_output": ("python_version=0.116.0a1.post2\nrelease_tag=v0.116.0-alpha.1.2\n"),
     }
 
 
@@ -797,7 +795,7 @@ def test_stage_runtime_release_replaces_existing_staging_dir(tmp_path: Path) -> 
     old_file = staging_dir / "stale.txt"
     old_file.parent.mkdir(parents=True)
     old_file.write_text("stale")
-    package_archive = _write_fake_codex_package_archive(tmp_path, script)
+    package_archive = _write_fake_antex_package_archive(tmp_path, script)
 
     staged = script.stage_python_runtime_package(
         staging_dir,
@@ -813,7 +811,7 @@ def test_stage_runtime_release_replaces_existing_staging_dir(tmp_path: Path) -> 
 
 def test_stage_runtime_release_can_pin_wheel_platform_tag(tmp_path: Path) -> None:
     script = _load_update_script_module()
-    package_archive = _write_fake_codex_package_archive(tmp_path, script)
+    package_archive = _write_fake_antex_package_archive(tmp_path, script)
 
     staged = script.stage_python_runtime_package(
         tmp_path / "runtime-stage",
@@ -833,7 +831,7 @@ def test_stage_runtime_release_rejects_incomplete_package_layout(tmp_path: Path)
     package_archive = tmp_path / "codex-package.tar.gz"
     _write_package_archive(package_dir, package_archive)
 
-    with pytest.raises(RuntimeError, match="Missing Codex package layout entries"):
+    with pytest.raises(RuntimeError, match="Missing Antex package layout entries"):
         script.stage_python_runtime_package(tmp_path / "runtime-stage", "1.2.3", package_archive)
 
 
@@ -841,7 +839,7 @@ def test_runtime_package_layout_is_included_by_wheel_config(
     tmp_path: Path,
 ) -> None:
     script = _load_update_script_module()
-    package_archive = _write_fake_codex_package_archive(tmp_path, script)
+    package_archive = _write_fake_antex_package_archive(tmp_path, script)
 
     staged = script.stage_python_runtime_package(
         tmp_path / "runtime-stage",
@@ -851,10 +849,10 @@ def test_runtime_package_layout_is_included_by_wheel_config(
 
     pyproject = tomllib.loads((staged / "pyproject.toml").read_text())
     assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["include"] == [
-        "src/codex_cli_bin/codex-package.json",
-        "src/codex_cli_bin/bin/**",
-        "src/codex_cli_bin/codex-resources/**",
-        "src/codex_cli_bin/codex-path/**",
+        "src/antex_cli_bin/antex-package.json",
+        "src/antex_cli_bin/bin/**",
+        "src/antex_cli_bin/antex-resources/**",
+        "src/antex_cli_bin/antex-path/**",
     ]
 
 
@@ -871,22 +869,21 @@ def test_stage_sdk_release_preserves_reviewed_runtime_pin(tmp_path: Path) -> Non
         "version": pyproject["project"]["version"],
         "dependencies": pyproject["project"]["dependencies"],
     } == {
-        "name": "openai-codex",
+        "name": "antex-sdk",
         "version": "0.147.0",
         "dependencies": [
             "pydantic>=2.12",
-            "openai-codex-cli-bin==0.147.0",
+            "antex-cli-bin==0.0.0-dev",
         ],
     }
     assert (
-        '__version__ = "0.147.0"'
-        not in (staged / "src" / "openai_codex" / "__init__.py").read_text()
+        '__version__ = "0.147.0"' not in (staged / "src" / "antex_sdk" / "__init__.py").read_text()
     )
     assert (
         'client_version: str = "0.147.0"'
-        not in (staged / "src" / "openai_codex" / "client.py").read_text()
+        not in (staged / "src" / "antex_sdk" / "client.py").read_text()
     )
-    assert not any((staged / "src" / "openai_codex").glob("bin/**"))
+    assert not any((staged / "src" / "antex_sdk").glob("bin/**"))
 
 
 def test_stage_sdk_release_replaces_existing_staging_dir(tmp_path: Path) -> None:
@@ -904,7 +901,7 @@ def test_stage_sdk_release_replaces_existing_staging_dir(tmp_path: Path) -> None
 
 def test_sdk_release_matches_stable_runtime(tmp_path: Path) -> None:
     script = _load_update_script_module()
-    package_archive = _write_fake_codex_package_archive(tmp_path, script)
+    package_archive = _write_fake_antex_package_archive(tmp_path, script)
 
     sdk_stage = script.stage_python_sdk_package(
         tmp_path / "sdk-stage",
@@ -928,7 +925,7 @@ def test_sdk_release_matches_stable_runtime(tmp_path: Path) -> None:
         "runtime_version": "0.147.0",
         "sdk_dependencies": [
             "pydantic>=2.12",
-            "openai-codex-cli-bin==0.147.0",
+            "antex-cli-bin==0.0.0-dev",
         ],
     }
 
@@ -977,15 +974,15 @@ def test_stage_sdk_runs_type_generation_before_staging(tmp_path: Path) -> None:
 
 def test_stage_runtime_stages_package_without_type_generation(tmp_path: Path) -> None:
     script = _load_update_script_module()
-    package_archive = _write_fake_codex_package_archive(tmp_path, script)
+    package_archive = _write_fake_antex_package_archive(tmp_path, script)
     calls: list[str] = []
     args = script.parse_args(
         [
             "stage-runtime",
             str(tmp_path / "runtime-stage"),
             str(package_archive),
-            "--codex-version",
-            "rust-v0.116.0-alpha.1",
+            "--antex-version",
+            "v0.116.0-alpha.1",
             "--platform-tag",
             "manylinux_2_17_x86_64",
         ]
@@ -994,7 +991,7 @@ def test_stage_runtime_stages_package_without_type_generation(tmp_path: Path) ->
     def fake_generate_types() -> None:
         calls.append("generate_types")
 
-    def fake_stage_sdk_package(_staging_dir: Path, _codex_version: str) -> Path:
+    def fake_stage_sdk_package(_staging_dir: Path, _antex_version: str) -> Path:
         raise AssertionError("sdk staging should not run for stage-runtime")
 
     def fake_stage_runtime_package(
@@ -1024,24 +1021,24 @@ def test_stage_runtime_stages_package_without_type_generation(tmp_path: Path) ->
 def test_default_runtime_is_resolved_from_installed_runtime_package(
     tmp_path: Path,
 ) -> None:
-    from openai_codex import client as client_module
+    from antex_sdk import client as client_module
 
     fake_binary = tmp_path / ("codex.exe" if client_module.os.name == "nt" else "codex")
     fake_binary.write_text("")
-    ops = client_module.CodexBinResolverOps(
-        installed_codex_path=lambda: fake_binary,
+    ops = client_module.AntexBinResolverOps(
+        installed_antex_path=lambda: fake_binary,
         path_exists=lambda path: path == fake_binary,
     )
 
-    config = client_module.CodexConfig()
-    assert config.codex_bin is None
-    assert client_module.resolve_codex_bin(config, ops) == fake_binary
+    config = client_module.AntexConfig()
+    assert config.antex_bin is None
+    assert client_module.resolve_antex_bin(config, ops) == fake_binary
 
 
 def test_runtime_path_dir_is_prepended_without_duplicates(tmp_path: Path) -> None:
-    from openai_codex import client as client_module
+    from antex_sdk import client as client_module
 
-    path_dir = tmp_path / "codex-path"
+    path_dir = tmp_path / "antex-path"
     env = {"PATH": os.pathsep.join(["/usr/bin", str(path_dir), "/bin"])}
 
     client_module._prepend_path_dirs(env, (path_dir,))
@@ -1053,9 +1050,9 @@ def test_runtime_path_dir_preserves_windows_path_key(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    from openai_codex import client as client_module
+    from antex_sdk import client as client_module
 
-    path_dir = tmp_path / "codex-path"
+    path_dir = tmp_path / "antex-path"
     monkeypatch.setattr(client_module.os, "name", "nt")
     env = {
         "PATH": "/usr/bin",
@@ -1067,49 +1064,49 @@ def test_runtime_path_dir_preserves_windows_path_key(
     assert env == {"Path": os.pathsep.join([str(path_dir), "C\\Windows"])}
 
 
-def test_explicit_codex_bin_override_takes_priority(tmp_path: Path) -> None:
-    from openai_codex import client as client_module
+def test_explicit_antex_bin_override_takes_priority(tmp_path: Path) -> None:
+    from antex_sdk import client as client_module
 
     explicit_binary = tmp_path / (
         "custom-codex.exe" if client_module.os.name == "nt" else "custom-codex"
     )
     explicit_binary.write_text("")
-    ops = client_module.CodexBinResolverOps(
-        installed_codex_path=lambda: (_ for _ in ()).throw(
+    ops = client_module.AntexBinResolverOps(
+        installed_antex_path=lambda: (_ for _ in ()).throw(
             AssertionError("packaged runtime should not be used")
         ),
         path_exists=lambda path: path == explicit_binary,
     )
 
-    config = client_module.CodexConfig(codex_bin=str(explicit_binary))
-    assert client_module.resolve_codex_bin(config, ops) == explicit_binary
+    config = client_module.AntexConfig(antex_bin=str(explicit_binary))
+    assert client_module.resolve_antex_bin(config, ops) == explicit_binary
 
 
-def test_missing_runtime_package_requires_explicit_codex_bin() -> None:
-    from openai_codex import client as client_module
+def test_missing_runtime_package_requires_explicit_antex_bin() -> None:
+    from antex_sdk import client as client_module
 
-    ops = client_module.CodexBinResolverOps(
-        installed_codex_path=lambda: (_ for _ in ()).throw(
+    ops = client_module.AntexBinResolverOps(
+        installed_antex_path=lambda: (_ for _ in ()).throw(
             FileNotFoundError("missing packaged runtime")
         ),
         path_exists=lambda _path: False,
     )
 
     with pytest.raises(FileNotFoundError, match="missing packaged runtime"):
-        client_module.resolve_codex_bin(client_module.CodexConfig(), ops)
+        client_module.resolve_antex_bin(client_module.AntexConfig(), ops)
 
 
 def test_broken_runtime_package_does_not_fall_back() -> None:
-    from openai_codex import client as client_module
+    from antex_sdk import client as client_module
 
-    ops = client_module.CodexBinResolverOps(
-        installed_codex_path=lambda: (_ for _ in ()).throw(
+    ops = client_module.AntexBinResolverOps(
+        installed_antex_path=lambda: (_ for _ in ()).throw(
             FileNotFoundError("missing packaged binary")
         ),
         path_exists=lambda _path: False,
     )
 
     with pytest.raises(FileNotFoundError) as exc_info:
-        client_module.resolve_codex_bin(client_module.CodexConfig(), ops)
+        client_module.resolve_antex_bin(client_module.AntexConfig(), ops)
 
     assert str(exc_info.value) == ("missing packaged binary")

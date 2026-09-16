@@ -1,0 +1,36 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "antex-model-provider"
+version.workspace = true
+
+[lib]
+doctest = false
+name = "antex_model_provider"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+antex-api = { workspace = true }
+antex-agent-identity = { workspace = true }
+antex-aws-auth = { workspace = true }
+antex-http-client = { workspace = true }
+antex-feedback = { workspace = true }
+antex-login = { workspace = true }
+antex-model-provider-info = { workspace = true }
+antex-models-manager = { workspace = true }
+antex-otel = { workspace = true }
+antex-protocol = { workspace = true }
+antex-response-debug-context = { workspace = true }
+http = { workspace = true }
+tokio = { workspace = true, features = ["process", "sync", "time"] }
+tracing = { workspace = true, features = ["log"] }
+
+[dev-dependencies]
+antex-utils-redacted-string = { workspace = true }
+pretty_assertions = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt"] }
+wiremock = { workspace = true }

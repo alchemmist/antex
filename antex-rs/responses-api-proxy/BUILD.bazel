@@ -1,0 +1,6 @@
+load("//:defs.bzl", "antex_rust_crate")
+
+antex_rust_crate(
+    name = "responses-api-proxy",
+    crate_name = "antex_responses_api_proxy",
+)

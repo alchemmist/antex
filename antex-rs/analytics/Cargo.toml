@@ -1,0 +1,35 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "antex-analytics"
+version.workspace = true
+
+[lib]
+doctest = false
+name = "antex_analytics"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+antex-app-server-protocol = { workspace = true }
+antex-git-utils = { workspace = true }
+antex-login = { workspace = true }
+antex-model-provider = { workspace = true }
+antex-plugin = { workspace = true }
+antex-protocol = { workspace = true }
+antex-state = { workspace = true }
+os_info = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+sha1 = { workspace = true }
+tokio = { workspace = true, features = [
+    "macros",
+    "rt-multi-thread",
+] }
+tracing = { workspace = true, features = ["log"] }
+
+[dev-dependencies]
+antex-utils-absolute-path = { workspace = true }
+pretty_assertions = { workspace = true }

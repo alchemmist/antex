@@ -1,0 +1,6 @@
+load("//:defs.bzl", "antex_rust_crate")
+
+antex_rust_crate(
+    name = "network-proxy",
+    crate_name = "antex_network_proxy",
+)

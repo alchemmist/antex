@@ -1,0 +1,41 @@
+[package]
+name = "antex-sandboxing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "antex_sandboxing"
+path = "src/lib.rs"
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+antex-network-proxy = { workspace = true }
+antex-protocol = { workspace = true }
+antex-utils-absolute-path = { workspace = true }
+antex-utils-path-uri = { workspace = true }
+antex-utils-pty = { workspace = true }
+antex-windows-sandbox = { workspace = true }
+dunce = { workspace = true }
+libc = { workspace = true }
+serde_json = { workspace = true }
+regex-lite = { workspace = true }
+tokio = { workspace = true, features = ["rt", "sync"] }
+tracing = { workspace = true, features = ["log"] }
+url = { workspace = true }
+which = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+antex-mxc-sandbox = { workspace = true }
+antex-otel = { workspace = true }
+antex-utils-home-dir = { workspace = true }
+
+[dev-dependencies]
+anyhow = { workspace = true }
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt", "time"] }

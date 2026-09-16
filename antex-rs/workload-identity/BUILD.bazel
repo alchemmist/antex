@@ -1,0 +1,6 @@
+load("//:defs.bzl", "antex_rust_crate")
+
+antex_rust_crate(
+    name = "workload-identity",
+    crate_name = "antex_workload_identity",
+)

@@ -1,0 +1,6 @@
+load("//:defs.bzl", "antex_rust_crate")
+
+antex_rust_crate(
+    name = "antex-backend-openapi-models",
+    crate_name = "antex_backend_openapi_models",
+)

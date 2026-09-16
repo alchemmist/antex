@@ -1,0 +1,10 @@
+load("//:defs.bzl", "antex_rust_crate")
+
+antex_rust_crate(
+    name = "exec",
+    crate_name = "antex_exec",
+    test_shard_counts = {
+        "exec-all-test": 8,
+    },
+    test_tags = ["no-sandbox"],
+)

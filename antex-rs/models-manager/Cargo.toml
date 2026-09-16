@@ -1,0 +1,31 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "antex-models-manager"
+version.workspace = true
+
+[lib]
+doctest = false
+name = "antex_models_manager"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+chrono = { workspace = true, features = ["serde"] }
+antex-collaboration-mode-templates = { workspace = true }
+antex-http-client = { workspace = true }
+antex-login = { workspace = true }
+antex-otel = { workspace = true }
+antex-protocol = { workspace = true }
+antex-utils-output-truncation = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["fs", "sync", "time"] }
+tracing = { workspace = true, features = ["log"] }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+serde_json = { workspace = true }
+tempfile = { workspace = true }

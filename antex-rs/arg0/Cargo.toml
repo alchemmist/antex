@@ -1,0 +1,35 @@
+[package]
+name = "antex-arg0"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "antex_arg0"
+path = "src/lib.rs"
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+antex-apply-patch = { workspace = true }
+antex-async-utils = { workspace = true }
+antex-exec-server = { workspace = true }
+antex-install-context = { workspace = true }
+antex-linux-sandbox = { workspace = true }
+antex-sandboxing = { workspace = true }
+antex-shell-escalation = { workspace = true }
+antex-utils-absolute-path = { workspace = true }
+antex-utils-home-dir = { workspace = true }
+dotenvy = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+
+[target.'cfg(windows)'.dependencies]
+antex-windows-sandbox = { workspace = true }
+pathdiff = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }

@@ -1,0 +1,7 @@
+load("//:defs.bzl", "antex_rust_crate")
+
+antex_rust_crate(
+    name = "http-client",
+    compile_data = glob(["tests/fixtures/**"]),
+    crate_name = "antex_http_client",
+)

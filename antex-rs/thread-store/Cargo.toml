@@ -1,0 +1,43 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "antex-thread-store"
+version.workspace = true
+
+[lib]
+name = "antex_thread_store"
+path = "src/lib.rs"
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+chrono = { workspace = true, features = ["serde"] }
+antex-app-server-protocol = { workspace = true }
+antex-extension-items = { workspace = true }
+antex-git-utils = { workspace = true }
+antex-install-context = { workspace = true }
+antex-otel = { workspace = true }
+antex-protocol = { workspace = true }
+antex-rollout = { workspace = true }
+antex-state = { workspace = true }
+antex-utils-absolute-path = { workspace = true }
+antex-utils-path = { workspace = true }
+antex-utils-path-uri = { workspace = true }
+futures = { workspace = true }
+pulldown-cmark = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+sqlx = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+zstd = { workspace = true }
+
+[dev-dependencies]
+antex-utils-absolute-path = { workspace = true }
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+uuid = { workspace = true }

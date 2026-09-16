@@ -30,9 +30,9 @@ importers:
         specifier: ^3.5.3
         version: 3.5.3
 
-  codex-cli: {}
+  antex-cli: {}
 
-  codex-rs/responses-api-proxy/npm: {}
+  antex-rs/responses-api-proxy/npm: {}
 
   sdk/typescript:
     devDependencies:

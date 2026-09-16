@@ -1,0 +1,6 @@
+load("//:defs.bzl", "antex_rust_crate")
+
+antex_rust_crate(
+    name = "json-to-toml",
+    crate_name = "antex_utils_json_to_toml",
+)

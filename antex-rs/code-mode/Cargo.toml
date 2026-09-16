@@ -1,0 +1,35 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "antex-code-mode"
+version.workspace = true
+
+[lib]
+doctest = false
+name = "antex_code_mode"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+antex-code-mode-protocol = { workspace = true }
+antex-http-client = { workspace = true }
+antex-install-context = { workspace = true }
+antex-otel = { workspace = true }
+antex-protocol = { workspace = true }
+futures = { workspace = true }
+http-body-util = "0.1.3"
+prost = "0.14.3"
+reqwest = { workspace = true, features = ["stream"] }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "process", "rt", "sync", "time"] }
+tokio-util = { workspace = true, features = ["rt"] }
+tonic = { workspace = true }
+tower = { version = "0.5.3", features = ["util"] }
+tracing = { workspace = true }
+uuid = { workspace = true, features = ["v4"] }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }

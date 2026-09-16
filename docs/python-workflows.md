@@ -8,13 +8,13 @@ Python workflows — это добавленная в этом форке сис
 - `GitHub bot PR maintenance` — обходит все репозитории выбранного владельца и по умолчанию исправляет и мержит безопасные bot PR.
 - `PR babysitter` — дешёво опрашивает один PR и запускает чистого сильного агента только для новых CI failures или review feedback.
 
-Их исходный код находится в `codex-rs/tui/src/workflow/builtin_ruff.py`, `codex-rs/tui/src/workflow/builtin_github_bot_pr_maintenance.py` и `codex-rs/tui/src/workflow/builtin_pr_babysitter.py`.
+Их исходный код находится в `antex-rs/tui/src/workflow/builtin_ruff.py`, `antex-rs/tui/src/workflow/builtin_github_bot_pr_maintenance.py` и `antex-rs/tui/src/workflow/builtin_pr_babysitter.py`.
 
 При запуске Codex материализует встроенный workflow во внутренний кэш:
 
 ```text
-~/.codex/workflow-cache/ruff-cleanup-v1.py
-~/.codex/workflow-cache/github-bot-pr-maintenance-v1.py
+~/.antex/workflow-cache/ruff-cleanup-v1.py
+~/.antex/workflow-cache/github-bot-pr-maintenance-v1.py
 ```
 
 ## Где хранить свои workflows
@@ -22,13 +22,13 @@ Python workflows — это добавленная в этом форке сис
 Личные workflows, доступные во всех проектах:
 
 ```text
-~/.codex/workflows/*.py
+~/.antex/workflows/*.py
 ```
 
 Проектные workflows:
 
 ```text
-<project>/.codex/workflows/*.py
+<project>/.antex/workflows/*.py
 ```
 
 Если несколько workflows имеют одинаковый `id`, используется следующий приоритет:
@@ -159,7 +159,7 @@ def run(ctx):
 
 Каждый элемент `prompts` в `ctx.agent_batch` может быть строкой либо объектом с индивидуальными значениями `prompt`, `model`, `reasoning_effort`, `developer_instructions`, `forbid_quality_graph_ignore`, `cwd` и `timeout_seconds`.
 
-Агенты запускаются через установленный локально `codex exec` с тем же `CODEX_HOME`, авторизацией и подпиской. Каждый вызов эфемерный и начинает работу с небольшим независимым контекстом.
+Агенты запускаются через установленный локально `codex exec` с тем же `ANTEX_HOME`, авторизацией и подпиской. Каждый вызов эфемерный и начинает работу с небольшим независимым контекстом.
 
 ## Как работает Ruff cleanup
 
@@ -191,7 +191,7 @@ Workflow запрещает агентам добавлять `noqa`, ignores, e
 Каждый запуск получает отдельную директорию:
 
 ```text
-~/.codex/workflow-runs/<timestamp>-<8-symbol-uuid>/
+~/.antex/workflow-runs/<timestamp>-<8-symbol-uuid>/
 ```
 
 Внутри находятся:

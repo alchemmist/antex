@@ -1,0 +1,6 @@
+load("//:defs.bzl", "antex_rust_crate")
+
+antex_rust_crate(
+    name = "guardian-context",
+    crate_name = "antex_guardian_context",
+)

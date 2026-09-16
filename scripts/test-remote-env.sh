@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 
-# Remote-env setup script for codex-rs integration tests.
+# Remote-env setup script for antex-rs integration tests.
 #
 # Usage (source-only):
 #   source scripts/test-remote-env.sh
-#   cd codex-rs
-#   just test -p codex-core --test all remote_test_env_can_connect_and_use_filesystem
+#   cd antex-rs
+#   just test -p antex-core --test all remote_test_env_can_connect_and_use_filesystem
 #   codex_remote_env_cleanup
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -24,8 +24,8 @@ setup_remote_env() {
   local remote_exec_server_port
   local remote_exec_server_stdout_path
 
-  container_name="${CODEX_TEST_REMOTE_ENV_CONTAINER_NAME:-codex-remote-test-env-local-$(date +%s)-${RANDOM}}"
-  codex_binary_path="${CARGO_TARGET_DIR:-${REPO_ROOT}/codex-rs/target}/debug/codex"
+  container_name="${ANTEX_TEST_REMOTE_ENV_CONTAINER_NAME:-codex-remote-test-env-local-$(date +%s)-${RANDOM}}"
+  codex_binary_path="${CARGO_TARGET_DIR:-${REPO_ROOT}/antex-rs/target}/debug/codex"
 
   if ! command -v docker >/dev/null 2>&1; then
     echo "docker is required (Colima or Docker Desktop)" >&2
@@ -43,8 +43,8 @@ setup_remote_env() {
   fi
 
   (
-    cd "${REPO_ROOT}/codex-rs"
-    cargo build -p codex-cli --bin codex
+    cd "${REPO_ROOT}/antex-rs"
+    cargo build -p antex-cli --bin codex
   )
 
   if [[ ! -f "${codex_binary_path}" ]]; then
@@ -64,7 +64,7 @@ setup_remote_env() {
     return 1
   fi
 
-  if [[ -z "${CODEX_TEST_REMOTE_EXEC_SERVER_URL:-}" ]]; then
+  if [[ -z "${ANTEX_TEST_REMOTE_EXEC_SERVER_URL:-}" ]]; then
     remote_codex_path="/tmp/codex-remote-env/codex"
     remote_exec_server_port="31987"
     remote_exec_server_stdout_path="/tmp/codex-remote-env/exec-server.stdout"
@@ -84,13 +84,13 @@ setup_remote_env() {
       docker rm -f "${container_name}" >/dev/null 2>&1 || true
       return 1
     fi
-    export CODEX_TEST_REMOTE_EXEC_SERVER_PID="${remote_exec_server_pid}"
-    export CODEX_TEST_REMOTE_EXEC_SERVER_URL="ws://${container_ip}:${remote_exec_server_port}"
+    export ANTEX_TEST_REMOTE_EXEC_SERVER_PID="${remote_exec_server_pid}"
+    export ANTEX_TEST_REMOTE_EXEC_SERVER_URL="ws://${container_ip}:${remote_exec_server_port}"
   fi
 
-  export CODEX_TEST_REMOTE_ENV="${container_name}"
-  export CODEX_TEST_REMOTE_ENV_CONTAINER_NAME="${container_name}"
-  export CODEX_TEST_ENVIRONMENT="docker"
+  export ANTEX_TEST_REMOTE_ENV="${container_name}"
+  export ANTEX_TEST_REMOTE_ENV_CONTAINER_NAME="${container_name}"
+  export ANTEX_TEST_ENVIRONMENT="docker"
 }
 
 wait_for_remote_exec_server_port() {
@@ -112,14 +112,14 @@ wait_for_remote_exec_server_port() {
 }
 
 codex_remote_env_cleanup() {
-  if [[ -n "${CODEX_TEST_REMOTE_ENV:-}" ]]; then
-    docker rm -f "${CODEX_TEST_REMOTE_ENV}" >/dev/null 2>&1 || true
-    unset CODEX_TEST_REMOTE_ENV
+  if [[ -n "${ANTEX_TEST_REMOTE_ENV:-}" ]]; then
+    docker rm -f "${ANTEX_TEST_REMOTE_ENV}" >/dev/null 2>&1 || true
+    unset ANTEX_TEST_REMOTE_ENV
   fi
-  unset CODEX_TEST_REMOTE_ENV_CONTAINER_NAME
-  unset CODEX_TEST_REMOTE_EXEC_SERVER_PID
-  unset CODEX_TEST_REMOTE_EXEC_SERVER_URL
-  unset CODEX_TEST_ENVIRONMENT
+  unset ANTEX_TEST_REMOTE_ENV_CONTAINER_NAME
+  unset ANTEX_TEST_REMOTE_EXEC_SERVER_PID
+  unset ANTEX_TEST_REMOTE_EXEC_SERVER_URL
+  unset ANTEX_TEST_ENVIRONMENT
 }
 
 if ! is_sourced; then
@@ -131,9 +131,9 @@ old_shell_options="$(set +o)"
 set -euo pipefail
 if setup_remote_env; then
   status=0
-  echo "CODEX_TEST_REMOTE_ENV=${CODEX_TEST_REMOTE_ENV}"
-  echo "CODEX_TEST_ENVIRONMENT=${CODEX_TEST_ENVIRONMENT}"
-  echo "CODEX_TEST_REMOTE_EXEC_SERVER_URL=${CODEX_TEST_REMOTE_EXEC_SERVER_URL}"
+  echo "ANTEX_TEST_REMOTE_ENV=${ANTEX_TEST_REMOTE_ENV}"
+  echo "ANTEX_TEST_ENVIRONMENT=${ANTEX_TEST_ENVIRONMENT}"
+  echo "ANTEX_TEST_REMOTE_EXEC_SERVER_URL=${ANTEX_TEST_REMOTE_EXEC_SERVER_URL}"
   echo "Remote env ready. Run your command, then call: codex_remote_env_cleanup"
 else
   status=$?

@@ -1,0 +1,6 @@
+load("//:defs.bzl", "antex_rust_crate")
+
+antex_rust_crate(
+    name = "stdio-to-uds",
+    crate_name = "antex_stdio_to_uds",
+)

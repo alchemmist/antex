@@ -1,0 +1,8 @@
+---
+source: tui/src/chatwidget/tests/luna_reserve_usage_tests.rs
+assertion_line: 124
+expression: rendered
+---
+ ┃ Ask Antex to do anything
+
+  Luna Reserve default · /tmp/project

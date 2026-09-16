@@ -1,0 +1,38 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "antex-image-generation-extension"
+version.workspace = true
+
+[lib]
+name = "antex_image_generation_extension"
+path = "src/lib.rs"
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+base64 = { workspace = true }
+antex-api = { workspace = true }
+antex-core = { workspace = true }
+antex-exec-server = { workspace = true }
+antex-extension-api = { workspace = true }
+antex-extension-items = { workspace = true }
+antex-login = { workspace = true }
+antex-model-provider = { workspace = true }
+antex-model-provider-info = { workspace = true }
+antex-protocol = { workspace = true }
+antex-tools = { workspace = true }
+antex-utils-absolute-path = { workspace = true }
+antex-utils-image = { workspace = true }
+antex-utils-path-uri = { workspace = true }
+http = { workspace = true }
+schemars = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt"] }

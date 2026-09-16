@@ -1,0 +1,6 @@
+load("//:defs.bzl", "antex_rust_crate")
+
+antex_rust_crate(
+    name = "model-provider-info",
+    crate_name = "antex_model_provider_info",
+)

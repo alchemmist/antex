@@ -13,8 +13,8 @@ def _schema_bundle_impl(ctx):
                 "schema_fixtures_tests::write_schema_fixtures_from_env",
             ],
             env = {
-                "CODEX_APP_SERVER_SCHEMA_ROOT": schema.path,
-                "CODEX_APP_SERVER_SCHEMA_EXPERIMENTAL": "1" if mode == "experimental" else "0",
+                "ANTEX_APP_SERVER_SCHEMA_ROOT": schema.path,
+                "ANTEX_APP_SERVER_SCHEMA_EXPERIMENTAL": "1" if mode == "experimental" else "0",
                 "RUST_MIN_STACK": "8388608",
             },
             outputs = [schema],

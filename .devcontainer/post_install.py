@@ -22,7 +22,7 @@ def fix_directory_ownership() -> None:
     gid = os.getgid()
 
     paths = [
-        Path.home() / ".codex",
+        Path.home() / ".antex",
         Path.home() / ".config" / "gh",
         Path.home() / ".cargo",
         Path.home() / ".rustup",

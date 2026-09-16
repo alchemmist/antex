@@ -1,0 +1,25 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "antex-prompts"
+version.workspace = true
+
+[lib]
+doctest = false
+name = "antex_prompts"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+antex-context-fragments = { workspace = true }
+antex-git-utils = { workspace = true }
+antex-execpolicy = { workspace = true }
+antex-protocol = { workspace = true }
+antex-utils-absolute-path = { workspace = true }
+antex-utils-template = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }

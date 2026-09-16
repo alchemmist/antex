@@ -5,7 +5,7 @@ load("//:defs.bzl", "workspace_root_test")
 def exec_server_compat_test(
         name,
         comparison_binary = None,
-        current_binary = "//codex-rs/cli:codex",
+        current_binary = "//antex-rs/cli:antex",
         release = None):
     """Tests both executor directions against another Codex build or release.
 
@@ -33,9 +33,9 @@ def exec_server_compat_test(
         args = ["--test-threads=1"],
         data = data,
         runfile_env = {
-            "//codex-rs/bwrap:bwrap": "CARGO_BIN_EXE_bwrap",
-            current_binary: "CODEX_TEST_CURRENT_CODEX",
-            ":" + comparison_alias: "CODEX_TEST_RELEASED_CODEX",
+            "//antex-rs/bwrap:bwrap": "CARGO_BIN_EXE_bwrap",
+            current_binary: "ANTEX_TEST_CURRENT_CODEX",
+            ":" + comparison_alias: "ANTEX_TEST_RELEASED_CODEX",
         },
         tags = ["no-sandbox"],
         target_compatible_with = [
@@ -43,5 +43,5 @@ def exec_server_compat_test(
             "@platforms//os:linux",
         ],
         test_bin = "//bazel/rules/testing/compat:exec-server-compat-test-bin",
-        workspace_root_marker = "//codex-rs/utils/cargo-bin:repo_root.marker",
+        workspace_root_marker = "//antex-rs/utils/cargo-bin:repo_root.marker",
     )

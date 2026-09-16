@@ -1,0 +1,30 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "antex-extension-api"
+version.workspace = true
+
+[lib]
+name = "antex_extension_api"
+path = "src/lib.rs"
+test = false
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+antex-history = { workspace = true }
+antex-config = { workspace = true }
+antex-context-fragments = { workspace = true }
+antex-exec-server-protocol = { workspace = true }
+antex-mcp = { workspace = true }
+antex-protocol = { workspace = true }
+antex-tools = { workspace = true }
+antex-utils-absolute-path = { workspace = true }
+antex-utils-path-uri = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

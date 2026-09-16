@@ -1,0 +1,23 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "antex-history"
+version.workspace = true
+
+[lib]
+doctest = false
+name = "antex_history"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+antex-protocol = { workspace = true }
+schemars = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+anyhow = { workspace = true }
+pretty_assertions = { workspace = true }

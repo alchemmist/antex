@@ -1,0 +1,11 @@
+---
+source: tui/src/keymap_setup.rs
+assertion_line: 1460
+expression: rendered
+---
+Keypress Inspector
+Press any key to see what Antex receives. Esc is inspected; Ctrl+C closes.
+Still waiting? If nothing changes when you press a key, your terminal is not sending that key to
+Antex. Only received keys can be assigned as shortcuts.
+
+Waiting for a keypress...

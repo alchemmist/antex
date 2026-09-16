@@ -1,0 +1,58 @@
+load("//:defs.bzl", "antex_rust_crate")
+
+# Cargo's build.rs emits rustc-link-arg-bin so only the setup helper gets the
+# asInvoker manifest. rules_rust warns on and drops that directive, so Bazel
+# spells out the same per-binary linker contract here.
+WINDOWS_SETUP_MANIFEST_RUSTC_FLAGS = select({
+    "@llvm//constraints/windows/abi:gnullvm": [
+        "-C",
+        "link-arg=$(location :antex-windows-sandbox-setup-manifest-resource)",
+    ],
+    "@llvm//constraints/windows/abi:msvc": [
+        "-C",
+        "link-arg=/MANIFEST:EMBED",
+        "-C",
+        "link-arg=/MANIFESTINPUT:$(location :antex-windows-sandbox-setup.manifest)",
+    ],
+    "//conditions:default": [],
+})
+
+# Copying build.rs's gnullvm /MANIFESTINPUT flags is not enough: lld-link
+# shells out to mt.exe, but the supported gnullvm cross-build executes on
+# Linux RBE. Compile the same RT_MANIFEST resource with hermetic LLVM instead.
+# -no-preprocess does not expand RT_MANIFEST, so use its numeric type, 24.
+# Keep the command on one line: Windows checkouts use CRLF, but Linux RBE runs it.
+genrule(
+    name = "antex-windows-sandbox-setup-manifest-resource",
+    srcs = ["antex-windows-sandbox-setup.manifest"],
+    outs = ["antex-windows-sandbox-setup.manifest.res"],
+    cmd = " && ".join([
+        "printf '1 24 \"%s\"\\n' \"$(location :antex-windows-sandbox-setup.manifest)\" > \"$(@D)/antex-windows-sandbox-setup.manifest.rc\"",
+        "$(location @llvm//tools:llvm-rc) -no-preprocess \"$(@D)/antex-windows-sandbox-setup.manifest.rc\"",
+    ]),
+    tools = ["@llvm//tools:llvm-rc"],
+)
+
+antex_rust_crate(
+    name = "windows-sandbox-rs",
+    binary_compile_data_extra = {
+        "antex-windows-sandbox-setup": select({
+            "@llvm//constraints/windows/abi:gnullvm": [":antex-windows-sandbox-setup-manifest-resource"],
+            "@llvm//constraints/windows/abi:msvc": ["antex-windows-sandbox-setup.manifest"],
+            "//conditions:default": [],
+        }),
+    },
+    binary_rustc_flags_extra = {
+        "antex-windows-sandbox-setup": WINDOWS_SETUP_MANIFEST_RUSTC_FLAGS,
+    },
+    binary_test_target_compatible_with = ["@platforms//os:windows"],
+    # Do not run build.rs under Bazel: rules_rust cannot translate its
+    # rustc-link-arg-bin directives, and the target-local equivalents above
+    # provide the link inputs and flags without the unsupported-directive warning.
+    build_script_enabled = False,
+    crate_name = "antex_windows_sandbox",
+    test_data_extra = [
+        ":antex-command-runner",
+        ":antex-windows-sandbox-setup",
+    ],
+)

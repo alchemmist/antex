@@ -15,14 +15,14 @@ class WrapperCommonTest(unittest.TestCase):
     def test_defaults_to_workspace_and_all_targets(self) -> None:
         parsed = wrapper_common.parse_wrapper_args([])
         final_args = wrapper_common.build_final_args(
-            parsed, Path("/repo/codex-rs/Cargo.toml")
+            parsed, Path("/repo/antex-rs/Cargo.toml")
         )
 
         self.assertEqual(
             final_args,
             [
                 "--manifest-path",
-                "/repo/codex-rs/Cargo.toml",
+                "/repo/antex-rs/Cargo.toml",
                 "--workspace",
                 "--no-deps",
                 "--",
@@ -32,40 +32,40 @@ class WrapperCommonTest(unittest.TestCase):
 
     def test_forwarded_cargo_args_keep_single_separator(self) -> None:
         parsed = wrapper_common.parse_wrapper_args(
-            ["-p", "codex-core", "--", "--tests"]
+            ["-p", "antex-core", "--", "--tests"]
         )
         final_args = wrapper_common.build_final_args(
-            parsed, Path("/repo/codex-rs/Cargo.toml")
+            parsed, Path("/repo/antex-rs/Cargo.toml")
         )
 
         self.assertEqual(
             final_args,
             [
                 "--manifest-path",
-                "/repo/codex-rs/Cargo.toml",
+                "/repo/antex-rs/Cargo.toml",
                 "--no-deps",
                 "-p",
-                "codex-core",
+                "antex-core",
                 "--",
                 "--tests",
             ],
         )
 
     def test_fix_does_not_add_all_targets(self) -> None:
-        parsed = wrapper_common.parse_wrapper_args(["--fix", "-p", "codex-core"])
+        parsed = wrapper_common.parse_wrapper_args(["--fix", "-p", "antex-core"])
         final_args = wrapper_common.build_final_args(
-            parsed, Path("/repo/codex-rs/Cargo.toml")
+            parsed, Path("/repo/antex-rs/Cargo.toml")
         )
 
         self.assertEqual(
             final_args,
             [
                 "--manifest-path",
-                "/repo/codex-rs/Cargo.toml",
+                "/repo/antex-rs/Cargo.toml",
                 "--no-deps",
                 "--fix",
                 "-p",
-                "codex-core",
+                "antex-core",
             ],
         )
 
@@ -81,7 +81,7 @@ class WrapperCommonTest(unittest.TestCase):
             ]
         )
         final_args = wrapper_common.build_final_args(
-            parsed, Path("/repo/codex-rs/Cargo.toml")
+            parsed, Path("/repo/antex-rs/Cargo.toml")
         )
 
         self.assertEqual(
@@ -104,7 +104,7 @@ class WrapperCommonTest(unittest.TestCase):
             ]
         )
         final_args = wrapper_common.build_final_args(
-            parsed, Path("/repo/codex-rs/Cargo.toml")
+            parsed, Path("/repo/antex-rs/Cargo.toml")
         )
 
         self.assertEqual(

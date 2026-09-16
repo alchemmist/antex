@@ -1,5 +1,7 @@
 load("@apple_support//xcode:xcode_config.bzl", "xcode_config")
 
+exports_files(["FORK_VERSION"])
+
 xcode_config(name = "disable_xcode")
 
 # We mark the local platform as glibc-compatible so that rust can grab a toolchain for us.

@@ -1,0 +1,10 @@
+load("//:defs.bzl", "antex_rust_crate")
+
+antex_rust_crate(
+    name = "models-manager",
+    compile_data = [
+        "models.json",
+        "prompt.md",
+    ],
+    crate_name = "antex_models_manager",
+)

@@ -1,0 +1,9 @@
+load("//:defs.bzl", "antex_rust_crate")
+
+antex_rust_crate(
+    name = "rmcp-client",
+    crate_name = "antex_rmcp_client",
+    extra_binaries = [
+        "//antex-rs/cli:antex",
+    ],
+)

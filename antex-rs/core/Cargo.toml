@@ -1,0 +1,174 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "antex-core"
+version.workspace = true
+
+[lib]
+name = "antex_core"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+arc-swap = { workspace = true }
+async-channel = { workspace = true }
+base64 = { workspace = true }
+bm25 = { workspace = true }
+chrono = { workspace = true, features = ["serde"] }
+antex-analytics = { workspace = true }
+antex-agent-graph-store = { workspace = true }
+antex-agent-roles = { workspace = true }
+antex-api = { workspace = true }
+antex-app-server-protocol = { workspace = true }
+antex-apply-patch = { workspace = true }
+antex-async-utils = { workspace = true }
+antex-attachment-store = { workspace = true }
+antex-client = { workspace = true }
+antex-code-mode = { workspace = true }
+antex-connectors = { workspace = true }
+antex-context-fragments = { workspace = true }
+antex-config = { workspace = true }
+antex-core-plugins = { workspace = true }
+antex-diagnostics = { workspace = true }
+antex-exec-server = { workspace = true }
+antex-extension-api = { workspace = true }
+antex-extension-items = { workspace = true }
+antex-features = { workspace = true }
+antex-feedback = { workspace = true }
+antex-file-system = { workspace = true }
+antex-login = { workspace = true }
+antex-memories-read = { workspace = true }
+antex-mcp = { workspace = true }
+antex-model-provider-info = { workspace = true }
+antex-models-manager = { workspace = true }
+antex-shell-command = { workspace = true }
+antex-execpolicy = { workspace = true }
+antex-git-utils = { workspace = true }
+antex-guardian-context = { workspace = true }
+antex-history = { workspace = true }
+antex-hooks = { workspace = true }
+antex-http-client = { workspace = true }
+antex-install-context = { workspace = true }
+antex-network-proxy = { workspace = true }
+antex-otel = { workspace = true }
+antex-plugin = { workspace = true }
+antex-model-provider = { workspace = true }
+antex-protocol = { workspace = true }
+antex-response-debug-context = { workspace = true }
+antex-prompts = { workspace = true }
+antex-rollout = { workspace = true }
+antex-rollout-trace = { workspace = true }
+antex-rmcp-client = { workspace = true }
+antex-sandboxing = { workspace = true }
+antex-skills = { workspace = true }
+antex-skills-extension = { workspace = true }
+antex-state = { workspace = true }
+antex-terminal-detection = { workspace = true }
+antex-thread-store = { workspace = true }
+antex-tools = { workspace = true }
+antex-utils-absolute-path = { workspace = true }
+antex-utils-audio = { workspace = true }
+antex-utils-cache = { workspace = true }
+antex-utils-git-discovery = { workspace = true }
+antex-utils-image = { workspace = true }
+antex-utils-home-dir = { workspace = true }
+antex-utils-output-truncation = { workspace = true }
+antex-utils-path = { workspace = true }
+antex-utils-path-uri = { workspace = true }
+antex-utils-plugins = { workspace = true }
+antex-utils-pty = { workspace = true }
+antex-utils-string = { workspace = true }
+antex-utils-stream-parser = { workspace = true }
+antex-windows-sandbox = { package = "antex-windows-sandbox", path = "../windows-sandbox-rs" }
+dirs = { workspace = true }
+dunce = { workspace = true }
+eventsource-stream = { workspace = true }
+futures = { workspace = true }
+http = { workspace = true }
+iana-time-zone = { workspace = true }
+image = { workspace = true, features = ["jpeg", "png", "webp"] }
+indexmap = { workspace = true }
+libc = { workspace = true }
+once_cell = { workspace = true }
+rand = { workspace = true }
+regex-lite = { workspace = true }
+rmcp = { workspace = true, default-features = false, features = [
+    "base64",
+    "macros",
+    "schemars",
+    "server",
+] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+sha1 = { workspace = true }
+shlex = { workspace = true }
+similar = { workspace = true }
+tempfile = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = [
+    "io-std",
+    "macros",
+    "process",
+    "rt-multi-thread",
+    "signal",
+] }
+tokio-util = { workspace = true, features = ["rt"] }
+tokio-tungstenite = { workspace = true }
+toml = { workspace = true }
+toml_edit = { workspace = true }
+tracing = { workspace = true, features = ["log"] }
+url = { workspace = true }
+uuid = { workspace = true, features = ["serde", "v4", "v5", "v7"] }
+which = { workspace = true }
+whoami = { workspace = true }
+
+# Build OpenSSL from source for musl builds.
+[target.x86_64-unknown-linux-musl.dependencies]
+openssl-sys = { workspace = true, features = ["vendored"] }
+
+# Build OpenSSL from source for musl builds.
+[target.aarch64-unknown-linux-musl.dependencies]
+openssl-sys = { workspace = true, features = ["vendored"] }
+
+[target.'cfg(unix)'.dependencies]
+antex-shell-escalation = { workspace = true }
+
+[dev-dependencies]
+assert_cmd = { workspace = true }
+assert_matches = { workspace = true }
+antex-exec-server-test-support = { workspace = true }
+antex-image-generation-extension = { workspace = true }
+antex-home = { workspace = true }
+antex-otel = { workspace = true }
+antex-test-binary-support = { workspace = true }
+antex-utils-cargo-bin = { workspace = true }
+antex-utils-redacted-string = { workspace = true }
+antex-web-search-extension = { workspace = true }
+core_test_support = { workspace = true }
+ctor = { workspace = true }
+insta = { workspace = true }
+maplit = { workspace = true }
+opentelemetry = { workspace = true }
+predicates = { workspace = true }
+pretty_assertions = { workspace = true }
+test-case = "3.3.1"
+opentelemetry_sdk = { workspace = true, features = [
+    "experimental_metrics_custom_reader",
+    "metrics",
+] }
+serial_test = { workspace = true }
+tempfile = { workspace = true }
+test-log = { workspace = true }
+tracing-opentelemetry = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-test = { workspace = true, features = ["no-env-filter"] }
+walkdir = { workspace = true }
+wiremock = { workspace = true }
+zstd = { workspace = true }
+
+[package.metadata.cargo-shear]
+ignored = ["openssl-sys"]
+ignored-paths = ["tests/remote_env_windows/*.rs"]

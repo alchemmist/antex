@@ -1,0 +1,6 @@
+load("//:defs.bzl", "antex_rust_crate")
+
+antex_rust_crate(
+    name = "exec-server-protocol",
+    crate_name = "antex_exec_server_protocol",
+)
