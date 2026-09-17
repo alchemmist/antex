@@ -35,7 +35,9 @@ def install_package(source, destination, target):
     manifest = json.loads((source / "antex-resources/voice/manifest.json").read_text())
     for name, expected_digest in manifest["sha256"].items():
         file = source / name
-        if not file.resolve().is_relative_to(source.resolve()):
+        if os.path.commonpath((file.resolve(), source.resolve())) != str(
+            source.resolve()
+        ):
             raise ValueError("voice manifest contains an external path")
         if hashlib.sha256(file.read_bytes()).hexdigest() != expected_digest:
             raise ValueError(f"voice package checksum mismatch: {name}")

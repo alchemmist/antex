@@ -7,6 +7,7 @@ import tempfile
 from pathlib import Path
 
 from antex_package.archive import write_archive
+from antex_package.version import read_workspace_version
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "third_party/voice"))
@@ -28,6 +29,9 @@ def main():
     parser.add_argument("--commit", required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--release", action="store_true")
+    parser.add_argument("--entrypoint-bin", type=Path)
+    parser.add_argument("--code-mode-host-bin", type=Path)
+    parser.add_argument("--bwrap-bin", type=Path)
     args = parser.parse_args()
     output = args.output.absolute()
     if output.exists():
@@ -51,15 +55,26 @@ def main():
             "--package-dir",
             str(base),
             "--entrypoint-bin",
-            str(binaries / "cli/antex"),
+            str(args.entrypoint_bin or binaries / "cli/antex"),
             "--code-mode-host-bin",
-            str(binaries / "code-mode-host/antex-code-mode-host"),
+            str(
+                args.code_mode_host_bin
+                or binaries / "code-mode-host/antex-code-mode-host"
+            ),
         ]
         if args.target.endswith("linux-gnu"):
-            command += ["--bwrap-bin", str(binaries / "bwrap/bwrap")]
+            command += ["--bwrap-bin", str(args.bwrap_bin or binaries / "bwrap/bwrap")]
         subprocess.run(
             command, env=os.environ | {"ANTEX_REPO_ROOT": str(ROOT)}, check=True
         )
+        if args.release:
+            reported = subprocess.check_output(
+                [str(base / "bin/antex"), "--version"], text=True, timeout=20
+            ).split()[-1]
+            if reported != read_workspace_version():
+                raise ValueError(
+                    "release entrypoint must carry the Cargo workspace version"
+                )
         runtime = work / "runtime"
         stage(
             ROOT / f"bazel-bin/third_party/voice/native_runtime_{prefix}",
@@ -68,6 +83,16 @@ def main():
         )
         helper = work / "antex-voice-host"
         shutil.copy2(binaries / "voice-host/antex-voice-host", helper)
+        if args.release:
+            subprocess.run(
+                [
+                    "strip",
+                    str(helper),
+                    str(base / "bin/antex"),
+                    str(base / "bin/antex-code-mode-host"),
+                ],
+                check=True,
+            )
         if args.target.endswith("darwin") and args.release:
             for file in [helper, *base.rglob("*"), *runtime.rglob("*.dylib")]:
                 if file.is_file() and (
