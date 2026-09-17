@@ -124,8 +124,8 @@ fi
 
 case "$bundle" in
   primary)
-    variant="codex"
-    entrypoint="codex"
+    variant="antex"
+    entrypoint="antex"
     archive_stem="codex-package"
     ;;
   app-server)
@@ -221,7 +221,7 @@ if [[ -n "$voice_release_dir" ]]; then
   fi
   voice_package="${RUNNER_TEMP:-/tmp}/${archive_stem}-voice-${target}"
   rm -rf "$voice_package"
-  voice_helper="${voice_release_dir%/}/codex-voice-host${exe_suffix}"
+  voice_helper="${voice_release_dir%/}/antex-voice-host${exe_suffix}"
   "$python_bin" "${repo_root}/third_party/voice/assemble_package.py" \
     --package "$package_dir" \
     --helper "$voice_helper" \
@@ -234,7 +234,7 @@ if [[ -n "$voice_release_dir" ]]; then
     "$voice_package" "$gzip_archive_path" "$zstd_archive_path" <<'PY'
 import sys
 from pathlib import Path
-from codex_package.archive import write_archive
+from antex_package.archive import write_archive
 
 package = Path(sys.argv[1])
 for archive in sys.argv[2:]:

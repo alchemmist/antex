@@ -2,6 +2,12 @@ name: alchemmist-release
 
 on:
   push:
+    branches: [main]
+    paths:
+      - "Makefile"
+      - "scripts/**"
+      - "third_party/voice/**"
+      - ".github/workflows/alchemmist-release.yml"
     tags:
       - "v*.*.*"
 
@@ -16,17 +22,7 @@ jobs:
   build:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 90
-    defaults:
-      run:
-        working-directory: antex-rs
-    env:
-      CARGO_INCREMENTAL: "0"
-      CARGO_NET_GIT_FETCH_WITH_CLI: "true"
-      CARGO_PROFILE_RELEASE_DEBUG: "0"
-      CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO: "off"
-      CARGO_TARGET_DIR: ${{ github.workspace }}/antex-rs/target
-      TARGET: ${{ matrix.target }}
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -35,82 +31,65 @@ jobs:
             runner: macos-15
             target: aarch64-apple-darwin
             platform: mac
+            make_target: package-macos-arm64
           - name: Linux x86_64
             runner: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             platform: linux
+            make_target: package-linux
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
         with:
-          targets: ${{ matrix.target }}
+          python-version: "3.12"
+
+      - uses: bazel-contrib/setup-bazel@c5acdfb288317d0b5c0bbd7a396a3dc868bb0f86
+        with:
+          bazelisk-version: 1.28.1
 
       - name: Validate release version
+        if: startsWith(github.ref, 'refs/tags/')
         shell: bash
         run: |
           set -euo pipefail
-          [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          tag_version="${GITHUB_REF_NAME#v}"
-          fork_version="$(tr -d '[:space:]' < ../FORK_VERSION)"
-          [[ "${tag_version}" == "${fork_version}" ]]
+          [[ "${GITHUB_REF_NAME}" == "v$(tr -d '[:space:]' < FORK_VERSION)" ]]
 
-      - name: Install Linux build dependencies
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends pkg-config libcap-dev
-
-      - name: Configure rusty_v8 artifacts
-        uses: ./.github/actions/setup-rusty-v8
-        with:
-          target: ${{ matrix.target }}
-
-      - name: Build Antex
-        shell: bash
-        run: |
-          export STABLE_GIT_COMMIT="${GITHUB_SHA}"
-          ALCHEMMIST_FORK_VERSION="$(tr -d '[:space:]' < ../FORK_VERSION)"
-          export ALCHEMMIST_FORK_VERSION
-          cargo build --locked --release --target "${TARGET}" \
-            --bin antex \
-            --bin antex-code-mode-host
-          if [[ "${TARGET}" == *linux* ]]; then
-            cargo build --locked --release --target "${TARGET}" -p antex-bwrap --bin bwrap
-          fi
-
-      - name: Package Antex
+      - name: Build complete package
         shell: bash
         env:
-          PLATFORM: ${{ matrix.platform }}
+          MAKE_TARGET: ${{ matrix.make_target }}
+        run: |
+          make "$MAKE_TARGET" ANTEX_BUILD_COMMIT="$GITHUB_SHA" \
+            ANTEX_PACKAGE_DIR="$RUNNER_TEMP/package" \
+            ANTEX_PACKAGE_FLAGS=--release ANTEX_BAZEL_BUILD_FLAGS=--jobs=3
+
+      - name: Validate installed package
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
         run: |
           set -euo pipefail
-          archive="antex-${TARGET}.tar.gz"
-          staging="${RUNNER_TEMP}/antex-${TARGET}"
-          mkdir -p "${staging}"
-          cp "${CARGO_TARGET_DIR}/${TARGET}/release/antex" "${staging}/antex"
-          cp "${CARGO_TARGET_DIR}/${TARGET}/release/antex-code-mode-host" \
-            "${staging}/antex-code-mode-host"
-          strip "${staging}/antex" "${staging}/antex-code-mode-host"
-          if [[ "${PLATFORM}" == "mac" ]]; then
-            codesign --force --sign - "${staging}/antex"
-            codesign --force --sign - "${staging}/antex-code-mode-host"
-          fi
-          python3 ../scripts/smoke-code-mode-host.py "${staging}/antex-code-mode-host"
-          if [[ "${PLATFORM}" == "linux" ]]; then
-            mkdir -p "${staging}/antex-resources"
-            cp "${CARGO_TARGET_DIR}/${TARGET}/release/bwrap" "${staging}/antex-resources/bwrap"
-          fi
-          tar -C "${staging}" -czf "${RUNNER_TEMP}/${archive}" .
-          if [[ "${PLATFORM}" == "mac" ]]; then
-            (cd "${RUNNER_TEMP}" && shasum -a 256 "${archive}" > "${archive}.sha256")
-          else
-            (cd "${RUNNER_TEMP}" && sha256sum "${archive}" > "${archive}.sha256")
-          fi
+          python3 scripts/install-fork-package.py "$RUNNER_TEMP/package" "$RUNNER_TEMP/installed/bin" "$TARGET"
+          "$RUNNER_TEMP/installed/bin/antex" --help > /dev/null
+          python3 scripts/smoke-code-mode-host.py "$RUNNER_TEMP/installed/bin/antex-code-mode-host"
+          python3 scripts/smoke-voice-package.py "$RUNNER_TEMP/installed/bin/antex" "$GITHUB_SHA"
+          python3 scripts/smoke-tui-voice.py "$RUNNER_TEMP/installed/bin/antex"
+          python3 -m unittest discover -s scripts -p 'test_install_fork_package.py'
+          python3 -m unittest discover -s third_party/voice -p 'test_assemble_package.py'
+          cd "$RUNNER_TEMP"
+          python3 - "$TARGET" <<'PYTHON'
+          import hashlib
+          import pathlib
+          import sys
+          archive = pathlib.Path(f"antex-{sys.argv[1]}.tar.gz")
+          archive.with_suffix(archive.suffix + ".sha256").write_text(
+              hashlib.sha256(archive.read_bytes()).hexdigest() + "  " + archive.name + "\n"
+          )
+          PYTHON
 
       - name: Upload release artifact
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
@@ -125,6 +104,7 @@ jobs:
   release:
     name: GitHub Release
     needs: build
+    if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-24.04
     permissions:
       contents: write

@@ -121,6 +121,10 @@ else
 fi
 
 tar -C "$temp_dir" -xzf "${temp_dir}/${archive}"
+if [[ -f "${temp_dir}/antex-package.json" ]]; then
+  python3 "${0:A:h}/install-fork-package.py" "$temp_dir" "$install_dir" "$target"
+  exit 0
+fi
 for binary in antex antex-code-mode-host; do
   if [[ ! -f "${temp_dir}/${binary}" ]]; then
     echo "Release archive is missing ${binary}." >&2

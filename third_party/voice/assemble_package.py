@@ -1,4 +1,4 @@
-"""Add a helper and its prepared runtime to a fresh private Codex package."""
+"""Add a helper and its prepared runtime to a fresh private Antex package."""
 
 import argparse
 import hashlib
@@ -51,16 +51,16 @@ def assemble(
     if targets.get(app_target) != voice_target:
         raise ValueError("incompatible app and helper targets")
     suffix = ".exe" if app_target.endswith("windows-msvc") else ""
-    entrypoint = f"bin/codex{suffix}"
+    entrypoint = f"bin/antex{suffix}"
     expected = {
         "layoutVersion": 1,
-        "variant": "codex",
+        "variant": "antex",
         "entrypoint": entrypoint,
         "resourcesDir": "antex-resources",
         "pathDir": "antex-path",
     }
     if any(metadata.get(key) != value for key, value in expected.items()):
-        raise ValueError("input is not a canonical Codex package")
+        raise ValueError("input is not a canonical Antex package")
     if release_version is None:
         if not metadata["version"].endswith(f"+{commit}"):
             raise ValueError("package version does not match the declared build")
