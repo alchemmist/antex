@@ -29,8 +29,9 @@ where
     let (tx, rx) = unbounded_channel();
     let frame_requester = FrameRequester::test_dummy();
     StartupDraftPump {
-        header: startup_session_header(/*config*/ None, Some(frame_requester.clone())),
+        header: startup_session_header(/*config*/ None, /*mascot_animation*/ None),
         mascot_frame_requester: frame_requester.clone(),
+        mascot_motion: None,
         bottom_pane: startup_draft_bottom_pane(
             AppEventSender::new(tx),
             frame_requester,

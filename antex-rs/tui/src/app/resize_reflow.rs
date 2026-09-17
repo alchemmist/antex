@@ -42,6 +42,12 @@ impl From<ratatui::layout::Size> for TerminalWidth {
     }
 }
 
+#[derive(Clone, Copy)]
+enum HistoryReplayScope {
+    Visible,
+    All,
+}
+
 struct ReflowCellDisplay {
     lines: Vec<HyperlinkLine>,
     is_stream_continuation: bool,
@@ -158,7 +164,15 @@ impl App {
             return;
         };
 
-        if buffer.render_from_transcript_tail || self.overlay.is_some() {
+        if buffer.render_from_transcript_tail && self.overlay.is_none() {
+            if let Err(error) =
+                self.reflow_startup_transcript(tui, tui.terminal.last_known_screen_size.into())
+            {
+                tracing::warn!(%error, "failed to refresh startup history");
+            }
+            return;
+        }
+        if self.overlay.is_some() {
             // Reflow clears any pre-replay or partially emitted history and applies the reserved
             // history width. It also waits for an active overlay to close before rebuilding.
             self.schedule_immediate_resize_reflow(tui);
@@ -273,7 +287,15 @@ impl App {
         );
     }
 
-    fn clear_terminal_for_resize_replay(&mut self, tui: &mut tui::Tui) -> Result<()> {
+    fn clear_terminal_for_resize_replay(
+        &mut self,
+        tui: &mut tui::Tui,
+        scope: HistoryReplayScope,
+    ) -> Result<()> {
+        if matches!(scope, HistoryReplayScope::Visible) && !tui.is_alt_screen_active() {
+            tui.terminal.clear_visible_history()?;
+            return Ok(());
+        }
         if tui.is_alt_screen_active() {
             tui.terminal.clear_visible_screen()?;
         } else {
@@ -419,6 +441,7 @@ impl App {
             tui.clear_pending_history_lines();
         }
         self.maybe_run_resize_reflow(tui, size)?;
+        self.refresh_startup_mascot(tui)?;
         Ok(())
     }
 
@@ -476,6 +499,26 @@ impl App {
         tui: &mut tui::Tui,
         terminal_width: TerminalWidth,
     ) -> Result<TerminalWidth> {
+        self.reflow_transcript(tui, terminal_width, HistoryReplayScope::All)
+    }
+
+    pub(super) fn reflow_startup_transcript(
+        &mut self,
+        tui: &mut tui::Tui,
+        terminal_width: TerminalWidth,
+    ) -> Result<TerminalWidth> {
+        self.transcript_reflow.clear_pending_reflow();
+        let width = self.reflow_transcript(tui, terminal_width, HistoryReplayScope::Visible)?;
+        self.transcript_reflow.mark_reflowed_width(width.0);
+        Ok(width)
+    }
+
+    fn reflow_transcript(
+        &mut self,
+        tui: &mut tui::Tui,
+        terminal_width: TerminalWidth,
+        scope: HistoryReplayScope,
+    ) -> Result<TerminalWidth> {
         let width = self.chat_widget.history_wrap_width(terminal_width.0);
         if self.transcript_cells.is_empty() {
             // Drop any queued pre-resize/pre-consolidation inserts before rebuilding from cells.
@@ -490,7 +533,7 @@ impl App {
 
         // Drop any queued pre-resize/pre-consolidation inserts before rebuilding from cells.
         tui.clear_pending_history_lines();
-        self.clear_terminal_for_resize_replay(tui)?;
+        self.clear_terminal_for_resize_replay(tui, scope)?;
 
         self.deferred_history_lines.clear();
         if !reflowed_lines.is_empty() {
@@ -566,7 +609,7 @@ impl App {
         };
 
         tui.clear_pending_history_lines();
-        self.clear_terminal_for_resize_replay(tui)?;
+        self.clear_terminal_for_resize_replay(tui, HistoryReplayScope::All)?;
 
         self.deferred_history_lines.clear();
         if !reflowed_lines.is_empty() {

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+use std::sync::OnceLock;
 use std::time::Duration;
 use std::time::Instant;
 
@@ -62,34 +64,37 @@ pub(super) enum MascotFrame {
 }
 
 #[derive(Clone, Debug)]
-pub(super) struct StartupMascotMotion {
+pub(crate) struct StartupMascotMotion {
     request_frame: FrameRequester,
-    started_at: Instant,
+    started_at: Arc<OnceLock<Instant>>,
 }
 
 impl StartupMascotMotion {
-    pub(super) fn new(request_frame: FrameRequester) -> Self {
+    pub(crate) fn new(request_frame: FrameRequester) -> Self {
         Self {
             request_frame,
-            started_at: Instant::now(),
+            started_at: Arc::new(OnceLock::new()),
         }
     }
 
     pub(super) fn current_frame(&self) -> MascotFrame {
-        #[cfg(test)]
-        {
-            let _ = (&self.request_frame, self.started_at);
-            MascotFrame::Rest
-        }
-        #[cfg(not(test))]
-        let elapsed = self.started_at.elapsed();
-        #[cfg(not(test))]
-        let Some((frame, next_frame_in)) = frame_at_elapsed(elapsed) else {
+        self.current_frame_at(Instant::now())
+    }
+
+    pub(crate) fn is_finished(&self) -> bool {
+        self.started_at
+            .get()
+            .is_some_and(|started| frame_at_elapsed(started.elapsed()).is_none())
+    }
+
+    fn current_frame_at(&self, now: Instant) -> MascotFrame {
+        let started = self.started_at.get_or_init(|| now);
+        let Some((frame, next_frame_in)) =
+            frame_at_elapsed(now.saturating_duration_since(*started))
+        else {
             return MascotFrame::Rest;
         };
-        #[cfg(not(test))]
         self.request_frame.schedule_frame_in(next_frame_in);
-        #[cfg(not(test))]
         frame
     }
 }

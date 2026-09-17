@@ -1,0 +1,11 @@
+---
+source: tui/src/tui/history_animation_tests.rs
+assertion_line: 27
+expression: terminal.backend().vt100().screen().contents()
+---
+SHELL HISTORY
+$ antex
+ANT moving 
+header
+startup notice
+composer draft

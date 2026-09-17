@@ -89,6 +89,7 @@ pub(crate) struct StartupDraft {
 pub(crate) struct StartupDraftPump {
     header: Box<dyn HistoryCell>,
     mascot_frame_requester: FrameRequester,
+    pub(crate) mascot_motion: Option<history_cell::StartupMascotMotion>,
     bottom_pane: BottomPane,
     events: Pin<Box<dyn Stream<Item = TuiEvent> + Send>>,
     app_event_rx: UnboundedReceiver<AppEvent>,
@@ -120,15 +121,14 @@ impl StartupDraft {
         );
         let events = tui.event_stream();
         let startup_frame_requester = tui.frame_requester();
+        let mascot_motion = history_cell::StartupMascotMotion::new(startup_frame_requester.clone());
         let mut draft = Self {
             tui,
             terminal_restore_guard,
             pump: StartupDraftPump {
-                header: startup_session_header(
-                    /*config*/ None,
-                    Some(startup_frame_requester.clone()),
-                ),
+                header: startup_session_header(/*config*/ None, Some(mascot_motion.clone())),
                 mascot_frame_requester: startup_frame_requester,
+                mascot_motion: Some(mascot_motion),
                 bottom_pane,
                 events,
                 app_event_rx,
@@ -174,12 +174,14 @@ impl StartupDraftPump {
     /// Refresh the session header and safe editor shortcuts without enabling modal editing.
     pub(crate) fn apply_config(&mut self, config: &Config) {
         let local_settings = crate::local_settings::LocalSettings::from(config);
-        self.header = startup_session_header(
-            Some(config),
-            config
-                .animations
-                .then(|| self.mascot_frame_requester.clone()),
-        );
+        if config.animations {
+            self.mascot_motion.get_or_insert_with(|| {
+                history_cell::StartupMascotMotion::new(self.mascot_frame_requester.clone())
+            });
+        } else {
+            self.mascot_motion = None;
+        }
+        self.header = startup_session_header(Some(config), self.mascot_motion.clone());
         self.bottom_pane
             .set_disable_paste_burst(local_settings.tui.disable_paste_burst.unwrap_or(false));
         self.bottom_pane.request_redraw();
@@ -463,7 +465,7 @@ fn handle_startup_draft_key(bottom_pane: &mut BottomPane, key: KeyEvent) -> io::
 
 fn startup_session_header(
     config: Option<&Config>,
-    mascot_animation: Option<FrameRequester>,
+    mascot_animation: Option<history_cell::StartupMascotMotion>,
 ) -> Box<dyn HistoryCell> {
     let placeholder_style = Style::default().add_modifier(Modifier::DIM | Modifier::ITALIC);
     let directory = config.map_or_else(
@@ -485,8 +487,8 @@ fn startup_session_header(
         config.and_then(|config| config.model_context_window),
     )
     .with_yolo_mode(config.is_some_and(history_cell::is_yolo_mode));
-    if let Some(frame_requester) = mascot_animation {
-        header = header.with_startup_mascot_animation(frame_requester);
+    if let Some(motion) = mascot_animation {
+        header = header.with_startup_mascot_animation(motion);
     }
     Box::new(header)
 }

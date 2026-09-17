@@ -570,6 +570,15 @@ where
         Ok(())
     }
 
+    pub(crate) fn clear_visible_history(&mut self) -> io::Result<()> {
+        let mut area = self.viewport_area;
+        area.y = area.y.saturating_sub(self.visible_history_rows);
+        self.clear_after_position(Position::new(0, area.y))?;
+        self.visible_history_rows = 0;
+        self.set_viewport_area(area);
+        Ok(())
+    }
+
     pub(crate) fn note_history_rows_inserted(&mut self, inserted_rows: u16) {
         self.visible_history_rows = self
             .visible_history_rows

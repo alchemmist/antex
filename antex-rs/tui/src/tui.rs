@@ -64,6 +64,7 @@ use antex_config::types::NotificationMethod;
 mod event_stream;
 mod frame_rate_limiter;
 mod frame_requester;
+mod history_animation;
 mod history_tail;
 mod input_boundary;
 #[cfg(unix)]
@@ -75,6 +76,8 @@ mod panic_tests;
 mod screen_size;
 mod scrollback;
 mod size_monitor;
+#[cfg(unix)]
+mod startup_position;
 #[cfg(all(test, unix))]
 #[path = "tui_startup_tests.rs"]
 mod startup_tests;
@@ -436,7 +439,7 @@ pub(crate) fn init() -> Result<InitializedTerminal> {
     set_panic_hook();
 
     #[cfg(unix)]
-    let backend = CrosstermBackend::new(stdout());
+    let mut backend = CrosstermBackend::new(stdout());
 
     #[cfg(unix)]
     let startup_probe = {
@@ -478,13 +481,8 @@ pub(crate) fn init() -> Result<InitializedTerminal> {
     crate::terminal_palette::set_default_colors_from_startup_probe(startup_probe.default_colors);
 
     #[cfg(unix)]
-    let cursor_pos = match startup_probe.cursor_position {
-        Some(pos) => pos,
-        None => {
-            tracing::warn!("initial cursor position probe timed out; defaulting to origin");
-            Position { x: 0, y: 0 }
-        }
-    };
+    let cursor_pos =
+        startup_position::resolve_cursor_position(&mut backend, startup_probe.cursor_position)?;
 
     #[cfg(unix)]
     let enhanced_keys_supported = startup_probe

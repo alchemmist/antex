@@ -33,3 +33,50 @@ fn none_skin_renders_no_lines() {
         Vec::new()
     );
 }
+
+#[test]
+fn animation_starts_on_first_display_and_survives_handoff() {
+    let motion = StartupMascotMotion::new(FrameRequester::test_dummy());
+    let first_display = Instant::now() + Duration::from_secs(5);
+    assert_eq!(motion.current_frame_at(first_display), MascotFrame::Rest);
+    let handed_off = motion.clone();
+    assert_eq!(
+        handed_off.current_frame_at(first_display + FRAME_TICK),
+        MascotFrame::AntennaeWide
+    );
+    assert_eq!(
+        motion.current_frame_at(first_display + FRAME_TICK * 7),
+        MascotFrame::Blink
+    );
+    assert_eq!(
+        handed_off.current_frame_at(first_display + FRAME_TICK * 8),
+        MascotFrame::Rest
+    );
+}
+
+#[test]
+fn startup_mascot_animation_frames_snapshot() {
+    let rendered = [StartupMascotSkin::Ant01, StartupMascotSkin::Ant03]
+        .into_iter()
+        .flat_map(|skin| {
+            [
+                MascotFrame::Rest,
+                MascotFrame::AntennaeWide,
+                MascotFrame::Blink,
+            ]
+            .into_iter()
+            .map(move |frame| {
+                format!(
+                    "{skin:?} {frame:?}\n{}",
+                    render_mascot(skin, frame)
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                )
+            })
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    insta::assert_snapshot!(rendered);
+}

@@ -115,6 +115,7 @@ mod search;
 mod separators;
 mod session;
 mod startup_mascot;
+pub(crate) use startup_mascot::StartupMascotMotion;
 mod startup_panel;
 
 #[cfg(any(not(debug_assertions), test))]

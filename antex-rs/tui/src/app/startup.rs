@@ -710,6 +710,21 @@ See the Antex keymap documentation for supported actions and examples."
         #[cfg(not(debug_assertions))]
         crate::history_cell::set_startup_updates(crate::updates::get_startup_updates(&config));
 
+        let startup_mascot_animation = startup_draft
+            .mascot_motion
+            .clone()
+            .filter(|_| {
+                config.animations
+                    && config.tui_startup_panel.mascot_skin
+                        != antex_config::types::StartupMascotSkin::None
+                    && matches!(
+                        config.tui_startup_panel.style,
+                        antex_config::types::StartupPanelStyle::Cockpit
+                            | antex_config::types::StartupPanelStyle::Hacker
+                            | antex_config::types::StartupPanelStyle::Minimal
+                    )
+            })
+            .map(super::startup_mascot::StartupMascotAnimation::new);
         let mut app = Self {
             feature_write_lock: Arc::default(),
             model_catalog,
@@ -735,6 +750,7 @@ See the Antex keymap documentation for supported actions and examples."
             key_chord_matcher: KeyChordMatcher::default(),
             transcript_cells: Vec::new(),
             last_rendered_history_tail: None,
+            startup_mascot_animation,
             last_thread_usage_status_cell: None,
             pending_thread_usage_history_refresh: false,
             overlay: None,

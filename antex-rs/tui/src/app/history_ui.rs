@@ -39,7 +39,11 @@ impl App {
         }
         tui.frame_requester().schedule_frame();
     }
-    pub(super) fn insert_history_cell(&mut self, tui: &mut tui::Tui, cell: Box<dyn HistoryCell>) {
+    pub(super) fn insert_history_cell(
+        &mut self,
+        tui: &mut tui::Tui,
+        mut cell: Box<dyn HistoryCell>,
+    ) {
         if let Some(warnings) = cell
             .as_any()
             .downcast_ref::<history_cell::StartupWarningsCell>()
@@ -48,6 +52,13 @@ impl App {
             return;
         }
         let is_session_header = cell.as_any().is::<history_cell::SessionInfoCell>();
+        if let Some(animation) = self.startup_mascot_animation.as_ref()
+            && let Some(header) = cell
+                .as_any_mut()
+                .downcast_mut::<history_cell::SessionInfoCell>()
+        {
+            header.animate_startup(animation.motion.clone());
+        }
         let cell: Arc<dyn HistoryCell> = cell.into();
         if let Some(Overlay::Transcript(t)) = &mut self.overlay {
             t.insert_cell(cell.clone());
@@ -59,6 +70,11 @@ impl App {
             .history_wrap_width(tui.terminal.last_known_screen_size.width);
         let lines =
             cell.display_hyperlink_lines_for_mode(width, self.chat_widget.history_render_mode());
+        if is_session_header && let Some(animation) = self.startup_mascot_animation.as_mut() {
+            animation.header = Some(Arc::downgrade(&cell));
+            animation.previous_lines = lines.clone();
+            animation.width = width;
+        }
         if cell.as_any().is::<history_cell::CompositeHistoryCell>()
             && lines.first().is_some_and(|line| {
                 line.line.spans.len() == 1 && line.line.spans[0].content.as_ref() == "/status"

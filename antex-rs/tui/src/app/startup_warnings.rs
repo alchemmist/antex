@@ -57,9 +57,8 @@ impl App {
                 buffer.render_from_transcript_tail = true;
                 return;
             }
-            self.schedule_immediate_resize_reflow(tui);
             if let Err(error) =
-                self.maybe_run_resize_reflow(tui, tui.terminal.last_known_screen_size)
+                self.reflow_startup_transcript(tui, tui.terminal.last_known_screen_size.into())
             {
                 tracing::warn!(%error, "failed to refresh startup warnings");
             }

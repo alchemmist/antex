@@ -38,6 +38,7 @@ pub(super) async fn make_test_app() -> App {
         file_search,
         transcript_cells: Vec::new(),
         last_rendered_history_tail: None,
+        startup_mascot_animation: None,
         last_thread_usage_status_cell: None,
         pending_thread_usage_history_refresh: false,
         overlay: None,

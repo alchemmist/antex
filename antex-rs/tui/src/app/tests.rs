@@ -5974,6 +5974,7 @@ async fn make_test_app() -> App {
         file_search,
         transcript_cells: Vec::new(),
         last_rendered_history_tail: None,
+        startup_mascot_animation: None,
         last_thread_usage_status_cell: None,
         pending_thread_usage_history_refresh: false,
         overlay: None,
@@ -6076,6 +6077,7 @@ pub(super) async fn make_test_app_with_channels() -> (
             file_search,
             transcript_cells: Vec::new(),
             last_rendered_history_tail: None,
+            startup_mascot_animation: None,
             last_thread_usage_status_cell: None,
             pending_thread_usage_history_refresh: false,
             overlay: None,
@@ -6900,7 +6902,7 @@ async fn required_stream_reflow_during_capped_initial_replay_uses_transcript_tai
 
     app.finish_initial_history_replay_buffer(&mut tui);
     assert!(app.initial_history_replay_buffer.is_none());
-    assert!(app.transcript_reflow.has_pending_reflow());
+    assert!(!app.transcript_reflow.has_pending_reflow());
     Ok(())
 }
 

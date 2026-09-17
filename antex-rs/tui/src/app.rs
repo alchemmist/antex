@@ -247,6 +247,7 @@ mod session_lifecycle;
 mod session_picker;
 mod side;
 mod startup;
+mod startup_mascot;
 mod startup_prompts;
 mod startup_warnings;
 mod theme_watcher;
@@ -570,6 +571,7 @@ pub(crate) struct App {
 
     pub(crate) transcript_cells: Vec<Arc<dyn HistoryCell>>,
     last_rendered_history_tail: Option<history_ui::RenderedHistoryTail>,
+    startup_mascot_animation: Option<startup_mascot::StartupMascotAnimation>,
     last_thread_usage_status_cell: Option<history_ui::ThreadUsageStatusHistory>,
     pub(crate) pending_thread_usage_history_refresh: bool,
 

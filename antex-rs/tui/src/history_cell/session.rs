@@ -10,7 +10,6 @@ use antex_config::types::StartupPanelStyle;
 
 use super::startup_mascot::MascotFrame;
 use super::startup_mascot::StartupMascotMotion;
-use crate::tui::FrameRequester;
 
 pub(crate) const SESSION_HEADER_MAX_INNER_WIDTH: usize = 56; // Just an eyeballed value
 
@@ -130,6 +129,19 @@ impl HistoryCell for FeatureTipHistoryCell {
 
 #[derive(Debug)]
 pub struct SessionInfoCell(CompositeHistoryCell);
+
+impl SessionInfoCell {
+    pub(crate) fn animate_startup(&mut self, motion: StartupMascotMotion) {
+        if let Some(header) = self
+            .0
+            .parts
+            .first_mut()
+            .and_then(|part| part.as_any_mut().downcast_mut::<SessionHeaderHistoryCell>())
+        {
+            header.startup_mascot_motion = Some(motion);
+        }
+    }
+}
 
 impl HistoryCell for SessionInfoCell {
     fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
@@ -334,8 +346,8 @@ impl SessionHeaderHistoryCell {
         self
     }
 
-    pub(crate) fn with_startup_mascot_animation(mut self, request_frame: FrameRequester) -> Self {
-        self.startup_mascot_motion = Some(StartupMascotMotion::new(request_frame));
+    pub(crate) fn with_startup_mascot_animation(mut self, motion: StartupMascotMotion) -> Self {
+        self.startup_mascot_motion = Some(motion);
         self
     }
 

@@ -166,6 +166,15 @@ impl PtyAntex {
         codex_home: TempDir,
         extra_args: &[&str],
     ) -> Result<Self> {
+        Self::start_with_history(repo_root, codex_home, extra_args, "")
+    }
+
+    pub(super) fn start_with_history(
+        repo_root: &Path,
+        codex_home: TempDir,
+        extra_args: &[&str],
+        history: &str,
+    ) -> Result<Self> {
         let mut master_fd = -1;
         let mut slave_fd = -1;
         let mut window_size = libc::winsize {
@@ -193,7 +202,8 @@ impl PtyAntex {
         // SAFETY: a successful `openpty` transfers ownership of both unique file descriptors.
         let master = File::from(unsafe { OwnedFd::from_raw_fd(master_fd) });
         // SAFETY: `slave_fd` is the second unique descriptor initialized by `openpty`.
-        let slave = File::from(unsafe { OwnedFd::from_raw_fd(slave_fd) });
+        let mut slave = File::from(unsafe { OwnedFd::from_raw_fd(slave_fd) });
+        slave.write_all(history.as_bytes())?;
         let stdin = slave.try_clone().context("clone pseudo-terminal stdin")?;
         let stdout = slave.try_clone().context("clone pseudo-terminal stdout")?;
 
@@ -283,7 +293,8 @@ impl PtyAntex {
 
     fn answer_startup_queries(&mut self) -> Result<()> {
         if !self.cursor_answered && contains_bytes(&self.output, b"\x1b[6n") {
-            self.write_input(b"\x1b[1;1R")?;
+            let (row, column) = self.parser.screen().cursor_position();
+            self.write_input(format!("\x1b[{};{}R", row + 1, column + 1).as_bytes())?;
             self.cursor_answered = true;
         }
 
