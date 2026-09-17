@@ -1,0 +1,13 @@
+---
+source: cli/src/main.rs
+assertion_line: 3324
+expression: "errors.join(\"\\n\")"
+---
+antex --worktree login: `--worktree` supports new interactive sessions, `antex fork`, `antex exec`, and `antex exec fork`
+antex fork --worktree: `antex fork --worktree` requires an explicit session ID
+antex fork --worktree --last: `antex fork --worktree` requires an explicit session ID
+antex exec resume --worktree session: `--worktree` cannot resume an existing session; use `antex exec fork --worktree`
+antex exec review --worktree: `--worktree` is not supported for code review
+antex resume --worktree session: `--worktree` supports new interactive sessions, `antex fork`, `antex exec`, and `antex exec fork`
+antex archive session --worktree: `--worktree` supports new interactive sessions, `antex fork`, `antex exec`, and `antex exec fork`
+antex queue --thread session --message hi --worktree: `--worktree` supports new interactive sessions, `antex fork`, `antex exec`, and `antex exec fork`

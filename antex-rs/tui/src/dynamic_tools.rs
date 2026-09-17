@@ -12,6 +12,7 @@ use antex_app_server_protocol::DynamicToolFunctionSpec;
 use antex_app_server_protocol::DynamicToolNamespaceSpec;
 use antex_app_server_protocol::DynamicToolNamespaceTool;
 use antex_app_server_protocol::DynamicToolSpec;
+use antex_app_server_protocol::ImageReference;
 use antex_app_server_protocol::RequestId;
 use antex_app_server_protocol::SandboxMode;
 use antex_app_server_protocol::SandboxPolicy;
@@ -1340,7 +1341,14 @@ fn turn_summary(turn: &Turn, include_outputs: bool, output_chars: usize) -> Valu
                         }
                         input
                     }
-                    UserInput::Image { url, .. } => json!({"type": "image", "url": url}),
+                    UserInput::Image {
+                        image: ImageReference::Inline { url },
+                        ..
+                    } => json!({"type": "image", "url": url}),
+                    UserInput::Image {
+                        image: ImageReference::File { file_id },
+                        ..
+                    } => json!({"type": "image", "fileId": file_id}),
                     UserInput::LocalImage { path, .. } => json!({"type": "localImage", "path": path}),
                     UserInput::Audio { url } => json!({"type": "audio", "url": url}),
                     UserInput::LocalAudio { path } => json!({"type": "localAudio", "path": path}),

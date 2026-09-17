@@ -1,17 +1,28 @@
 use antex_core::NotSubmittedReason;
 use antex_core::RecoverTurnRequest;
 use antex_core::StartIfIdleSubmission;
+use antex_core::StartThreadOptions;
 use antex_core::SteerSubmission;
 use antex_core::TurnInput;
 use antex_core::TurnInputRequest;
 use antex_core::TurnInputSubmission;
 use antex_core::TurnStartOptions;
 use antex_core::config::Constrained;
+use antex_core::context::ContextualUserFragment;
+use antex_core::context::InternalContextSource;
+use antex_core::context::InternalModelContextFragment;
+use antex_extension_api::ExtensionRegistryBuilder;
+use antex_extension_api::TurnStartAdmission;
+use antex_protocol::AgentPath;
 use antex_protocol::config_types::CollaborationMode;
 use antex_protocol::config_types::ModeKind;
 use antex_protocol::config_types::Settings;
 use antex_protocol::protocol::AskForApproval;
 use antex_protocol::protocol::EventMsg;
+use antex_protocol::protocol::InterAgentCommunication;
+use antex_protocol::protocol::Op;
+use antex_protocol::protocol::SessionSource;
+use antex_protocol::protocol::SubAgentSource;
 use antex_protocol::protocol::ThreadSettingsOverrides;
 use antex_protocol::protocol::TurnEnvironmentSelections;
 use antex_protocol::user_input::UserInput;
@@ -27,11 +38,324 @@ use core_test_support::wait_for_event;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 use test_case::test_case;
 use tokio::sync::Barrier;
 use tokio::sync::oneshot;
 use tokio::time::timeout;
+
+#[derive(Debug)]
+struct TestAdmission(AtomicBool);
+
+impl TurnStartAdmission for TestAdmission {
+    fn admit_turn_start(&self) -> Option<Box<dyn Send>> {
+        if self.0.load(Ordering::SeqCst) {
+            None
+        } else {
+            Some(Box::new(()))
+        }
+    }
+}
+
+#[tokio::test]
+async fn host_drain_rejects_turn_start_paths_without_recording_input() -> anyhow::Result<()> {
+    let server = responses::start_mock_server().await;
+    let response = responses::mount_sse_once(&server, responses::sse_completed("allowed")).await;
+    let admission = Arc::new(TestAdmission(AtomicBool::new(true)));
+    let mut extensions = ExtensionRegistryBuilder::new();
+    extensions.turn_start_admission(admission.clone());
+    let test = test_antex()
+        .with_extensions(Arc::new(extensions.build()))
+        .build_with_auto_env(&server)
+        .await?;
+    assert_eq!(
+        test.antex
+            .start_or_steer_turn(user_message_request("rejected direct input"))
+            .await?,
+        TurnInputSubmission::NotSubmitted {
+            reason: NotSubmittedReason::ServerDraining
+        },
+    );
+    for request in [
+        user_message_request("rejected queued input"),
+        TurnInputRequest::user_input(Vec::new()),
+        TurnInputRequest::new(TurnInput::ResponseItem(responses::user_message_item(
+            "rejected continuation",
+        ))),
+    ] {
+        assert_eq!(
+            test.antex.start_turn_if_idle(request).await?,
+            StartIfIdleSubmission::NotSubmitted {
+                reason: NotSubmittedReason::ServerDraining
+            },
+        );
+    }
+    assert!(response.requests().is_empty());
+    admission.0.store(false, Ordering::SeqCst);
+    test.antex
+        .start_turn_if_idle(user_message_request("allowed input"))
+        .await?;
+    wait_for_event(&test.antex, |event| {
+        matches!(event, EventMsg::TurnComplete(_))
+    })
+    .await;
+    let request = response.single_request();
+    assert!(request.body_contains_text("allowed input"));
+    assert!(!request.body_contains_text("rejected direct input"));
+    assert!(!request.body_contains_text("rejected queued input"));
+    assert!(!request.body_contains_text("rejected continuation"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn host_drain_allows_spawned_agent_input_but_not_automatic_work() -> anyhow::Result<()> {
+    let server = responses::start_mock_server().await;
+    let response = responses::mount_sse_once(&server, responses::sse_completed("child")).await;
+    let mut extensions = ExtensionRegistryBuilder::new();
+    extensions.turn_start_admission(Arc::new(TestAdmission(AtomicBool::new(true))));
+    let test = test_antex()
+        .with_extensions(Arc::new(extensions.build()))
+        .build_with_auto_env(&server)
+        .await?;
+    let child = test
+        .thread_manager
+        .start_thread(StartThreadOptions {
+            session_source: Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: test.session_configured.thread_id,
+                depth: 1,
+                agent_path: None,
+                agent_nickname: None,
+                agent_role: None,
+            })),
+            environments: Some(test.antex.environment_selections().await),
+            ..StartThreadOptions::new(test.config.clone())
+        })
+        .await?
+        .thread;
+    for request in [
+        user_message_request("queued child input"),
+        TurnInputRequest::user_input(Vec::new()),
+    ] {
+        assert_eq!(
+            child.start_turn_if_idle(request).await?,
+            StartIfIdleSubmission::NotSubmitted {
+                reason: NotSubmittedReason::ServerDraining
+            },
+        );
+    }
+    assert_eq!(
+        child
+            .start_or_steer_turn(user_message_request("external child input"))
+            .await?,
+        TurnInputSubmission::NotSubmitted {
+            reason: NotSubmittedReason::ServerDraining
+        },
+    );
+    assert!(matches!(
+        child
+            .start_or_steer_turn(user_message_request("delegated input").on_start(
+                TurnStartOptions {
+                    parent_turn_id: Some("parent-turn".to_string()),
+                    ..Default::default()
+                }
+            ))
+            .await?,
+        TurnInputSubmission::Started { .. }
+    ));
+    wait_for_event(&child, |event| matches!(event, EventMsg::TurnComplete(_))).await;
+    assert!(
+        response
+            .single_request()
+            .body_contains_text("delegated input")
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn host_drain_allows_running_review_to_finish_its_delegate() -> anyhow::Result<()> {
+    use antex_protocol::protocol::ReviewOutputEvent;
+    use antex_protocol::protocol::ReviewRequest;
+    use antex_protocol::protocol::ReviewTarget;
+
+    let server = responses::start_mock_server().await;
+    let expected = ReviewOutputEvent {
+        overall_explanation: "review completed during drain".to_string(),
+        ..Default::default()
+    };
+    let response = responses::mount_sse_once(
+        &server,
+        responses::sse(vec![
+            ev_response_created("review"),
+            responses::ev_assistant_message("result", &serde_json::to_string(&expected)?),
+            ev_completed("review"),
+        ]),
+    )
+    .await;
+    let mut extensions = ExtensionRegistryBuilder::new();
+    extensions.turn_start_admission(Arc::new(TestAdmission(AtomicBool::new(true))));
+    let test = test_antex()
+        .with_extensions(Arc::new(extensions.build()))
+        .build_with_auto_env(&server)
+        .await?;
+    // The host already admitted the parent review; only its child start hits Core admission.
+    test.antex
+        .submit(Op::Review {
+            review_request: ReviewRequest {
+                target: ReviewTarget::Custom {
+                    instructions: "review these changes".to_string(),
+                },
+                user_facing_hint: None,
+            },
+        })
+        .await?;
+    let event = wait_for_event(&test.antex, |event| {
+        matches!(event, EventMsg::ExitedReviewMode(_))
+    })
+    .await;
+    let EventMsg::ExitedReviewMode(event) = event else {
+        unreachable!()
+    };
+    assert_eq!(event.review_output, Some(expected));
+    response.single_request();
+    Ok(())
+}
+
+#[tokio::test]
+async fn host_drain_closes_realtime_after_handoff_error() -> anyhow::Result<()> {
+    use antex_protocol::protocol::ConversationStartParams;
+    use antex_protocol::protocol::RealtimeConversationClosedEvent;
+    use antex_protocol::protocol::RealtimeConversationRealtimeEvent;
+    use antex_protocol::protocol::RealtimeEvent;
+    use antex_protocol::protocol::RealtimeHandoffRequested;
+    use antex_protocol::protocol::RealtimeTranscriptEntry;
+
+    let server = responses::start_mock_server().await;
+    let response = responses::mount_sse_once(&server, responses::sse_completed("unexpected")).await;
+    let realtime = responses::start_websocket_server(vec![vec![vec![
+        serde_json::json!({
+            "type": "session.updated",
+            "session": { "id": "draining", "instructions": "backend prompt" }
+        }),
+        serde_json::json!({
+            "type": "conversation.handoff.requested",
+            "handoff_id": "rejected",
+            "item_id": "rejected",
+            "input_transcript": "must not start"
+        }),
+    ]]])
+    .await;
+    let mut extensions = ExtensionRegistryBuilder::new();
+    extensions.turn_start_admission(Arc::new(TestAdmission(AtomicBool::new(true))));
+    let test = test_antex()
+        .with_extensions(Arc::new(extensions.build()))
+        .with_config({
+            let realtime_url = realtime.uri().to_string();
+            move |config| {
+                config.experimental_realtime_ws_base_url = Some(realtime_url);
+                config.realtime.version = antex_config::config_toml::RealtimeWsVersion::V1;
+            }
+        })
+        .build_with_auto_env(&server)
+        .await?;
+    test.antex
+        .submit(Op::RealtimeConversationStart(ConversationStartParams {
+            client_managed_handoffs: false,
+            delegation_ack_filler: None,
+            flush_transcript_tail_on_session_end: false,
+            codex_responses_as_items: false,
+            codex_response_item_prefix: None,
+            codex_response_handoff_mode:
+                antex_protocol::protocol::CodexResponseHandoffMode::Thinking,
+            codex_response_handoff_channel_prefixes: None,
+            model: None,
+            output_modality: antex_protocol::protocol::RealtimeOutputModality::Audio,
+            include_startup_context: false,
+            initial_items: Vec::new(),
+            realtime_start_instructions: None,
+            realtime_end_instructions: None,
+            prompt: Some(Some("backend prompt".to_string())),
+            realtime_session_id: None,
+            transport: None,
+            version: None,
+            voice: None,
+        }))
+        .await?;
+    for expected in [
+        EventMsg::RealtimeConversationRealtime(RealtimeConversationRealtimeEvent {
+            payload: RealtimeEvent::HandoffRequested(RealtimeHandoffRequested {
+                handoff_id: "rejected".to_string(),
+                item_id: "rejected".to_string(),
+                input_transcript: "must not start".to_string(),
+                active_transcript: vec![RealtimeTranscriptEntry {
+                    role: "user".to_string(),
+                    text: "must not start".to_string(),
+                }],
+            }),
+        }),
+        EventMsg::RealtimeConversationRealtime(RealtimeConversationRealtimeEvent {
+            payload: RealtimeEvent::Error(
+                "Server is draining; retry the turn after reconnecting".to_string(),
+            ),
+        }),
+        EventMsg::RealtimeConversationClosed(RealtimeConversationClosedEvent {
+            reason: Some("error".to_string()),
+        }),
+    ] {
+        let event = wait_for_event(&test.antex, |event| match event {
+            EventMsg::RealtimeConversationRealtime(RealtimeConversationRealtimeEvent {
+                payload: RealtimeEvent::HandoffRequested(_) | RealtimeEvent::Error(_),
+            })
+            | EventMsg::RealtimeConversationClosed(_) => true,
+            EventMsg::TurnStarted(_) | EventMsg::Error(_) => panic!("unexpected event: {event:?}"),
+            _ => false,
+        })
+        .await;
+        assert_eq!(
+            serde_json::to_value(event)?,
+            serde_json::to_value(expected)?
+        );
+    }
+    assert!(response.requests().is_empty());
+    realtime.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn host_drain_allows_mailbox_work_to_start_a_turn() -> anyhow::Result<()> {
+    let server = responses::start_mock_server().await;
+    let response = responses::mount_sse_once(&server, responses::sse_completed("mailbox")).await;
+    let mut extensions = ExtensionRegistryBuilder::new();
+    extensions.turn_start_admission(Arc::new(TestAdmission(AtomicBool::new(true))));
+    let test = test_antex()
+        .with_extensions(Arc::new(extensions.build()))
+        .build_with_auto_env(&server)
+        .await?;
+    // Mailbox input is memory-only and must be processed before the host exits.
+    test.antex
+        .submit(Op::InterAgentCommunication {
+            communication: InterAgentCommunication::new(
+                AgentPath::try_from("/root/worker").expect("valid agent path"),
+                AgentPath::root(),
+                Vec::new(),
+                "mail while draining".to_string(),
+                /*trigger_turn*/ true,
+            ),
+            start_options: Default::default(),
+        })
+        .await?;
+    wait_for_event(&test.antex, |event| {
+        matches!(event, EventMsg::TurnComplete(_))
+    })
+    .await;
+    assert!(
+        response
+            .single_request()
+            .body_contains_text("mail while draining")
+    );
+    Ok(())
+}
 
 fn user_message_request(text: &str) -> TurnInputRequest {
     TurnInputRequest::user_input(vec![UserInput::Text {
@@ -193,6 +517,125 @@ async fn recover_turn_if_idle_preserves_id_and_resumes_plan_mode() {
     assert_eq!(user_input_groups.len(), 1);
     assert_eq!(user_input_groups[0].len(), 1);
     assert!(user_input_groups[0][0].starts_with("<environment_context>"));
+}
+
+/// Internal continuation creates a new turn without adding user authorization.
+#[tokio::test]
+async fn continue_turn_if_idle_starts_new_turn_with_internal_input() {
+    let server = responses::start_mock_server().await;
+    let test = test_antex()
+        .with_model("gpt-5.6-sol")
+        .with_config(|config| {
+            config
+                .features
+                .enable(antex_features::Feature::FastMode)
+                .unwrap();
+        })
+        .build_with_auto_env(&server)
+        .await
+        .unwrap();
+    responses::mount_sse_once(&server, responses::sse_completed("original")).await;
+    let TurnInputSubmission::Started {
+        turn_id: previous_turn_id,
+    } = test
+        .antex
+        .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
+            text: "Do the work".to_string(),
+            text_elements: Vec::new(),
+        }]))
+        .await
+        .unwrap()
+    else {
+        panic!("original turn did not start")
+    };
+    wait_for_event(&test.antex, |event| {
+        matches!(event, EventMsg::TurnComplete(_))
+    })
+    .await;
+    let mock = responses::mount_sse_once(&server, responses::sse_completed("continued")).await;
+    let input = ContextualUserFragment::into(InternalModelContextFragment::new(
+        InternalContextSource::from_static("daemon_recovery"),
+        "Continue the interrupted work.",
+    ));
+    let schema = serde_json::json!({"type":"object","properties":{},"additionalProperties":false});
+    let submission = test
+        .antex
+        .continue_turn_if_idle(
+            TurnInputRequest::new(TurnInput::ResponseItem(input.clone())).on_start(
+                TurnStartOptions {
+                    final_output_json_schema: Some(schema.clone()),
+                    service_tier: Some("priority".to_string()),
+                    root_turn_id: Some("originating-turn".to_string()),
+                    ..Default::default()
+                },
+            ),
+            previous_turn_id.clone(),
+        )
+        .await
+        .unwrap();
+    let TurnInputSubmission::Started { turn_id } = submission else {
+        panic!("continuation did not start")
+    };
+    wait_for_event(&test.antex, |event| {
+        assert!(!matches!(event, EventMsg::UserMessage(_)));
+        assert!(!matches!(event, EventMsg::ItemCompleted(event)
+            if matches!(event.item, antex_protocol::items::TurnItem::UserMessage(_))));
+        matches!(event, EventMsg::TurnComplete(_))
+    })
+    .await;
+    let request = mock.single_request();
+    assert!(request.has_content_kinds(&["daemon_recovery.internal_context"]));
+    let metadata: Value = serde_json::from_str(
+        &request
+            .header("x-codex-turn-metadata")
+            .expect("turn metadata"),
+    )
+    .unwrap();
+    assert_eq!(metadata["root_turn_id"], "originating-turn");
+    let body = request.body_json();
+    assert_eq!(body["text"]["format"]["schema"], schema);
+    assert_eq!(body["service_tier"], "priority");
+    // The continuation has completed, but the saved previous ID is still stale.
+    assert_eq!(
+        test.antex
+            .continue_turn_if_idle(
+                TurnInputRequest::new(TurnInput::ResponseItem(ContextualUserFragment::into(
+                    InternalModelContextFragment::new(
+                        InternalContextSource::from_static("daemon_recovery"),
+                        "Continue."
+                    ),
+                ))),
+                previous_turn_id,
+            )
+            .await
+            .unwrap(),
+        TurnInputSubmission::NotSubmitted {
+            reason: NotSubmittedReason::Superseded
+        }
+    );
+    assert_eq!(mock.requests().len(), 1);
+    submit_thread_settings(
+        &test.antex,
+        ThreadSettingsOverrides {
+            approval_policy: Some(AskForApproval::OnRequest),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("update permissions before continuation admission");
+    assert_eq!(
+        test.antex
+            .continue_turn_if_idle(
+                TurnInputRequest::new(TurnInput::ResponseItem(input)),
+                turn_id,
+            )
+            .await
+            .unwrap(),
+        TurnInputSubmission::NotSubmitted {
+            reason: NotSubmittedReason::Superseded
+        }
+    );
+    assert_eq!(mock.requests().len(), 1);
 }
 
 /// Concurrent submissions must start exactly one turn and steer the other message.
@@ -510,4 +953,55 @@ async fn start_or_steer_turn_requires_matching_active_output_schema() {
     assert!(second_request.contains("accepted steer"));
     assert!(!second_request.contains("rejected steer"));
     server.shutdown().await;
+}
+
+#[test_case(Vec::new(), "local"; "automatic")]
+#[test_case(vec![UserInput::Text { text: "Do the work".into(), text_elements: Vec::new() }], "local"; "user")]
+#[cfg_attr(unix, test_case(Vec::new(), "remote"; "remote_stays_idle"))]
+#[tokio::test]
+async fn sampling_is_ready_for_daemon_recovery(
+    input: Vec<UserInput>,
+    executor: &str,
+) -> anyhow::Result<()> {
+    let (release, gate) = oneshot::channel();
+    let (server, _completions) = start_streaming_sse_server(vec![vec![StreamingSseChunk {
+        gate: Some(gate),
+        body: responses::sse_completed("automatic"),
+    }]])
+    .await;
+    #[cfg(unix)]
+    let remote = if executor == "remote" {
+        Some(super::multi_exec_server_sandbox::ExecServerProcess::start().await?)
+    } else {
+        None
+    };
+    let mut builder = test_antex();
+    #[cfg(unix)]
+    if let Some(remote) = &remote {
+        builder = builder.with_exec_server_url(&remote.websocket_url);
+    }
+    let test = builder.build_with_streaming_server(&server).await?;
+    let StartIfIdleSubmission::Started { turn_id } = test
+        .antex
+        .start_turn_if_idle(TurnInputRequest::user_input(input))
+        .await?
+    else {
+        panic!("sampling should start");
+    };
+    timeout(
+        Duration::from_secs(5),
+        server.wait_for_request_count(/*count*/ 1),
+    )
+    .await?;
+    let active = test.antex.interrupted_turn().await;
+    assert_eq!(
+        active.map(|(id, _, _)| id),
+        (executor == "local").then_some(turn_id)
+    );
+    release.send(()).expect("sampling is waiting");
+    wait_for_event(&test.antex, |event| {
+        matches!(event, EventMsg::TurnComplete(_))
+    })
+    .await;
+    Ok(())
 }

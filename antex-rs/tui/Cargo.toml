@@ -22,6 +22,7 @@ doctest = false
 workspace = true
 
 [dependencies]
+antex-build-info = { workspace = true }
 anyhow = { workspace = true }
 axum = { workspace = true, default-features = false, features = ["http1", "tokio"] }
 base64 = { workspace = true }
@@ -31,6 +32,7 @@ antex-ansi-escape = { workspace = true }
 antex-app-server-client = { workspace = true }
 antex-app-server-protocol = { workspace = true }
 antex-arg0 = { workspace = true }
+antex-backend-client = { workspace = true }
 antex-install-context = { workspace = true }
 antex-cloud-config = { workspace = true }
 antex-config = { workspace = true }
@@ -53,11 +55,14 @@ antex-models-manager = { workspace = true }
 antex-otel = { workspace = true }
 antex-plugin = { workspace = true }
 antex-protocol = { workspace = true }
+antex-realtime-webrtc = { workspace = true }
+futures = { workspace = true }
 antex-rollout = { workspace = true }
 antex-sandboxing = { workspace = true }
 antex-shell-command = { workspace = true }
 antex-state = { workspace = true }
 antex-terminal-detection = { workspace = true }
+antex-worktree = { workspace = true }
 antex-utils-approval-presets = { workspace = true }
 antex-uds = { workspace = true }
 antex-utils-absolute-path = { workspace = true }
@@ -132,6 +137,13 @@ tokio-util = { workspace = true, features = ["time"] }
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSAccessibility", "NSWorkspace"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Keep the same executor features as the credential store, which also uses zbus.
+zbus = "4.4.0"
+
 [target.'cfg(windows)'.dependencies]
 which = { workspace = true }
 windows-sys = { version = "0.52", features = [
@@ -142,6 +154,7 @@ windows-sys = { version = "0.52", features = [
     "Win32_System_IO",
     "Win32_System_Pipes",
     "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
 ] }
 winsplit = "0.1"
 

@@ -1,10 +1,11 @@
 //! Handles persistent thread-settings updates and serializes their persistence
-//! with compaction checkpoints.
+//! with checkpoints written directly to storage.
 
 use super::session::Session;
 use super::session::SessionSettingsUpdate;
 use super::step_settings::StepSettingsUpdate;
 use crate::config::ConstraintResult;
+use antex_history::RolloutItem;
 use antex_protocol::protocol::CodexErrorInfo;
 use antex_protocol::protocol::ErrorEvent;
 use antex_protocol::protocol::Event;
@@ -12,8 +13,23 @@ use antex_protocol::protocol::EventMsg;
 use antex_protocol::protocol::ThreadSettingsAppliedEvent;
 use antex_protocol::protocol::ThreadSettingsOverrides;
 use antex_protocol::protocol::ThreadSettingsSnapshot;
+use antex_thread_store::ThreadStoreResult;
 use std::sync::Arc;
 use tokio::sync::SemaphorePermit;
+
+impl Session {
+    /// Captures and flushes current settings under the shared persistence permit.
+    pub(crate) async fn checkpoint_thread_settings(&self) -> ThreadStoreResult<()> {
+        let _settings_guard = acquire_persistence_lock(self).await;
+        if let Some(live_thread) = self.live_thread() {
+            live_thread
+                .append_items(&[RolloutItem::EventMsg(applied_event(self).await)])
+                .await?;
+            live_thread.flush().await?;
+        }
+        Ok(())
+    }
+}
 
 /// Applies standalone thread settings and reports invalid overrides through the
 /// normal event stream.
@@ -34,6 +50,9 @@ pub(super) async fn update(
                 }),
             })
             .await;
+    } else {
+        // Standalone settings changes supersede a pending automatic continuation.
+        session.state.lock().await.last_started_turn_id = None;
     }
 }
 
@@ -41,6 +60,7 @@ pub(super) async fn update(
 pub(super) fn prepare_update(overrides: ThreadSettingsOverrides) -> SessionSettingsUpdate {
     let ThreadSettingsOverrides {
         environments,
+        runtime_workspace_roots,
         profile_workspace_roots,
         approval_policy,
         approvals_reviewer,
@@ -55,6 +75,7 @@ pub(super) fn prepare_update(overrides: ThreadSettingsOverrides) -> SessionSetti
         collaboration_mode,
         personality,
         subagent_spawn_policy,
+        disabled_plugin_ids,
     } = overrides;
     SessionSettingsUpdate {
         step_settings: StepSettingsUpdate {
@@ -68,12 +89,14 @@ pub(super) fn prepare_update(overrides: ThreadSettingsOverrides) -> SessionSetti
             approvals_reviewer,
         },
         environments,
+        runtime_workspace_roots,
         profile_workspace_roots,
         sandbox_policy,
         permission_profile,
         active_permission_profile,
         windows_sandbox_level,
         subagent_spawn_policy: Some(subagent_spawn_policy),
+        disabled_plugin_ids,
         ..Default::default()
     }
 }
@@ -117,7 +140,7 @@ pub(super) async fn emit_applied(
         .await;
 }
 
-/// Builds a current thread-owned snapshot for fork and compaction persistence.
+/// Builds a current thread-owned snapshot for storage checkpoints.
 pub(super) async fn applied_event(session: &Session) -> EventMsg {
     EventMsg::ThreadSettingsApplied(ThreadSettingsAppliedEvent {
         thread_id: Some(session.thread_id()),

@@ -4,7 +4,7 @@
   "description": "TypeScript SDK for Antex APIs.",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/alchemmist/antex.git",
+    "url": "git+https://github.com/alchemmist/codex.git",
     "directory": "sdk/typescript"
   },
   "keywords": [

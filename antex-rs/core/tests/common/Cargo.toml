@@ -15,11 +15,14 @@ workspace = true
 anyhow = { workspace = true }
 assert_cmd = { workspace = true }
 base64 = { workspace = true }
+antex-analytics = { workspace = true }
 antex-arg0 = { workspace = true }
+antex-attachment-store = { workspace = true }
 antex-config = { workspace = true }
 antex-core = { workspace = true }
 antex-extension-api = { workspace = true }
 antex-exec-server = { workspace = true }
+antex-guardian-v2 = { workspace = true }
 antex-home = { workspace = true }
 antex-features = { workspace = true }
 antex-hooks = { workspace = true }
@@ -38,7 +41,6 @@ opentelemetry = { workspace = true }
 opentelemetry_sdk = { workspace = true }
 regex-lite = { workspace = true }
 serde_json = { workspace = true }
-similar = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["net", "test-util", "time"] }
 tokio-tungstenite = { workspace = true }

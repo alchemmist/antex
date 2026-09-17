@@ -1,5 +1,6 @@
 use super::*;
 use antex_protocol::models::ContentItemKind;
+use antex_protocol::models::ImageReference;
 use antex_protocol::models::InternalChatMessageMetadataPassthrough;
 use antex_protocol::models::image_close_tag_text;
 use antex_protocol::models::local_image_open_tag_text_with_path;
@@ -17,7 +18,9 @@ fn message(content: Vec<ContentItem>) -> ResponseItem {
 
 fn image() -> ContentItem {
     ContentItem::InputImage {
-        image_url: "data:image/png;base64,abc".to_string(),
+        image: ImageReference::Inline {
+            image_url: "data:image/png;base64,abc".to_string(),
+        },
         detail: None,
     }
 }

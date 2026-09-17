@@ -1,5 +1,6 @@
 #![cfg(not(target_os = "windows"))]
 use antex_core::TurnInputRequest;
+use antex_features::Feature;
 use antex_login::AntexAuth;
 use antex_model_provider_info::ModelProviderInfo;
 use antex_model_provider_info::built_in_model_providers;
@@ -76,8 +77,8 @@ async fn disabled_update_plan_preserves_custom_catalog_instructions() -> Result<
     let model = catalog
         .models
         .iter_mut()
-        .find(|model| model.slug == "gpt-5.2")
-        .expect("bundled gpt-5.2 model");
+        .find(|model| model.slug == "gpt-5.5")
+        .expect("bundled gpt-5.5 model");
     let messages = model
         .model_messages
         .as_mut()
@@ -85,7 +86,7 @@ async fn disabled_update_plan_preserves_custom_catalog_instructions() -> Result<
     messages.instructions_template = Some(INSTRUCTIONS.to_string());
     messages.instructions_variables = None;
     let test = test_antex()
-        .with_model("gpt-5.2")
+        .with_model("gpt-5.5")
         .with_config(move |config| {
             config.update_plan_enabled = false;
             config.model_catalog = Some(catalog);
@@ -544,7 +545,7 @@ async fn namespaced_model_slug_uses_catalog_metadata_without_fallback_warning() 
     skip_if_sandbox!(Ok(()));
 
     let server = MockServer::start().await;
-    let requested_model = "custom/gpt-5.2-codex";
+    let requested_model = "custom/gpt-5.5-codex";
     let response_mock = mount_sse_once(
         &server,
         sse(vec![ev_response_created("resp-1"), ev_completed("resp-1")]),
@@ -609,6 +610,7 @@ async fn remote_models_remote_model_uses_unified_exec() -> Result<()> {
         input_modalities: default_input_modalities(),
         used_fallback_model_metadata: false,
         supports_search_tool: false,
+        supports_experimental_context: false,
         use_responses_lite: false,
         guardian: None,
         node_repl_auto_review_required: false,
@@ -622,6 +624,7 @@ async fn remote_models_remote_model_uses_unified_exec() -> Result<()> {
         additional_speed_tiers: Vec::new(),
         service_tiers: Vec::new(),
         default_service_tier: None,
+        available_access_programs: None,
         upgrade: None,
         model_messages: None,
         include_skills_usage_instructions: false,
@@ -851,8 +854,10 @@ async fn remote_models_truncation_policy_with_tool_output_override() -> Result<(
     Ok(())
 }
 
+#[test_case(AntexAuth::create_dummy_chatgpt_auth_for_testing(); "chatgpt")]
+#[test_case(AntexAuth::from_api_key("test-api-key"); "api key")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn remote_models_apply_legacy_instructions() -> Result<()> {
+async fn remote_models_apply_legacy_instructions(auth: AntexAuth) -> Result<()> {
     skip_if_no_network!(Ok(()));
     skip_if_sandbox!(Ok(()));
 
@@ -879,6 +884,7 @@ async fn remote_models_apply_legacy_instructions() -> Result<()> {
         input_modalities: default_input_modalities(),
         used_fallback_model_metadata: false,
         supports_search_tool: false,
+        supports_experimental_context: false,
         use_responses_lite: false,
         guardian: None,
         node_repl_auto_review_required: false,
@@ -892,6 +898,7 @@ async fn remote_models_apply_legacy_instructions() -> Result<()> {
         additional_speed_tiers: Vec::new(),
         service_tiers: Vec::new(),
         default_service_tier: None,
+        available_access_programs: None,
         upgrade: None,
         model_messages: Some(ModelMessages {
             persistent_instructions: None,
@@ -957,12 +964,14 @@ async fn remote_models_apply_legacy_instructions() -> Result<()> {
     )
     .await;
 
-    let mut builder = test_antex()
-        .with_auth(AntexAuth::create_dummy_chatgpt_auth_for_testing())
-        .with_config(|config| {
-            config.update_plan_enabled = true;
-            config.model = Some("gpt-5.2".to_string());
-        });
+    let mut builder = test_antex().with_auth(auth).with_config(|config| {
+        config
+            .features
+            .enable(Feature::ApiKeyModelDiscovery)
+            .expect("enable API-key model discovery");
+        config.update_plan_enabled = true;
+        config.model = Some("gpt-5.2".to_string());
+    });
     let TestAntex {
         antex,
         cwd,
@@ -1467,6 +1476,7 @@ fn test_remote_model_with_policy(
         input_modalities: default_input_modalities(),
         used_fallback_model_metadata: false,
         supports_search_tool: false,
+        supports_experimental_context: false,
         use_responses_lite: false,
         guardian: None,
         node_repl_auto_review_required: false,
@@ -1480,6 +1490,7 @@ fn test_remote_model_with_policy(
         additional_speed_tiers: Vec::new(),
         service_tiers: Vec::new(),
         default_service_tier: None,
+        available_access_programs: None,
         upgrade: None,
         model_messages: None,
         include_skills_usage_instructions: false,

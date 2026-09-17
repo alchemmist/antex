@@ -536,7 +536,7 @@ fn startup_draft_bottom_pane(
             enhanced_keys_supported,
             placeholder_text: "Ask Antex to do anything".to_string(),
             disable_paste_burst: false,
-            animations_enabled: true,
+            animations_enabled: crate::system_motion::mode() == crate::motion::MotionMode::Animated,
             skills: None,
         },
         ChatComposerConfig::plain_text(),
@@ -547,4 +547,4 @@ fn startup_draft_bottom_pane(
 
 #[cfg(test)]
 #[path = "startup_draft_tests.rs"]
-mod tests;
+pub(crate) mod tests;

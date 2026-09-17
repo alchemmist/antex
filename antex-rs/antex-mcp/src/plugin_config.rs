@@ -1,3 +1,4 @@
+use antex_config::McpServerAuth;
 use antex_config::McpServerConfig;
 use antex_config::McpServerEnvVar;
 use antex_config::McpServerTransportConfig;
@@ -155,6 +156,12 @@ fn normalize_plugin_mcp_server(
 
     let mut config = serde_json::from_value::<McpServerConfig>(JsonValue::Object(object))
         .map_err(|err| err.to_string())?;
+    if matches!(config.auth, McpServerAuth::EmaAuth) {
+        return Err(
+            "plugin MCP declarations cannot select ema_auth; configure enterprise authentication in host policy"
+                .to_string(),
+        );
+    }
     if matches!(source, PluginMcpSource::Environment { .. }) {
         bind_environment_env_vars(&mut config)?;
     }

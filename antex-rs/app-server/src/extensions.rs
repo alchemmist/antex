@@ -8,25 +8,19 @@ use antex_app_server_protocol::ThreadGoal;
 use antex_app_server_protocol::ThreadGoalUpdatedNotification;
 use antex_app_server_protocol::ThreadQueueChangedNotification;
 use antex_app_server_protocol::WarningNotification;
-use antex_core::NewThread;
-use antex_core::StartThreadOptions;
 use antex_core::ThreadManager;
 use antex_core::config::Config;
 use antex_exec_server::EnvironmentManager;
-use antex_extension_api::AgentSpawnFuture;
-use antex_extension_api::AgentSpawner;
 use antex_extension_api::ExtensionEventSink;
 use antex_extension_api::ExtensionRegistry;
 use antex_extension_api::ExtensionRegistryBuilder;
 use antex_extension_api::ExtensionWarning;
-use antex_extension_api::InternalSessionSpawnFuture;
-use antex_extension_api::InternalSessionSpawner;
+use antex_extension_api::TurnStartAdmission;
 use antex_goal_extension::GoalExtensionConfig;
 use antex_goal_extension::GoalService;
 use antex_http_client::HttpClientFactory;
 use antex_login::AuthManager;
 use antex_protocol::ThreadId;
-use antex_protocol::error::CodexErr;
 use antex_protocol::protocol::Event;
 use antex_protocol::protocol::EventMsg;
 use antex_queue_extension::QueuedItemService;
@@ -50,15 +44,12 @@ pub(crate) struct ThreadExtensionDependencies {
     pub(crate) http_client_factory: HttpClientFactory,
     /// Process-scoped queue shared by idle dispatch and app-server requests.
     pub(crate) queue_service: Option<Arc<QueuedItemService>>,
+    pub(crate) turn_start_admission: Option<Arc<dyn TurnStartAdmission>>,
 }
 
-pub(crate) fn thread_extensions<S>(
-    guardian_agent_spawner: S,
+pub(crate) fn thread_extensions(
     dependencies: ThreadExtensionDependencies,
-) -> Arc<ExtensionRegistry<Config>>
-where
-    S: AgentSpawner<StartThreadOptions, Spawned = NewThread, Error = CodexErr> + 'static,
-{
+) -> Arc<ExtensionRegistry<Config>> {
     let ThreadExtensionDependencies {
         event_sink,
         auth_manager,
@@ -71,8 +62,12 @@ where
         git_attribution_base_url,
         http_client_factory,
         queue_service,
+        turn_start_admission,
     } = dependencies;
     let mut builder = ExtensionRegistryBuilder::<Config>::with_event_sink(Arc::clone(&event_sink));
+    if let Some(admission) = turn_start_admission {
+        builder.turn_start_admission(admission);
+    }
     if let Some(queue_service) = queue_service {
         antex_queue_extension::install(&mut builder, queue_service);
     }
@@ -97,13 +92,7 @@ where
         git_attribution_base_url,
         http_client_factory,
     );
-    antex_guardian_v2::install(
-        &mut builder,
-        guardian_agent_spawner,
-        internal_session_spawner(thread_manager.clone()),
-        auth_manager.clone(),
-        thread_manager,
-    );
+    antex_guardian_v2::install(&mut builder, auth_manager.clone(), thread_manager);
     antex_memories_extension::install(&mut builder, antex_otel::global());
     antex_mcp_extension::install(&mut builder);
     antex_mcp_extension::install_executor_plugins(&mut builder, environment_manager);
@@ -303,42 +292,6 @@ impl ExtensionEventSink for AppServerExtensionEventSink {
             }
             send_thread_warning(&outgoing, &thread_state_manager, thread_id, message).await;
         });
-    }
-}
-
-pub(crate) fn guardian_agent_spawner(
-    thread_manager: Weak<ThreadManager>,
-) -> impl AgentSpawner<StartThreadOptions, Spawned = NewThread, Error = CodexErr> {
-    move |forked_from_thread_id: ThreadId,
-          options: StartThreadOptions|
-          -> AgentSpawnFuture<'static, NewThread, CodexErr> {
-        let thread_manager = thread_manager.clone();
-        Box::pin(async move {
-            let thread_manager = thread_manager.upgrade().ok_or_else(|| {
-                CodexErr::UnsupportedOperation("thread manager dropped".to_string())
-            })?;
-            thread_manager
-                .spawn_subagent(forked_from_thread_id, options)
-                .await
-        })
-    }
-}
-
-fn internal_session_spawner(
-    thread_manager: Weak<ThreadManager>,
-) -> impl InternalSessionSpawner<StartThreadOptions, Spawned = NewThread, Error = CodexErr> {
-    move |parent_thread_id: ThreadId,
-          options: StartThreadOptions|
-          -> InternalSessionSpawnFuture<'static, NewThread, CodexErr> {
-        let thread_manager = thread_manager.clone();
-        Box::pin(async move {
-            let thread_manager = thread_manager.upgrade().ok_or_else(|| {
-                CodexErr::UnsupportedOperation("thread manager dropped".to_string())
-            })?;
-            thread_manager
-                .spawn_internal_session(parent_thread_id, options)
-                .await
-        })
     }
 }
 

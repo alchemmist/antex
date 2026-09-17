@@ -13,6 +13,7 @@ bytes = { workspace = true }
 antex-http-client = { workspace = true }
 antex-login = { workspace = true }
 antex-protocol = { workspace = true }
+antex-rollout = { workspace = true }
 flate2 = { workspace = true }
 http = { workspace = true }
 httpdate = { workspace = true }

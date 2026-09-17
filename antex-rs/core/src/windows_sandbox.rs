@@ -9,12 +9,23 @@ use antex_login::default_client::originator;
 use antex_otel::sanitize_metric_tag_value;
 use antex_protocol::config_types::WindowsSandboxLevel;
 use antex_protocol::models::PermissionProfile;
+use antex_sandboxing::SandboxType;
 use antex_utils_absolute_path::AbsolutePathBuf;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
 use std::time::Instant;
+
+pub fn managed_proxy_routing_for_windows_sandbox(
+    sandbox_type: SandboxType,
+) -> antex_network_proxy::ManagedProxyRouting {
+    if cfg!(windows) && sandbox_type == SandboxType::WindowsMxc {
+        antex_network_proxy::ManagedProxyRouting::DedicatedListeners
+    } else {
+        antex_network_proxy::ManagedProxyRouting::SharedIngress
+    }
+}
 
 pub trait WindowsSandboxLevelExt {
     fn from_config(config: &Config) -> WindowsSandboxLevel;

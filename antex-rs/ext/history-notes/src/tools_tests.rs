@@ -1,6 +1,7 @@
 use antex_protocol::models::FunctionCallOutputContentItem;
 use antex_protocol::models::FunctionCallOutputPayload;
 use antex_protocol::models::ImageDetail;
+use antex_protocol::models::ImageReference;
 use antex_protocol::models::ResponseInputItem;
 use antex_tools::ToolOutput;
 use antex_tools::ToolPayload;
@@ -73,19 +74,27 @@ fn preserves_images_as_separate_output_items_without_logging_bytes() {
                     encrypted_content: "enc_payload".to_string()
                 },
                 FunctionCallOutputContentItem::InputImage {
-                    image_url: "data:image/png;base64,cG5n".to_string(),
+                    image: ImageReference::Inline {
+                        image_url: "data:image/png;base64,cG5n".to_string()
+                    },
                     detail: Some(ImageDetail::Original)
                 },
                 FunctionCallOutputContentItem::InputImage {
-                    image_url: "data:image/jpeg;base64,anBlZw==".to_string(),
+                    image: ImageReference::Inline {
+                        image_url: "data:image/jpeg;base64,anBlZw==".to_string()
+                    },
                     detail: Some(ImageDetail::Low)
                 },
                 FunctionCallOutputContentItem::InputImage {
-                    image_url: "data:image/gif;base64,Z2lm".to_string(),
+                    image: ImageReference::Inline {
+                        image_url: "data:image/gif;base64,Z2lm".to_string()
+                    },
                     detail: None
                 },
                 FunctionCallOutputContentItem::InputImage {
-                    image_url: "data:image/webp;base64,d2VicA==".to_string(),
+                    image: ImageReference::Inline {
+                        image_url: "data:image/webp;base64,d2VicA==".to_string()
+                    },
                     detail: None
                 },
             ])

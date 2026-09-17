@@ -1,0 +1,12 @@
+---
+source: tui/src/app/tests/math_interruption_tests.rs
+assertion_line: 105
+expression: rendered
+---
+• Intro.
+
+  $$
+  \frac{a+b+c+d+e+f}
+  {g+h}
+
+• Interrupted.

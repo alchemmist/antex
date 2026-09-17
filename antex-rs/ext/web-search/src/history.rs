@@ -84,6 +84,7 @@ mod tests {
     use antex_api::SearchInput;
     use antex_protocol::ResponseItemId;
     use antex_protocol::models::ContentItem;
+    use antex_protocol::models::ImageReference;
     use antex_protocol::models::ResponseItem;
     use pretty_assertions::assert_eq;
 
@@ -158,7 +159,9 @@ mod tests {
                     text: "previous user".to_string(),
                 },
                 ContentItem::InputImage {
-                    image_url: "data:image/png;base64,image".to_string(),
+                    image: ImageReference::Inline {
+                        image_url: "data:image/png;base64,image".to_string(),
+                    },
                     detail: None,
                 },
             ],

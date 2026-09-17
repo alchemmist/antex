@@ -12,6 +12,7 @@ use antex_core::config::Config;
 use antex_model_provider_info::WireApi;
 use antex_protocol::num_format::format_with_separators;
 use antex_protocol::protocol::SessionConfiguredEvent;
+use antex_utils_path_uri::PathUri;
 use antex_utils_sandbox_summary::summarize_permission_profile;
 use owo_colors::OwoColorize;
 use owo_colors::Style;
@@ -444,8 +445,8 @@ fn config_summary_entries(
             "sandbox",
             summarize_permission_profile(
                 &permission_profile,
-                &config.cwd,
-                config.effective_workspace_roots().as_slice(),
+                &PathUri::from_abs_path(&config.cwd),
+                &config.effective_workspace_roots(),
             ),
         ),
     ];

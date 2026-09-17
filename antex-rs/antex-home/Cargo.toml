@@ -14,6 +14,7 @@ workspace = true
 antex-extension-api = { workspace = true }
 antex-utils-absolute-path = { workspace = true }
 tokio = { workspace = true, features = ["fs"] }
+tracing = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }

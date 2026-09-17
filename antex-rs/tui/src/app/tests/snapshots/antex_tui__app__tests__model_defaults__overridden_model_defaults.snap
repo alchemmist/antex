@@ -4,7 +4,7 @@ expression: messages
 ---
 ⚠ Saved default model and reasoning effort, but a higher-priority configuration
   layer overrides the saved value.
-• Model changed to gpt-5.4 high
+• Model changed to gpt-5.5 high
 ⚠ Saved Plan mode reasoning effort, but a higher-priority configuration layer
   overrides the saved value.
 ⚠ Saved default service tier, but a higher-priority configuration layer

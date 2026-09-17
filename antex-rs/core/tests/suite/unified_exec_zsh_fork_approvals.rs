@@ -2,7 +2,9 @@ use antex_config::permissions_toml::FilesystemPermissionToml;
 use antex_config::permissions_toml::PermissionProfileToml;
 use antex_config::types::ApprovalsReviewer;
 use antex_core::TurnInputRequest;
+use antex_core::config::Config;
 use antex_core::sandboxing::SandboxPermissions;
+use antex_extension_api::ExtensionRegistryBuilder;
 use antex_features::Feature;
 use antex_protocol::config_types::CollaborationMode;
 use antex_protocol::config_types::ModeKind;
@@ -50,6 +52,7 @@ use serde_json::Value;
 use serde_json::json;
 use std::fs;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 use toml_edit::Key as TomlKey;
 use wiremock::MockServer;
@@ -649,8 +652,26 @@ where
         return Ok(None);
     };
 
+    struct ExecveIdentityCheck;
+
+    impl antex_extension_api::ApprovalReviewContributor for ExecveIdentityCheck {
+        fn decide<'a>(
+            &'a self,
+            input: &'a antex_extension_api::ApprovalDecisionInput<'_>,
+        ) -> antex_extension_api::ExtensionFuture<'a, Option<antex_extension_api::ApprovalDecision>>
+        {
+            if input.action.get("program").is_some() {
+                assert_eq!(input.tool_call_id, None);
+            }
+            Box::pin(async { None })
+        }
+    }
+
+    let mut extensions = ExtensionRegistryBuilder::<Config>::new();
+    extensions.approval_review_contributor(Arc::new(ExecveIdentityCheck));
     let server = start_mock_server().await;
     let test = zsh_fork_test_builder(runtime, approval_policy)
+        .with_extensions(Arc::new(extensions.build()))
         .with_pre_build_hook(pre_build_hook)
         .with_config(move |config| {
             config

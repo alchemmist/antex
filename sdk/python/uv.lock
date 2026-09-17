@@ -26,6 +26,7 @@ version = "0.0.0.dev0"
 source = { editable = "." }
 dependencies = [
     { name = "antex-cli-bin" },
+    { name = "packaging" },
     { name = "pydantic" },
 ]
 
@@ -49,6 +50,7 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "antex-cli-bin", directory = "../python-runtime" },
+    { name = "packaging", specifier = ">=26.2" },
     { name = "pydantic", specifier = ">=2.12" },
 ]
 

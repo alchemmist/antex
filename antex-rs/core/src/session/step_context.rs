@@ -1,3 +1,5 @@
+//! Request-scoped settings and capabilities, including the durable context snapshot.
+
 use std::sync::Arc;
 
 use crate::agents_md::LoadedAgentsMd;
@@ -10,6 +12,8 @@ use antex_exec_server::ExecutorCapabilityDiscoverySnapshot;
 use antex_exec_server::ResolvedSelectedCapabilityRoot;
 use antex_mcp::McpBinding;
 use antex_otel::SessionTelemetry;
+use antex_protocol::items::ModelInvocationContext;
+use antex_protocol::protocol::TurnContextItem;
 
 /// Request-scoped state that may change between model sampling requests.
 pub(crate) struct StepContext {
@@ -31,4 +35,23 @@ pub(crate) struct StepContext {
     pub(crate) tool_router: Arc<ToolRouter>,
     /// The canonical AGENTS.md value observed with this environment snapshot.
     pub(crate) loaded_agents_md: Option<Arc<LoadedAgentsMd>>,
+}
+
+impl StepContext {
+    /// Persist the summary captured for this request, even after a live settings update.
+    pub(crate) fn to_turn_context_item(&self) -> TurnContextItem {
+        let mut item = self.turn.to_turn_context_item();
+        item.summary = self.settings.reasoning_summary;
+        item
+    }
+
+    pub(crate) fn model_context(&self) -> ModelInvocationContext {
+        ModelInvocationContext {
+            model_slug: self.settings.model_info.slug.clone(),
+            reasoning_effort: self
+                .settings
+                .effective_reasoning_effort()
+                .map(|effort| effort.to_string()),
+        }
+    }
 }

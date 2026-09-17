@@ -1,7 +1,6 @@
 use std::io;
 
 use antex_exec_server_protocol::JSONRPCErrorError;
-use antex_protocol::config_types::WindowsSandboxLevel;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 
@@ -81,8 +80,7 @@ impl FileSystemHandler {
             .and_then(|root| root.sandbox.as_ref())
             .filter(|sandbox| {
                 sandbox.should_run_in_sandbox()
-                    && (!cfg!(target_os = "windows")
-                        || sandbox.windows_sandbox_level != WindowsSandboxLevel::Disabled)
+                    && (!cfg!(target_os = "windows") || sandbox.windows_sandbox_is_requested())
                     && params
                         .roots
                         .iter()

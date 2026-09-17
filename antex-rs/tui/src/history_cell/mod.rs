@@ -123,6 +123,7 @@ pub(crate) use startup_panel::StartupUpdates;
 pub(crate) use startup_panel::VersionUpdate;
 #[cfg(not(debug_assertions))]
 pub(crate) use startup_panel::set_startup_updates;
+mod spoken_artifacts;
 mod startup_warnings;
 
 pub(crate) use approvals::*;

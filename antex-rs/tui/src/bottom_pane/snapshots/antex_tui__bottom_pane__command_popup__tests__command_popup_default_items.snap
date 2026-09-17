@@ -16,8 +16,8 @@ expression: commands
 /review - review my current changes and find issues
 /rename - rename the current thread
 /new - start a new chat during a conversation
-/archive - archive this session and exit
-/delete - permanently delete this session and exit
+/archive - archive this session
+/delete - permanently delete this session
 /resume - resume a saved chat
 /fork - fork the current chat
 /app - continue this session in the Desktop app
@@ -28,7 +28,7 @@ expression: commands
 /workflow - run, pause, resume, or cancel a Python workflow
 /agents - view and switch between all active agent sessions
 /side - start a side conversation in an ephemeral fork
-/copy - copy the last response, code block, or quote
+/copy - copy the last response or part of it
 /export - export the conversation as markdown
 /dump - save the conversation as a shareable HTML page
 /raw - toggle raw scrollback mode for copy-friendly terminal selection
@@ -38,6 +38,7 @@ expression: commands
 /status - show current session configuration and token usage
 /context - summarize what is currently in the model context
 /system-prompt - open the current system prompt in nvim inside a tmux window
+/daemon - Manage the local background server.
 /cd - change the current working directory
 /pwd - show the current working directory
 /title - configure which items appear in the terminal title

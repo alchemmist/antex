@@ -13,6 +13,7 @@ path = "src/lib.rs"
 workspace = true
 
 [dependencies]
+chrono = { workspace = true }
 antex-api = { workspace = true }
 antex-agent-identity = { workspace = true }
 antex-aws-auth = { workspace = true }
@@ -25,12 +26,17 @@ antex-otel = { workspace = true }
 antex-protocol = { workspace = true }
 antex-response-debug-context = { workspace = true }
 http = { workspace = true }
-tokio = { workspace = true, features = ["process", "sync", "time"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "process", "sync", "time"] }
 tracing = { workspace = true, features = ["log"] }
+url = { workspace = true }
 
 [dev-dependencies]
+base64 = { workspace = true }
 antex-utils-redacted-string = { workspace = true }
 pretty_assertions = { workspace = true }
-serde_json = { workspace = true }
+tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt"] }
 wiremock = { workspace = true }

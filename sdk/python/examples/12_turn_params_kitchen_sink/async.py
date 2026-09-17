@@ -16,7 +16,6 @@ from antex_sdk import (
     AsyncAntex,
 )
 from antex_sdk.types import (
-    Personality,
     ReasoningSummary,
 )
 
@@ -50,7 +49,6 @@ async def main() -> None:
         turn = await thread.turn(
             PROMPT,
             output_schema=OUTPUT_SCHEMA,
-            personality=Personality.pragmatic,
             summary=SUMMARY,
         )
         result = await turn.run()

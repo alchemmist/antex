@@ -163,9 +163,9 @@ function Resolve-ReleaseAssetSelection {
     $checksumFallbackUrl = $null
     if ($ResolvedRelease.Source -eq "ReleasesOpenAICom") {
         $packageUrl = "$ReleasesBaseUri/releases/$version/$packageAsset"
-        $packageFallbackUrl = "https://github.com/alchemmist/antex/releases/download/v$version/$packageAsset"
+        $packageFallbackUrl = "https://github.com/alchemmist/codex/releases/download/v$version/$packageAsset"
         $checksumUrl = "$ReleasesBaseUri/releases/$version/$checksumAsset"
-        $checksumFallbackUrl = "https://github.com/alchemmist/antex/releases/download/v$version/$checksumAsset"
+        $checksumFallbackUrl = "https://github.com/alchemmist/codex/releases/download/v$version/$checksumAsset"
     }
 
     $packageMetadata = Find-ReleaseAssetMetadata -AssetName $packageAsset -ReleaseMetadata $releaseMetadata -Url $packageUrl -FallbackUrl $packageFallbackUrl
@@ -184,7 +184,7 @@ function Resolve-ReleaseAssetSelection {
     $packageFallbackUrl = $null
     if ($ResolvedRelease.Source -eq "ReleasesOpenAICom") {
         $packageUrl = "$ReleasesBaseUri/releases/$version/$packageAsset"
-        $packageFallbackUrl = "https://github.com/alchemmist/antex/releases/download/v$version/$packageAsset"
+        $packageFallbackUrl = "https://github.com/alchemmist/codex/releases/download/v$version/$packageAsset"
     }
     $packageMetadata = Find-ReleaseAssetMetadata -AssetName $packageAsset -ReleaseMetadata $releaseMetadata -Url $packageUrl -FallbackUrl $packageFallbackUrl
     if ($null -eq $packageMetadata) {
@@ -323,11 +323,11 @@ function Resolve-ReleaseFromGitHub {
 
     if ($NormalizedVersion -eq "latest") {
         $requestedRelease = "latest"
-        $metadataUri = "https://api.github.com/repos/alchemmist/antex/releases/latest"
+        $metadataUri = "https://api.github.com/repos/alchemmist/codex/releases/latest"
     } else {
         $resolvedVersion = $NormalizedVersion
         $requestedRelease = $resolvedVersion
-        $metadataUri = "https://api.github.com/repos/alchemmist/antex/releases/tags/v$resolvedVersion"
+        $metadataUri = "https://api.github.com/repos/alchemmist/codex/releases/tags/v$resolvedVersion"
     }
 
     try {
@@ -512,7 +512,8 @@ function Move-OldStandaloneBinIfApproved {
 }
 
 function Add-JunctionSupportType {
-    if (([System.Management.Automation.PSTypeName]'AntexInstaller.Junction').Type) {
+    # Older installer types remain loaded when users rerun irm | iex in one session.
+    if (([System.Management.Automation.PSTypeName]'CodexInstaller.JunctionV2').Type) {
         return
     }
 
@@ -526,7 +527,7 @@ using Microsoft.Win32.SafeHandles;
 
 namespace AntexInstaller
 {
-    public static class Junction
+    public static class JunctionV2
     {
         private const uint GENERIC_WRITE = 0x40000000;
         private const uint FILE_SHARE_READ = 0x00000001;
@@ -559,6 +560,25 @@ namespace AntexInstaller
             int nOutBufferSize,
             out int lpBytesReturned,
             IntPtr lpOverlapped);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern uint GetFinalPathNameByHandleW(
+            SafeFileHandle file, StringBuilder path, uint length, uint flags);
+
+        public static string ResolveDirectory(string path)
+        {
+            using (SafeFileHandle handle = CreateFileW(
+                path, 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                IntPtr.Zero, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, IntPtr.Zero))
+            {
+                if (handle.IsInvalid) { throw new Win32Exception(Marshal.GetLastWin32Error()); }
+                StringBuilder resolved = new StringBuilder(32768);
+                uint length = GetFinalPathNameByHandleW(handle, resolved, (uint)resolved.Capacity, 0);
+                if (length == 0) { throw new Win32Exception(Marshal.GetLastWin32Error()); }
+                if (length >= resolved.Capacity) { throw new IOException("Resolved path is too long."); }
+                return resolved.ToString().TrimEnd('\\');
+            }
+        }
 
         public static void SetTarget(string linkPath, string targetPath)
         {
@@ -631,7 +651,7 @@ function Set-JunctionTarget {
     )
 
     Add-JunctionSupportType
-    [AntexInstaller.Junction]::SetTarget($LinkPath, $TargetPath)
+    [CodexInstaller.JunctionV2]::SetTarget($LinkPath, $TargetPath)
 }
 
 function Test-IsJunction {
@@ -661,14 +681,15 @@ function Ensure-Junction {
 
     $item = Get-Item -LiteralPath $LinkPath -Force
     if (Test-IsJunction -Path $LinkPath) {
-        $existingTarget = [string]$item.Target
+        Add-JunctionSupportType
+        $existingTarget = [CodexInstaller.JunctionV2]::ResolveDirectory($LinkPath)
         if (-not [string]::IsNullOrWhiteSpace($InstallerOwnedTargetPrefix)) {
-            $ownedTargetPrefix = $InstallerOwnedTargetPrefix.TrimEnd("\\")
+            $ownedTargetPrefix = [CodexInstaller.JunctionV2]::ResolveDirectory($InstallerOwnedTargetPrefix) + "\"
             if (-not $existingTarget.StartsWith($ownedTargetPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
                 throw "Refusing to retarget junction at $LinkPath because it is not managed by this installer."
             }
         }
-        if ($existingTarget.Equals($TargetPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+        if ($existingTarget.Equals([CodexInstaller.JunctionV2]::ResolveDirectory($TargetPath), [System.StringComparison]::OrdinalIgnoreCase)) {
             return
         }
 
@@ -920,9 +941,16 @@ $legacyHome = if ([string]::IsNullOrWhiteSpace($env:CODEX_HOME)) {
 if (-not (Test-Path -LiteralPath $antexHome) -and (Test-Path -LiteralPath $legacyHome -PathType Container) -and (Get-ChildItem -Force -LiteralPath $legacyHome | Select-Object -First 1)) {
     throw "Existing Codex data found at $legacyHome. Install the release binaries first and run antex migrate before using the managed installer."
 }
-$standaloneRoot = Join-Path $antexHome "packages\standalone"
+$daemonOnly = $env:ANTEX_INSTALL_DAEMON_ONLY -eq "1"
+$standaloneRoot = Join-Path $antexHome $(if ($daemonOnly) { "packages\app-server-daemon" } else { "packages\standalone" })
 $releasesDir = Join-Path $standaloneRoot "releases"
 $currentDir = Join-Path $standaloneRoot "current"
+$deferSelection = $env:ANTEX_INSTALL_DEFER_SELECTION -eq "1"
+if ($deferSelection) {
+    if (-not $daemonOnly) { throw "Deferred selection requires a daemon-only installation." }
+    $currentDir = Join-Path $standaloneRoot ".migration-current"
+}
+$autoUpdateVersion = Join-Path $standaloneRoot "auto-update-version"
 $lockPath = Join-Path $standaloneRoot "install.lock"
 
 $defaultVisibleBinDir = Join-Path $env:LOCALAPPDATA "Programs\OpenAI\Antex\bin"
@@ -949,7 +977,7 @@ if (-not [string]::IsNullOrWhiteSpace($currentVersion) -and $currentVersion -ne 
 Write-Step "Detected platform: $platformLabel"
 Write-Step "Resolved version: $resolvedVersion"
 
-$conflictingInstall = Get-ConflictingInstall -VisibleBinDir $visibleBinDir
+$conflictingInstall = if ($daemonOnly) { $null } else { Get-ConflictingInstall -VisibleBinDir $visibleBinDir }
 $oldStandaloneBackup = $null
 
 $checksumAsset = "antex-package_SHA256SUMS"
@@ -960,13 +988,69 @@ $checksumMetadata = $assetSelection.ChecksumMetadata
 $installLayout = $assetSelection.InstallLayout
 $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("antex-install-" + [System.Guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Force -Path $tempDir | Out-Null
+$guardRejected = $false
 
 try {
     Invoke-WithInstallLock -LockPath $lockPath -Script {
+        $updaterRecord = Join-Path $antexHome "app-server-daemon\app-server-updater.pid"
+        if ($daemonOnly) { $updaterRecord = Join-Path $antexHome "app-server-daemon\daemon-updater.pid" }
+        $oldUpdaterParent = $false
+        if ($Release -eq "latest" -and $env:ANTEX_INSTALL_IF_LATEST -ne "1" -and $env:ANTEX_INSTALL_IF_CURRENT -ne "1" -and (Test-Path -LiteralPath $updaterRecord)) {
+            $updaterPid = $null
+            $updaterStartTime = $null
+            try {
+                $record = Get-Content -LiteralPath $updaterRecord -Raw | ConvertFrom-Json
+                $updaterPid = [long]$record.pid
+                $updaterStartTime = [string]$record.processStartTime
+            } catch {
+                # Empty or stale PID reservations must not block a manual install.
+            }
+            if ($null -ne $updaterPid -and $updaterPid -gt 0 -and -not [string]::IsNullOrEmpty($updaterStartTime)) {
+                $updaterProcess = Get-Process -Id $updaterPid -ErrorAction SilentlyContinue
+                if ($null -ne $updaterProcess -and $updaterStartTime -eq [string]$updaterProcess.StartTime.ToFileTimeUtc()) {
+                    try {
+                        $parentPid = (Get-CimInstance Win32_Process -Filter "ProcessId = $PID" -ErrorAction Stop).ParentProcessId
+                        if ([long]$parentPid -le 0) { throw "Missing updater parent process." }
+                    } catch {
+                        try {
+                            $parentPid = (Get-WmiObject Win32_Process -Filter "ProcessId = $PID" -ErrorAction Stop).ParentProcessId
+                            if ([long]$parentPid -le 0) { throw "Missing updater parent process." }
+                        } catch {
+                            throw "Cannot verify whether the standalone installer was launched by an older updater."
+                        }
+                    }
+                    $oldUpdaterParent = $updaterPid -eq $parentPid
+                }
+            }
+        }
+        if ($env:ANTEX_INSTALL_IF_LATEST -eq "1" -or $env:ANTEX_INSTALL_IF_CURRENT -eq "1" -or $oldUpdaterParent) {
+            $previousRelease = if ($oldUpdaterParent -and (Test-Path -LiteralPath $autoUpdateVersion)) {
+                [System.IO.File]::ReadAllText($autoUpdateVersion)
+            } else {
+                $env:ANTEX_UPDATE_FROM_RELEASE
+            }
+            Add-JunctionSupportType
+            $currentTarget = if (Test-Path -LiteralPath $currentDir) { (Get-Item -LiteralPath $currentDir).Target } else { $null }
+            if ($Release -ne "latest" -or [string]::IsNullOrEmpty($previousRelease) -or [string]::IsNullOrEmpty($currentTarget) -or
+                -not (Test-Path -LiteralPath (Join-Path $releasesDir $previousRelease)) -or
+                [CodexInstaller.JunctionV2]::ResolveDirectory($currentDir) -ne [CodexInstaller.JunctionV2]::ResolveDirectory((Join-Path $releasesDir $previousRelease))) {
+                if ($env:ANTEX_INSTALL_IF_CURRENT -eq "1") { throw "Daemon selection changed; retry the update." }
+                $script:guardRejected = $true
+                return
+            }
+            # Explicit daemon updates may leave a local or pinned release.
+            if ($env:ANTEX_INSTALL_IF_CURRENT -ne "1" -and
+                (-not (Test-Path -LiteralPath $autoUpdateVersion) -or
+                [System.IO.File]::ReadAllText($autoUpdateVersion) -cne $previousRelease)) {
+                $script:guardRejected = $true
+                return
+            }
+        }
         Remove-StaleInstallArtifacts -ReleasesDir $releasesDir
 
         if (-not (Test-ReleaseIsComplete -ReleaseDir $releaseDir -ExpectedVersion $resolvedVersion -ExpectedTarget $target -Layout $installLayout)) {
             if (Test-Path -LiteralPath $releaseDir) {
+                if ($daemonOnly) { throw "Refusing to overwrite existing daemon release $releaseDir." }
                 Write-WarningStep "Found incomplete existing release at $releaseDir. Reinstalling."
             }
 
@@ -1028,8 +1112,28 @@ try {
         }
 
         New-Item -ItemType Directory -Force -Path $standaloneRoot | Out-Null
+        if ($deferSelection -and (Get-Item -LiteralPath (Join-Path $standaloneRoot "current") -Force -ErrorAction SilentlyContinue)) {
+            throw "A dedicated daemon is already selected; retry the update."
+        }
+        if ($daemonOnly -and -not $deferSelection) {
+            $installedCodex = Join-Path $releaseDir $(if ($installLayout -eq "Package") { "bin\antex.exe" } else { "antex.exe" })
+            & $installedCodex app-server daemon pid-update-loop --check-package-ownership | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                throw "The production release does not support daemon-owned packages; the current selection was left unchanged."
+            }
+        }
         Ensure-Junction -LinkPath $currentDir -TargetPath $releaseDir -InstallerOwnedTargetPrefix $releasesDir
+        if ($Release -eq "latest") {
+            $tempMarker = "$autoUpdateVersion.tmp.$PID"
+            [System.IO.File]::WriteAllText($tempMarker, $releaseName)
+            Move-Item -LiteralPath $tempMarker -Destination $autoUpdateVersion -Force
+        } else {
+            if (Test-Path -LiteralPath $autoUpdateVersion) {
+                Remove-Item -LiteralPath $autoUpdateVersion -Force -ErrorAction Stop
+            }
+        }
 
+        if ($daemonOnly) { return }
         $visibleParent = Split-Path -Parent $visibleBinDir
         $currentBinDir = if ($installLayout -eq "Package") {
             Join-Path $currentDir "bin"
@@ -1057,6 +1161,7 @@ try {
 } finally {
     Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
 }
+if ($guardRejected -or $daemonOnly) { return }
 
 Maybe-HandleConflictingInstall -Conflict $conflictingInstall
 

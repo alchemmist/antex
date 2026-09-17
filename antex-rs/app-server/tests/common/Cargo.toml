@@ -21,7 +21,7 @@ antex-core = { workspace = true }
 antex-exec-server = { workspace = true }
 antex-features = { workspace = true }
 antex-login = { workspace = true }
-antex-models-manager = { workspace = true }
+antex-model-provider = { workspace = true }
 antex-protocol = { workspace = true }
 antex-utils-cargo-bin = { workspace = true }
 serde = { workspace = true }

@@ -24,7 +24,7 @@ from release_version import (  # noqa: E402
 
 PACKAGE_NAME = "antex-cli-bin"
 SDK_PACKAGE_NAME = "antex-sdk"
-REPO_SLUG = "alchemmist/antex"
+REPO_SLUG = "alchemmist/codex"
 
 
 class RuntimeSetupError(RuntimeError):

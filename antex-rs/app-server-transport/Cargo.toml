@@ -27,6 +27,7 @@ antex-app-server-protocol = { workspace = true }
 antex-core = { workspace = true }
 antex-login = { workspace = true }
 antex-model-provider = { workspace = true }
+antex-protocol = { workspace = true }
 antex-state = { workspace = true }
 antex-uds = { workspace = true }
 antex-utils-absolute-path = { workspace = true }
@@ -55,10 +56,13 @@ tracing = { workspace = true, features = ["log"] }
 url = { workspace = true }
 uuid = { workspace = true, features = ["serde", "v7"] }
 
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+signal-hook = { workspace = true }
+
 [dev-dependencies]
 chrono = { workspace = true }
 antex-config = { workspace = true }
-antex-protocol = { workspace = true }
 pretty_assertions = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }

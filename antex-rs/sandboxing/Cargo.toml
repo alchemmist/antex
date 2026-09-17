@@ -14,8 +14,10 @@ workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
+antex-mxc-sandbox = { workspace = true }
 antex-network-proxy = { workspace = true }
 antex-protocol = { workspace = true }
+antex-uds = { workspace = true }
 antex-utils-absolute-path = { workspace = true }
 antex-utils-path-uri = { workspace = true }
 antex-utils-pty = { workspace = true }
@@ -30,7 +32,6 @@ url = { workspace = true }
 which = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
-antex-mxc-sandbox = { workspace = true }
 antex-otel = { workspace = true }
 antex-utils-home-dir = { workspace = true }
 

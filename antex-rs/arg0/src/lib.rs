@@ -100,6 +100,9 @@ pub fn arg0_dispatch() -> Option<Arg0PathEntryGuard> {
     }
 
     let argv1 = args.next().unwrap_or_default();
+    if argv1 == antex_sandboxing::CODEX_WINDOWS_MXC_ARG1 {
+        antex_sandboxing::run_windows_mxc_main();
+    }
     #[cfg(unix)]
     if argv1 == ANTEX_ARG0_EXEC_HELPER_ARG1 {
         antex_exec_server::run_arg0_exec_helper_main();
@@ -305,7 +308,7 @@ fn load_dotenv() {
         if let Ok(iter) = dotenvy::from_path_iter(codex_home.join(".env")) {
             set_filtered(iter);
         }
-        unsafe { std::env::set_var("CODEX_HOME", codex_home.as_path()) };
+        unsafe { std::env::set_var("ANTEX_HOME", codex_home.as_path()) };
     }
 }
 

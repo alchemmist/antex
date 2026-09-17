@@ -20,13 +20,14 @@ use antex_login::AuthEnvTelemetry;
 use antex_login::AuthManager;
 use antex_login::collect_auth_env_telemetry;
 use antex_login::default_client::create_client_for_route_async;
+use antex_model_provider_info::CHATGPT_CODEX_BASE_URL;
 use antex_model_provider_info::ModelProviderInfo;
 use antex_models_manager::manager::ModelsEndpointClient;
 use antex_models_manager::manager::ModelsEndpointFuture;
+use antex_models_manager::manager::ModelsEndpointResponse;
 use antex_otel::TelemetryAuthMode;
 use antex_protocol::error::CodexErr;
 use antex_protocol::error::Result as CoreResult;
-use antex_protocol::openai_models::ModelInfo;
 use antex_response_debug_context::extract_response_debug_context;
 use antex_response_debug_context::telemetry_transport_error_message;
 use http::HeaderMap;
@@ -77,12 +78,20 @@ impl OpenAiModelsEndpoint {
         &self,
         client_version: &str,
         http_client_factory: HttpClientFactory,
-    ) -> CoreResult<(Vec<ModelInfo>, Option<String>)> {
+    ) -> CoreResult<ModelsEndpointResponse> {
         let _timer =
             antex_otel::start_global_timer("codex.remote_models.fetch_update.duration_ms", &[]);
         let auth = self.auth().await;
+        let identity = crate::models_identity::identity(&self.provider_info, auth.as_ref())?;
         let auth_mode = auth.as_ref().map(AntexAuth::auth_mode);
         let mut api_provider = self.provider_info.to_api_provider(auth_mode)?;
+        if auth.as_ref().is_some_and(AntexAuth::is_api_key_auth)
+            && self.supports_api_key_models()
+            && self.provider_info.base_url.is_none()
+        {
+            // Antex metadata is served by the Antex backend, not the public /v1/models API.
+            api_provider.base_url = CHATGPT_CODEX_BASE_URL.to_string();
+        }
         enforce_managed_residency(&mut api_provider);
         let api_auth = resolve_provider_auth(auth.as_ref(), &self.provider_info)?;
         let request_url =
@@ -100,7 +109,7 @@ impl OpenAiModelsEndpoint {
             agent_identity_telemetry,
             auth_env: self.auth_env(),
         });
-        timeout(MODELS_REFRESH_TIMEOUT, async {
+        let (models, etag) = timeout(MODELS_REFRESH_TIMEOUT, async {
             let transport = self
                 .transport_builder
                 .build(http_client_factory, request_url.clone())
@@ -113,7 +122,12 @@ impl OpenAiModelsEndpoint {
                 .map_err(map_api_error)
         })
         .await
-        .map_err(|_| CodexErr::Timeout)?
+        .map_err(|_| CodexErr::RequestTimeout)??;
+        Ok(ModelsEndpointResponse {
+            models,
+            etag,
+            identity,
+        })
     }
 
     fn auth_env(&self) -> AuthEnvTelemetry {
@@ -126,6 +140,18 @@ impl OpenAiModelsEndpoint {
 }
 
 impl ModelsEndpointClient for OpenAiModelsEndpoint {
+    fn supports_api_key_models(&self) -> bool {
+        self.provider_info.is_openai()
+    }
+
+    fn identity(&self) -> Option<String> {
+        let auth = self
+            .auth_manager
+            .as_ref()
+            .and_then(|manager| manager.auth_cached());
+        crate::models_identity::identity(&self.provider_info, auth.as_ref()).ok()
+    }
+
     fn has_command_auth(&self) -> bool {
         self.provider_info.has_command_auth()
     }
@@ -138,7 +164,7 @@ impl ModelsEndpointClient for OpenAiModelsEndpoint {
         &'a self,
         client_version: &'a str,
         http_client_factory: HttpClientFactory,
-    ) -> ModelsEndpointFuture<'a, CoreResult<(Vec<ModelInfo>, Option<String>)>> {
+    ) -> ModelsEndpointFuture<'a, CoreResult<ModelsEndpointResponse>> {
         Box::pin(OpenAiModelsEndpoint::list_models(
             self,
             client_version,
@@ -276,6 +302,10 @@ impl RequestTelemetry for ModelsRequestTelemetry {
 }
 
 #[cfg(test)]
+#[path = "models_endpoint_timeout_tests.rs"]
+mod timeout_tests;
+
+#[cfg(test)]
 mod tests {
     use std::num::NonZeroU64;
     use std::sync::Mutex;
@@ -286,6 +316,10 @@ mod tests {
     use antex_login::default_client::ResidencyRequirement;
     use antex_login::default_client::create_client;
     use antex_login::default_client::set_default_client_residency_requirement;
+    use antex_models_manager::manager::ModelsManager;
+    use antex_models_manager::manager::OpenAiModelsManager;
+    use antex_models_manager::manager::RefreshStrategy;
+    use antex_protocol::auth::AuthMode;
     use antex_protocol::config_types::ModelProviderAuthInfo;
     use antex_protocol::openai_models::ModelsResponse;
     use pretty_assertions::assert_eq;
@@ -316,6 +350,76 @@ mod tests {
                     Some((http_client_factory.outbound_proxy_policy(), request_url));
                 Ok(ReqwestTransport::from_http_client(create_client()))
             })
+        }
+    }
+
+    #[derive(Debug)]
+    struct CaptureModelsUrl(Mutex<Option<String>>);
+
+    impl ModelsTransportBuilder for CaptureModelsUrl {
+        fn build(
+            &self,
+            _http_client_factory: HttpClientFactory,
+            request_url: String,
+        ) -> ModelsTransportFuture<'_> {
+            *self.0.lock().unwrap() = Some(request_url);
+            Box::pin(async { Err(std::io::Error::other("transport intentionally unavailable")) })
+        }
+    }
+
+    #[tokio::test]
+    async fn api_key_discovery_respects_provider_routing() {
+        let client_version = antex_models_manager::client_version_to_whole();
+        for (name, base_url, models_url, inference_url) in [
+            (
+                "OpenAI",
+                None,
+                Some("https://chatgpt.com/backend-api/codex/models"),
+                "https://api.openai.com/v1",
+            ),
+            (
+                "OpenAI",
+                Some("https://example.com/codex"),
+                Some("https://example.com/codex/models"),
+                "https://example.com/codex",
+            ),
+            (
+                "Azure",
+                Some("https://example.openai.azure.com/openai/v1"),
+                None,
+                "https://example.openai.azure.com/openai/v1",
+            ),
+        ] {
+            let capture = Arc::new(CaptureModelsUrl(Mutex::new(/*t*/ None)));
+            let auth = AuthManager::from_auth_for_testing(AntexAuth::from_api_key("test-api-key"));
+            let endpoint = Arc::new(OpenAiModelsEndpoint {
+                provider_info: ModelProviderInfo {
+                    name: name.to_string(),
+                    ..ModelProviderInfo::create_openai_provider(base_url.map(str::to_string))
+                },
+                auth_manager: Some(auth.clone()),
+                transport_builder: capture.clone(),
+            });
+            let manager = OpenAiModelsManager::new_without_cache(endpoint.clone(), Some(auth));
+            manager.set_api_key_model_discovery_enabled(/*enabled*/ true);
+            manager
+                .raw_model_catalog(
+                    RefreshStrategy::Online,
+                    HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault),
+                )
+                .await;
+            assert_eq!(
+                *capture.0.lock().unwrap(),
+                models_url.map(|url| format!("{url}?client_version={client_version}"))
+            );
+            assert_eq!(
+                endpoint
+                    .provider_info
+                    .to_api_provider(Some(AuthMode::ApiKey))
+                    .unwrap()
+                    .base_url,
+                inference_url
+            );
         }
     }
 
@@ -440,6 +544,106 @@ mod tests {
                 .as_ref()
                 .and_then(|headers| headers.get(RESIDENCY_HEADER_NAME)),
             Some(&"eu".into())
+        );
+    }
+
+    #[derive(Debug)]
+    struct RotatingAuth(std::sync::atomic::AtomicUsize);
+
+    impl antex_login::ExternalAuth for RotatingAuth {
+        fn resolve(&self) -> antex_login::ExternalAuthFuture<'_, AntexAuth> {
+            Box::pin(async move {
+                let generation = self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(AntexAuth::from_api_key(&format!("token-{generation}")))
+            })
+        }
+
+        fn refresh(
+            &self,
+            _context: antex_login::ExternalAuthRefreshContext,
+        ) -> antex_login::ExternalAuthFuture<'_, AntexAuth> {
+            self.resolve()
+        }
+    }
+
+    #[tokio::test]
+    async fn command_auth_refresh_fetches_a_catalog_for_the_current_credentials() {
+        use antex_models_manager::manager::ModelsManager;
+        use antex_models_manager::manager::OpenAiModelsManager;
+        use antex_models_manager::manager::RefreshStrategy;
+
+        let server = MockServer::start().await;
+        let auth = AuthManager::from_auth_for_testing(AntexAuth::from_api_key("initial"));
+        auth.set_external_auth(Arc::new(RotatingAuth(std::sync::atomic::AtomicUsize::new(
+            0,
+        ))))
+        .await
+        .unwrap();
+        let model = antex_protocol::openai_models::ModelInfo {
+            used_fallback_model_metadata: false,
+            ..antex_models_manager::model_info::model_info_from_slug("command-auth-model")
+        };
+        Mock::given(method("GET"))
+            .and(path("/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(ModelsResponse {
+                models: vec![model.clone()],
+            }))
+            .expect(2)
+            .mount(&server)
+            .await;
+        let mut provider = provider_info_with_command_auth();
+        provider.base_url = Some(server.uri());
+        // Keep this test independent of the residency override exercised in parallel.
+        provider.http_headers = Some(std::collections::HashMap::from([(
+            RESIDENCY_HEADER_NAME.to_string(),
+            "us".into(),
+        )]));
+        let manager = OpenAiModelsManager::new_without_cache(
+            Arc::new(OpenAiModelsEndpoint::new(provider, Some(auth.clone()))),
+            Some(auth.clone()),
+        );
+        let catalog = manager
+            .raw_model_catalog(
+                RefreshStrategy::OnlineIfUncached,
+                HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault),
+            )
+            .await;
+        assert_eq!(
+            catalog
+                .models
+                .iter()
+                .find(|candidate| candidate.slug == model.slug),
+            Some(&model)
+        );
+        auth.auth().await;
+        let bundled = antex_models_manager::bundled_models_response().unwrap();
+        assert_eq!(manager.get_remote_models().await, bundled.models);
+        assert_eq!(manager.try_get_remote_models().unwrap(), bundled.models);
+        assert_eq!(
+            manager
+                .raw_model_catalog(
+                    RefreshStrategy::Offline,
+                    HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault),
+                )
+                .await,
+            bundled
+        );
+        assert_eq!(
+            manager
+                .raw_model_catalog(
+                    RefreshStrategy::OnlineIfUncached,
+                    HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault),
+                )
+                .await,
+            catalog
+        );
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(
+            requests
+                .iter()
+                .map(|request| request.headers["authorization"].to_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["Bearer token-2", "Bearer token-6"]
         );
     }
 }

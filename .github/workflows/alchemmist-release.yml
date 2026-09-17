@@ -58,6 +58,13 @@ jobs:
           fork_version="$(tr -d '[:space:]' < ../FORK_VERSION)"
           [[ "${tag_version}" == "${fork_version}" ]]
 
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends pkg-config libcap-dev
+
       - name: Configure rusty_v8 artifacts
         uses: ./.github/actions/setup-rusty-v8
         with:
@@ -66,7 +73,7 @@ jobs:
       - name: Build Antex
         shell: bash
         run: |
-          export STABLE_GIT_COMMIT="${GITHUB_SHA::8}"
+          export STABLE_GIT_COMMIT="${GITHUB_SHA}"
           ALCHEMMIST_FORK_VERSION="$(tr -d '[:space:]' < ../FORK_VERSION)"
           export ALCHEMMIST_FORK_VERSION
           cargo build --locked --release --target "${TARGET}" \

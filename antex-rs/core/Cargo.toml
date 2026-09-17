@@ -48,6 +48,7 @@ antex-shell-command = { workspace = true }
 antex-execpolicy = { workspace = true }
 antex-git-utils = { workspace = true }
 antex-guardian-context = { workspace = true }
+antex-guardian-reviewer = { workspace = true }
 antex-history = { workspace = true }
 antex-hooks = { workspace = true }
 antex-http-client = { workspace = true }

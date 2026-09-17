@@ -3,24 +3,25 @@
 
 use super::authorization::ScoreAuthorization;
 use super::config::GuardianV2Config;
-use super::coverage::GuardianPolicy;
-use super::extension::GuardianV2ScoreProgress;
-use super::extension::requires_sync_for_compaction;
 use super::metrics::TOOL_CALL_LAG_METRIC;
 use super::metrics::record_fast_decision;
+use super::parent_compaction::select_parent_compaction;
 use super::sampler::LunaSampler;
+use super::score::GuardianV2ScoreProgress;
 use antex_core::AntexThread;
 use antex_core::ThreadManager;
-use antex_core::context::GuardianReviewEvidence;
+use antex_core::context::GuardianContextMode;
 use antex_extension_api::ApprovalDecision;
 use antex_extension_api::ApprovalDecisionInput;
 use antex_extension_api::ApprovalReviewContributor;
 use antex_extension_api::ExtensionFuture;
 use antex_protocol::approvals::GuardianReviewReason;
 use antex_protocol::config_types::ApprovalsReviewer;
+use antex_protocol::openai_models::GuardianModelPolicy;
 use antex_protocol::openai_models::GuardianReviewMode;
 use antex_protocol::openai_models::GuardianScope;
 use antex_protocol::protocol::AskForApproval;
+use antex_protocol::protocol::TruncationPolicy;
 use antex_protocol::security_risk::SecurityRiskScore;
 use std::sync::Weak;
 use std::sync::atomic::Ordering;
@@ -35,7 +36,7 @@ impl ApprovalReviewContributor for GuardianApprovalReviewer {
         input: &'a ApprovalDecisionInput<'_>,
     ) -> ExtensionFuture<'a, Option<ApprovalDecision>> {
         Box::pin(async move {
-            // If the extension is unavailable, core keeps its existing synchronous fallback.
+            // If the scorer is unavailable, the reviewer extension runs its synchronous fallback.
             let manager = self.thread_manager.upgrade()?;
             let Ok(thread) = manager.get_thread(input.thread_id).await else {
                 record_fast_decision(input.metrics.as_deref(), "deferred", "scoring_failure");
@@ -76,18 +77,22 @@ impl GuardianApprovalReviewer {
             .map_or_else(|| GuardianV2Config::resolve(&config), Ok)
             .ok();
         let mut policy = guardian_config.as_ref().map_or_else(
-            || GuardianPolicy::from_legacy(/*scope*/ None).for_model(model.as_deref()),
+            || {
+                antex_config::GuardianPolicyLoader::new(
+                    Some(&antex_features::FeatureToml::Enabled(true)),
+                    &antex_config::ConfigRequirements::default(),
+                )
+                .resolve(model.as_deref())
+            },
             |config| config.policy_for_model(model.as_deref()),
         );
-        if model.as_ref().is_some_and(|model| {
+        if let Some(model) = model.as_ref() {
             config
                 .config_layer_stack
                 .requirements()
-                .auto_review_required_for_model(&model.slug)
-        }) {
-            policy.enforce_required_model();
+                .constrain_guardian_policy(&mut policy, &model.slug);
         }
-        let mode = policy.mode(input.category);
+        let mode = policy.review_mode(input.category);
         if mode != GuardianReviewMode::Adaptive {
             record_fast_decision(input.metrics.as_deref(), "deferred", "out_of_scope");
         }
@@ -115,7 +120,10 @@ impl GuardianApprovalReviewer {
             ?reason,
             "reviewing approval"
         );
-        ApprovalDecision::Reviewed(input.synchronous_reviewer.review(reason).await)
+        match input.synchronous_reviewer.review(reason).await {
+            Some(decision) => ApprovalDecision::Reviewed(decision),
+            None => ApprovalDecision::AskUser,
+        }
     }
 }
 
@@ -123,7 +131,7 @@ async fn cached_evidence(
     thread: &AntexThread,
     input: &ApprovalDecisionInput<'_>,
     config: &GuardianV2Config,
-    policy: &GuardianPolicy,
+    policy: &GuardianModelPolicy,
 ) -> Result<(), GuardianReviewReason> {
     let store = input.thread_store;
     let metrics = input.metrics.as_deref();
@@ -131,22 +139,45 @@ async fn cached_evidence(
         record_fast_decision(metrics, "deferred", "missing_score");
         return Err(GuardianReviewReason::MissingScore);
     };
-    if store
-        .get_or_init(GuardianReviewEvidence::default)
-        .uses_thread_owned_context()
+    // Elicitations and intercepted execs can expand beyond the original scored action.
+    let action = antex_guardian_context::action_for_review(input.action.clone());
+    let max_action_bytes = TruncationPolicy::Tokens(config.max_action_tokens).byte_budget();
+    let action_fits = serde_json::to_string_pretty(&action)
+        .is_ok_and(|action| action.len().saturating_add(1) <= max_action_bytes);
+    if !action_fits
+        || input.tool_call_id.is_some_and(|call_id| {
+            progress
+                .oversized_tool_calls
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .contains(call_id)
+        })
     {
+        record_fast_decision(metrics, "deferred", "scoring_failure");
+        return Err(GuardianReviewReason::ScoringFailure);
+    }
+    let history = thread.conversation_history_snapshot().await;
+    let context_mode = GuardianContextMode::from_history(history.as_ref());
+    if context_mode == GuardianContextMode::ThreadOwned {
         let sampler = store
             .get::<LunaSampler>()
             .ok_or(GuardianReviewReason::MissingScore)?;
-        let history = thread.conversation_history_snapshot().await;
-        if requires_sync_for_compaction(config, history.as_ref(), &sampler) {
+        if select_parent_compaction(
+            context_mode,
+            config,
+            history.as_ref(),
+            &sampler,
+            /*legacy_model_hash*/ None,
+        )
+        .is_err()
+        {
             record_fast_decision(metrics, "deferred", "incompatible_compaction");
             return Err(GuardianReviewReason::IncompatibleCompaction);
         }
     }
     let action = input.action;
     if input.category == GuardianScope::ComputerUse
-        && policy.initial_cua_call
+        && policy.allows_initial_cua_call()
         && action.get("tool_name").and_then(serde_json::Value::as_str) == Some("js")
         && action
             .get("connector_id")
@@ -174,7 +205,12 @@ async fn cached_evidence(
     let lag = progress
         .latest_tool_call
         .load(Ordering::Acquire)
-        .saturating_sub(latest_scored);
+        .saturating_sub(latest_scored)
+        .saturating_sub(
+            progress
+                .wrapper_lag
+                .discount(input.tool_call_id, latest_scored),
+        );
     if let Some(metrics) = metrics {
         metrics.histogram(
             TOOL_CALL_LAG_METRIC,

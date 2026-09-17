@@ -22,6 +22,7 @@ use antex_protocol::models::DEFAULT_IMAGE_DETAIL;
 use antex_protocol::models::FunctionCallOutputBody;
 use antex_protocol::models::FunctionCallOutputContentItem;
 use antex_protocol::models::FunctionCallOutputPayload;
+use antex_protocol::models::ImageReference;
 use antex_protocol::openai_models::InputModality;
 use anyhow::Context;
 use anyhow::Result;
@@ -601,7 +602,7 @@ async fn start_function_dynamic_tool_call(call_id: &str) -> Result<PendingDynami
     let mut model_info =
         antex_core::test_support::construct_model_info_offline("mock-model", &config);
     model_info.input_modalities.push(InputModality::Audio);
-    write_models_cache_with_models(codex_home.path(), vec![model_info])?;
+    write_models_cache_with_models(codex_home.path(), vec![model_info]).await?;
 
     let mut mcp = TestAppServer::builder()
         .with_antex_home(codex_home.path())
@@ -715,7 +716,9 @@ async fn dynamic_tool_call_round_trip_handles_content_items() -> Result<()> {
             text: "dynamic-ok".to_string(),
         },
         FunctionCallOutputContentItem::InputImage {
-            image_url: TINY_PNG_DATA_URL.to_string(),
+            image: ImageReference::Inline {
+                image_url: TINY_PNG_DATA_URL.to_string(),
+            },
             detail: Some(DEFAULT_IMAGE_DETAIL),
         },
         FunctionCallOutputContentItem::InputAudio {

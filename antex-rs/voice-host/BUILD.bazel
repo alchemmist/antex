@@ -2,6 +2,8 @@ load("//:defs.bzl", "antex_rust_crate")
 
 antex_rust_crate(
     name = "voice-host",
+    binaries_with_build_commit = ["antex-voice-host"],
     crate_name = "antex_voice_host",
     crate_srcs = [],
+    unit_test_args = ["--test-threads=1"],
 )

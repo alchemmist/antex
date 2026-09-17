@@ -2,6 +2,7 @@ load("//:defs.bzl", "MACOS_WEBRTC_RUSTC_LINK_FLAGS", "antex_rust_crate")
 
 antex_rust_crate(
     name = "tui",
+    binaries_with_build_commit = ["antex-tui"],
     compile_data = ["//:FORK_VERSION"] + glob([
         "assets/**",
         "frames/**",

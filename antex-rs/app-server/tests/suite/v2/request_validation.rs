@@ -11,6 +11,7 @@ use antex_app_server_protocol::ThreadStartResponse;
 use antex_protocol::models::FunctionCallOutputContentItem;
 use antex_protocol::models::FunctionCallOutputPayload;
 use antex_protocol::models::ImageDetail;
+use antex_protocol::models::ImageReference;
 use antex_protocol::models::ResponseItem;
 use anyhow::Result;
 use app_test_support::TestAppServer;
@@ -173,7 +174,9 @@ async fn request_handlers_reject_remote_image_urls() -> Result<()> {
         namespace: None,
         output: FunctionCallOutputPayload::from_content_items(vec![
             FunctionCallOutputContentItem::InputImage {
-                image_url: "https://example.com/tool.png".to_string(),
+                image: ImageReference::Inline {
+                    image_url: "https://example.com/tool.png".to_string(),
+                },
                 detail: Some(ImageDetail::High),
             },
         ]),

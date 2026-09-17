@@ -72,6 +72,7 @@ mod tests {
     use antex_client::TransportError;
     use antex_protocol::ResponseItemId;
     use antex_protocol::models::ContentItem;
+    use antex_protocol::models::ImageReference;
     use antex_protocol::models::ResponseItem;
     use http::StatusCode;
     use pretty_assertions::assert_eq;
@@ -164,7 +165,9 @@ mod tests {
                                 text: "find this".to_string(),
                             },
                             ContentItem::InputImage {
-                                image_url: "https://example.com/image.png".to_string(),
+                                image: ImageReference::Inline {
+                                    image_url: "https://example.com/image.png".to_string(),
+                                },
                                 detail: None,
                             },
                         ],

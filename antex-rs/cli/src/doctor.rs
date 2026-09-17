@@ -312,7 +312,7 @@ impl DoctorCheck {
 
 /// Builds, renders, and exits according to the current doctor report.
 ///
-/// This is the CLI entry point for codex doctor. It does not repair issues;
+/// This is the CLI entry point for antex doctor. It does not repair issues;
 /// failures are represented in the report and cause a non-zero process exit so
 /// scripts can distinguish a clean environment from one that needs attention.
 pub async fn run_doctor(
@@ -425,7 +425,7 @@ async fn build_report(
                         )
                         .detail(error.to_string())
                         .remediation(
-                            "Fix the reported authentication error, then rerun codex doctor.",
+                            "Fix the reported authentication error, then rerun antex doctor.",
                         ),
                     })
                 },
@@ -516,7 +516,7 @@ async fn build_report(
                             "config could not be loaded",
                         )
                         .detail(err.to_string())
-                        .remediation("Fix the reported config error, then rerun codex doctor.")
+                        .remediation("Fix the reported config error, then rerun antex doctor.")
                     })
                 },
                 async {
@@ -1763,16 +1763,20 @@ fn terminal_check_from_inputs(inputs: TerminalCheckInputs) -> DoctorCheck {
     let locale_warning = locale.as_deref().is_some_and(is_non_utf8_locale);
     let mut issues = Vec::new();
     if matches!(name, TerminalName::Dumb) {
-        issues.push(
+        let issue = if inputs.stdin_is_terminal || inputs.stdout_is_terminal {
             DoctorIssue::new(
                 CheckStatus::Fail,
                 "TERM=dumb - colors and cursor control are disabled",
             )
-            .measured("TERM=dumb")
             .expected("TERM=xterm-256color or another real terminal type")
             .remedy("set TERM to a real value, for example xterm-256color")
-            .field("TERM"),
-        );
+        } else {
+            DoctorIssue::new(
+                CheckStatus::Warning,
+                "TERM=dumb - colors and cursor control are disabled in this non-interactive run",
+            )
+        };
+        issues.push(issue.measured("TERM=dumb").field("TERM"));
     }
     if locale_warning {
         let measured = locale.unwrap_or_else(|| "unknown".to_string());
@@ -1800,6 +1804,7 @@ fn terminal_check_from_inputs(inputs: TerminalCheckInputs) -> DoctorCheck {
         );
     }
     issues.extend(terminal_size_issues(&inputs));
+    issues.sort_by_key(|issue| std::cmp::Reverse(issue.severity));
 
     let status = issues
         .iter()
@@ -4059,24 +4064,57 @@ mod tests {
     }
 
     #[test]
-    fn terminal_check_warns_for_dumb_terminal() {
-        let mut inputs = terminal_inputs();
-        inputs.info.name = TerminalName::Dumb;
-        inputs.info.term = Some("dumb".to_string());
-        set_terminal_env(&mut inputs, "TERM", "dumb");
+    fn terminal_check_dumb_requires_interactive_stream() {
+        for (stdin, stdout, stderr, expected) in [
+            (false, false, false, CheckStatus::Warning),
+            (false, false, true, CheckStatus::Warning),
+            (false, true, false, CheckStatus::Fail),
+            (true, false, false, CheckStatus::Fail),
+        ] {
+            let mut inputs = terminal_inputs();
+            inputs.info.name = TerminalName::Dumb;
+            inputs.info.term = Some("dumb".to_string());
+            set_terminal_env(&mut inputs, "TERM", "dumb");
+            inputs.stdin_is_terminal = stdin;
+            inputs.stdout_is_terminal = stdout;
+            inputs.stderr_is_terminal = stderr;
 
-        let check = terminal_check_from_inputs(inputs);
+            let check = terminal_check_from_inputs(inputs);
 
-        assert_eq!(check.status, CheckStatus::Fail);
-        assert_eq!(
-            check.summary,
-            "TERM=dumb - colors and cursor control are disabled"
-        );
-        assert_eq!(check.issues.len(), 1);
-        assert_eq!(
-            check.issues[0].remedy.as_deref(),
-            Some("set TERM to a real value, for example xterm-256color")
-        );
+            assert_eq!(check.status, expected);
+            assert_eq!(check.issues.len(), 1);
+            assert_eq!(
+                check.issues[0].remedy.as_deref(),
+                (expected == CheckStatus::Fail)
+                    .then_some("set TERM to a real value, for example xterm-256color")
+            );
+            assert_eq!(
+                check.issues[0].expected.as_deref(),
+                (expected == CheckStatus::Fail)
+                    .then_some("TERM=xterm-256color or another real terminal type")
+            );
+            if !stdin && !stdout && !stderr {
+                let report = DoctorReport {
+                    schema_version: 1,
+                    generated_at: "0s since unix epoch".to_string(),
+                    overall_status: overall_status(std::slice::from_ref(&check)),
+                    antex_version: "0.0.0".to_string(),
+                    checks: vec![check],
+                };
+                insta::assert_snapshot!(
+                    "doctor_dumb_non_interactive_human",
+                    render_human_report(
+                        &report,
+                        HumanOutputOptions {
+                            show_details: true,
+                            show_all: true,
+                            ascii: true,
+                            color_enabled: false,
+                        }
+                    )
+                );
+            }
+        }
     }
 
     #[test]
@@ -4134,10 +4172,15 @@ mod tests {
     }
 
     #[test]
-    fn terminal_check_warns_for_unreadable_terminfo_path() {
+    fn terminal_check_prioritizes_unreadable_terminfo_over_warnings() {
         let tempdir = tempfile::tempdir().expect("create tempdir");
         let missing = tempdir.path().join("missing-terminfo");
         let mut inputs = terminal_inputs();
+        inputs.info.name = TerminalName::Dumb;
+        inputs.stdin_is_terminal = false;
+        inputs.stdout_is_terminal = false;
+        set_terminal_env(&mut inputs, "TERM", "dumb");
+        set_terminal_env(&mut inputs, "LANG", "C");
         set_terminal_env(&mut inputs, "TERMINFO", &missing.to_string_lossy());
 
         let check = terminal_check_from_inputs(inputs);
@@ -4157,6 +4200,21 @@ mod tests {
             check.issues[0].remedy.as_deref(),
             Some("check that $TERMINFO points to a readable directory")
         );
+        insta::assert_snapshot!(render_human_report(
+            &DoctorReport {
+                schema_version: 1,
+                generated_at: "0s since unix epoch".to_string(),
+                overall_status: check.status,
+                antex_version: "0.0.0".to_string(),
+                checks: vec![check],
+            },
+            HumanOutputOptions {
+                show_details: false,
+                show_all: false,
+                ascii: true,
+                color_enabled: false,
+            }
+        ));
     }
 
     #[test]

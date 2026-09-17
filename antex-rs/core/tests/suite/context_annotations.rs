@@ -3,6 +3,7 @@ use antex_core::config::CurrentTimeReminderConfig;
 use antex_core::config::RolloutBudgetConfig;
 use antex_core::config::TokenBudgetConfig;
 use antex_features::Feature;
+use antex_protocol::models::ImageReference;
 use antex_protocol::openai_models::InputModality;
 use antex_protocol::protocol::AdditionalContextEntry;
 use antex_protocol::protocol::AdditionalContextKind;
@@ -75,6 +76,8 @@ async fn first_request_item_types_roles_and_content_annotations() -> Result<()> 
     test.antex
         .submit(Op::ApproveGuardianDeniedAction {
             event: GuardianAssessmentEvent {
+                review_reason: None,
+                model_context: None,
                 id: "guardian-review".to_string(),
                 target_item_id: None,
                 plugin_id: None,
@@ -110,7 +113,9 @@ async fn first_request_item_types_roles_and_content_annotations() -> Result<()> 
                     text_elements: Vec::new(),
                 },
                 UserInput::Image {
-                    image_url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==".to_string(),
+                    image: ImageReference::Inline {
+                        image_url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==".to_string(),
+                    },
                     detail: None,
                 },
                 UserInput::Audio {

@@ -14,8 +14,6 @@ use antex_protocol::error::CodexErr;
 use antex_protocol::error::Result as AntexResult;
 use antex_protocol::items::ContextCompactionItem;
 use antex_protocol::items::TurnItem;
-use antex_protocol::protocol::EventMsg;
-use antex_protocol::protocol::TurnStartedEvent;
 use tokio_util::sync::CancellationToken;
 
 /// Runs token-budget manual compaction as a normal compaction lifecycle.
@@ -27,14 +25,7 @@ pub(crate) async fn run_manual_compact_task(
     sess: Arc<Session>,
     turn_context: Arc<TurnContext>,
 ) -> AntexResult<()> {
-    let start_event = EventMsg::TurnStarted(TurnStartedEvent {
-        turn_id: turn_context.sub_id.clone(),
-        trace_id: turn_context.trace_id.clone(),
-        started_at: turn_context.turn_timing_state.started_at_unix_secs().await,
-        model_context_window: turn_context.model_context_window(),
-        collaboration_mode_kind: turn_context.mode(),
-    });
-    sess.send_event(&turn_context, start_event).await;
+    sess.emit_turn_started(&turn_context).await;
 
     // Manual compaction runs outside run_turn, so it captures its own current step.
     let step_context = sess

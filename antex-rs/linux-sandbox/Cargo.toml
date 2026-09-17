@@ -23,6 +23,7 @@ antex-network-proxy = { workspace = true }
 antex-process-hardening = { workspace = true }
 antex-protocol = { workspace = true }
 antex-sandboxing = { workspace = true }
+antex-uds = { workspace = true }
 antex-utils-absolute-path = { workspace = true }
 globset = { workspace = true }
 landlock = { workspace = true }

@@ -14,7 +14,6 @@ from antex_sdk import (
     Sandbox,
 )
 from antex_sdk.types import (
-    Personality,
     ReasoningEffort,
     ReasoningSummary,
 )
@@ -95,7 +94,6 @@ with Antex(config=runtime_config()) as antex:
         effort=selected_effort,
         model=selected_model.model,
         output_schema=OUTPUT_SCHEMA,
-        personality=Personality.pragmatic,
         sandbox=Sandbox.read_only,
         summary=ReasoningSummary.model_validate("concise"),
     ).run()

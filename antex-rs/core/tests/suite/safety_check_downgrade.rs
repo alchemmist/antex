@@ -310,7 +310,7 @@ async fn model_verification_emits_structured_event_without_reroute_or_warning() 
     ]));
     let _mock = mount_response_once(&server, response).await;
 
-    let mut builder = test_antex().with_model(SERVER_MODEL);
+    let mut builder = test_antex().with_model("gpt-5.5");
     let test = builder.build(&server).await?;
 
     test.antex

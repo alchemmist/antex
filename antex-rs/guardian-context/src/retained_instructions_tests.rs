@@ -1,5 +1,6 @@
 use super::*;
 use antex_history::RetainedContextEvent;
+use antex_history::RetainedInputSource;
 use antex_history::RetainedUserMessage;
 use antex_history::VerifiedAnswer;
 use antex_history::VerifiedQuestionAnswer;
@@ -28,7 +29,7 @@ fn instructions_preserve_source_order_and_whole_records() {
             text: "Do not publish after all.".to_owned(),
             complete: true,
         },
-        /*acceptance_order*/ None,
+        RetainedInputSource::Local(None),
     );
     let rendered = render_retained_instructions(&context);
     assert_eq!(
@@ -52,7 +53,7 @@ fn instructions_preserve_source_order_and_whole_records() {
             text: "Permission is conditional. ".repeat(200),
             complete: true,
         },
-        /*acceptance_order*/ None,
+        RetainedInputSource::Local(None),
     );
     let rendered = render_retained_instructions(&context);
     assert_eq!(rendered.len(), 2);

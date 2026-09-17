@@ -40,6 +40,7 @@ antex-aws-auth = { workspace = true }
 antex-cloud-config = { workspace = true }
 antex-code-mode = { workspace = true }
 antex-config = { workspace = true }
+antex-network-proxy = { workspace = true }
 antex-connectors = { workspace = true }
 antex-core = { workspace = true }
 antex-core-plugins = { workspace = true }
@@ -63,6 +64,7 @@ antex-shell-command = { workspace = true }
 antex-skills = { workspace = true }
 antex-skills-extension = { workspace = true }
 antex-utils-cli = { workspace = true }
+antex-user-verification = { workspace = true }
 antex-utils-pty = { workspace = true }
 antex-backend-client = { workspace = true }
 antex-file-search = { workspace = true }
@@ -75,6 +77,7 @@ antex-memories-write = { workspace = true }
 antex-mcp = { workspace = true }
 antex-mcp-extension = { workspace = true }
 antex-model-provider = { workspace = true }
+antex-model-provider-info = { workspace = true }
 antex-models-manager = { workspace = true }
 antex-protocol = { workspace = true }
 antex-queue-extension = { workspace = true }
@@ -121,6 +124,7 @@ tikv-jemallocator = { workspace = true }
 antex-windows-sandbox = { workspace = true }
 
 [dev-dependencies]
+antex-uds = { workspace = true }
 app_test_support = { workspace = true }
 axum = { workspace = true, default-features = false, features = [
     "http1",
@@ -128,7 +132,6 @@ axum = { workspace = true, default-features = false, features = [
     "tokio",
 ] }
 base64 = { workspace = true }
-antex-model-provider-info = { workspace = true }
 antex-utils-cargo-bin = { workspace = true }
 core_test_support = { workspace = true }
 flate2 = { workspace = true }
@@ -144,6 +147,7 @@ rmcp = { workspace = true, default-features = false, features = [
 ] }
 serial_test = { workspace = true }
 shlex = { workspace = true }
+sqlx = { workspace = true }
 tar = { workspace = true }
 test-case = "3.3.1"
 tokio-tungstenite = { workspace = true }

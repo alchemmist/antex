@@ -63,6 +63,7 @@ members = [
     "ext/extension-api",
     "ext/goal",
     "ext/git-attribution",
+    "ext/guardian-reviewer",
     "ext/guardian-v2",
     "ext/history-notes",
     "ext/image-generation",
@@ -80,9 +81,9 @@ members = [
     "lmstudio",
     "login",
     "antex-mcp",
-    "mcp-server",
     "memories/read",
     "memories/write",
+    "mermaid",
     "model-provider-info",
     "mxc-sandbox",
     "models-manager",
@@ -102,7 +103,9 @@ members = [
     "stdio-to-uds",
     "otel",
     "otel-trace-websocket",
+    "tcp-tunnel",
     "tui",
+    "user-verification",
     "tools",
     "v8-poc",
     "websocket-client",
@@ -214,6 +217,7 @@ antex-extension-api = { path = "ext/extension-api" }
 antex-extension-items = { path = "ext/items" }
 antex-goal-extension = { path = "ext/goal" }
 antex-git-attribution = { path = "ext/git-attribution" }
+antex-guardian-reviewer = { path = "ext/guardian-reviewer" }
 antex-guardian-v2 = { path = "ext/guardian-v2" }
 antex-history-notes-extension = { path = "ext/history-notes" }
 antex-image-generation-extension = { path = "ext/image-generation" }
@@ -240,7 +244,6 @@ antex-memories-read = { path = "memories/read" }
 antex-memories-write = { path = "memories/write" }
 antex-mcp = { path = "antex-mcp" }
 antex-mcp-extension = { path = "ext/mcp" }
-antex-mcp-server = { path = "mcp-server" }
 antex-model-provider-info = { path = "model-provider-info" }
 antex-models-manager = { path = "models-manager" }
 antex-mxc-sandbox = { path = "mxc-sandbox" }
@@ -271,6 +274,7 @@ antex-terminal-detection = { path = "terminal-detection" }
 antex-test-binary-support = { path = "test-binary-support" }
 antex-thread-store = { path = "thread-store" }
 antex-tools = { path = "tools" }
+antex-tcp-tunnel = { path = "tcp-tunnel" }
 antex-tui = { path = "tui" }
 antex-uds = { path = "uds" }
 antex-utils-absolute-path = { path = "utils/absolute-path" }
@@ -299,11 +303,11 @@ antex-utils-sleep-inhibitor = { path = "utils/sleep-inhibitor" }
 antex-utils-stream-parser = { path = "utils/stream-parser" }
 antex-utils-string = { path = "utils/string" }
 antex-utils-template = { path = "utils/template" }
+antex-user-verification = { path = "user-verification" }
 antex-v8-poc = { path = "v8-poc" }
 antex-workload-identity = { path = "workload-identity" }
 antex-windows-sandbox = { path = "windows-sandbox-rs" }
 core_test_support = { path = "core/tests/common" }
-mcp_test_support = { path = "mcp-server/tests/common" }
 
 # External
 learning_mode_windows = { git = "https://github.com/microsoft/mxc", rev = "6cd3d58f05d3447e67109cfb75e042803b843ca4" }
@@ -326,6 +330,7 @@ aws-types = "1"
 axum = { version = "0.8", default-features = false }
 base64 = "0.22.1"
 bitflags = "2.13.1"
+blake3 = "1.8.2"
 bm25 = "2.3.2"
 bytes = "1.10.1"
 chardetng = "0.1.17"
@@ -411,6 +416,7 @@ pretty_assertions = "1.4.1"
 pulldown-cmark = { version = "0.10", default-features = false }
 quick-xml = "0.41.0"
 rand = "0.9"
+rand_regex = "0.18.1"
 ratatui = { version = "0.30.2", default-features = false, features = [
     "crossterm",
     "layout-cache",
@@ -422,12 +428,14 @@ rcgen = { version = "0.14.7", default-features = false, features = [
     "pem",
 ] }
 regex = "1.12.3"
+regex-automata = { version = "0.4.13", default-features = false, features = ["std", "syntax", "unicode", "nfa-pikevm"] }
 regex-lite = "0.1.8"
+regex-syntax = "0.8.8"
 reqwest = { version = "0.12", features = ["cookies"] }
 rmcp = { version = "=3.2.0", default-features = false }
 runfiles = { git = "https://github.com/dzbarsky/rules_rust", rev = "b56cbaa8465e74127f1ea216f813cd377295ad81" }
 rustix = { version = "1.1.4", features = ["net"] }
-rustls = { version = "0.23", default-features = false, features = [
+rustls = { version = "0.23.45", default-features = false, features = [
     "aws_lc_rs",
     "std",
 ] }
@@ -448,6 +456,7 @@ sha1 = "0.10.6"
 scopeguard = "1.2.0"
 sha2 = "0.10"
 shlex = "1.3.0"
+signal-hook = "0.3.18"
 similar = "2.7.0"
 symphonia = { version = "0.6.0", default-features = false, features = [
     "isomp4",

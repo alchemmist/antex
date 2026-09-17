@@ -1,10 +1,15 @@
 load("//:defs.bzl", "antex_rust_crate")
 
+# Core's context-adapter unit tests compile the same setup function with their Config type.
+exports_files(
+    ["src/sync_reviewer/reviewer_config.rs"],
+    visibility = ["//antex-rs/core:__pkg__"],
+)
+
 antex_rust_crate(
     name = "guardian-v2",
     compile_data = [
         "src/async_scorer/classifier_instructions.md",
-        "src/sync_reviewer/policy_template.md",
     ],
     crate_name = "antex_guardian_v2",
 )

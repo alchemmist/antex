@@ -42,6 +42,7 @@ antex-rollout = { workspace = true }
 antex-utils-absolute-path = { workspace = true }
 antex-utils-cli = { workspace = true }
 antex-utils-oss = { workspace = true }
+antex-utils-path-uri = { workspace = true }
 antex-utils-sandbox-summary = { workspace = true }
 antex-worktree = { workspace = true }
 owo-colors = { workspace = true }

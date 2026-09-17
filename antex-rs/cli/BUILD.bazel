@@ -4,6 +4,7 @@ load("//bazel/rules:e2e_benchmark.bzl", "antex_e2e_benchmark")
 
 antex_rust_crate(
     name = "cli",
+    binaries_with_build_commit = ["antex"],
     crate_name = "antex_cli",
     extra_binaries = [
         "//antex-rs/bwrap:bwrap",

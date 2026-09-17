@@ -2,9 +2,7 @@
 
 use crate::agent::AgentStatus;
 use crate::agent::agent_resolver::resolve_agent_target;
-use crate::context::ContextualUserFragment;
-use crate::context::InterAgentMessage;
-use crate::context::InterAgentMessageType;
+use crate::agent::control::AgentMessage;
 use crate::function_tool::FunctionCallError;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolOutput;
@@ -14,7 +12,6 @@ use crate::tools::handlers::multi_agents_common::*;
 use crate::tools::handlers::parse_arguments;
 use crate::tools::registry::CoreToolRuntime;
 use crate::tools::registry::ToolExecutor;
-use antex_protocol::AgentPath;
 use antex_protocol::items::CollabAgentTool;
 use antex_protocol::items::CollabAgentToolCallItem;
 use antex_protocol::items::CollabAgentToolCallStatus;
@@ -22,7 +19,6 @@ use antex_protocol::items::SubAgentActivityItem;
 use antex_protocol::items::TurnItem;
 use antex_protocol::models::ResponseInputItem;
 use antex_protocol::openai_models::ReasoningEffort;
-use antex_protocol::protocol::InterAgentCommunication;
 use antex_protocol::protocol::SubAgentActivityKind;
 use antex_tools::ToolName;
 use serde::Deserialize;
@@ -55,31 +51,16 @@ pub(crate) async fn emit_sub_agent_activity(
     session.emit_turn_item_completed(turn, item).await;
 }
 
-fn communication_from_tool_message(
-    author: AgentPath,
-    recipient: AgentPath,
+fn agent_message_from_tool(
     message: String,
     source: &crate::tools::context::ToolCallSource,
-    trigger_turn: bool,
-) -> InterAgentCommunication {
-    if !matches!(
+) -> AgentMessage {
+    if matches!(
         source,
         crate::tools::context::ToolCallSource::DirectPlaintextMessage
     ) {
-        return InterAgentCommunication::new_encrypted(
-            author,
-            recipient,
-            Vec::new(),
-            message,
-            trigger_turn,
-        );
-    }
-    let message_type = if trigger_turn {
-        InterAgentMessageType::NewTask
+        AgentMessage::Plaintext(message)
     } else {
-        InterAgentMessageType::Message
-    };
-    let content =
-        InterAgentMessage::new(message_type, recipient.clone(), author.clone(), message).render();
-    InterAgentCommunication::new(author, recipient, Vec::new(), content, trigger_turn)
+        AgentMessage::Encrypted(message)
+    }
 }

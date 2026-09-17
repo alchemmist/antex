@@ -1,4 +1,5 @@
 use antex_features::Feature;
+use antex_models_manager::bundled_models_response;
 use anyhow::Result;
 use core_test_support::responses::ev_completed;
 use core_test_support::responses::ev_response_created;
@@ -105,6 +106,9 @@ async fn regular_responses_turn_honors_respect_system_proxy() -> Result<()> {
 
     let server = MockServer::start().await;
     let mut builder = test_antex().with_config(|config| {
+        // The proxy serves one inference response; model discovery must not consume it.
+        config.model_catalog =
+            Some(bundled_models_response().expect("bundled models.json should parse"));
         config.model_provider.base_url = Some("http://responses-proxy.invalid/v1".to_string());
         config
             .features

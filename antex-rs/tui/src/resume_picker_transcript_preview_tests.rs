@@ -2,6 +2,7 @@ use super::*;
 use crate::legacy_core::config::ConfigBuilder;
 use antex_app_server_client::AppServerEvent;
 use antex_app_server_protocol::ClientRequest;
+use antex_app_server_protocol::ImageReference;
 use antex_app_server_protocol::RequestId;
 use antex_app_server_protocol::ServerNotification;
 use antex_app_server_protocol::SortDirection;
@@ -362,9 +363,11 @@ async fn transcript_preview_for_history_mode(
             }
         } else {
             UserInput::Image {
-                url: String::from(
-                    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==",
-                ),
+                image: ImageReference::Inline {
+                    url: String::from(
+                        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==",
+                    ),
+                },
                 detail: None,
             }
         };

@@ -13,6 +13,7 @@ path = "src/lib.rs"
 workspace = true
 
 [dependencies]
+antex-context-fragments = { workspace = true }
 antex-history = { workspace = true }
 antex-protocol = { workspace = true }
 serde_json = { workspace = true }

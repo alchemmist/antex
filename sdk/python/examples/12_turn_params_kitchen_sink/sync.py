@@ -14,7 +14,6 @@ from antex_sdk import (
     Antex,
 )
 from antex_sdk.types import (
-    Personality,
     ReasoningSummary,
 )
 
@@ -44,7 +43,6 @@ with Antex(config=runtime_config()) as antex:
     turn = thread.turn(
         PROMPT,
         output_schema=OUTPUT_SCHEMA,
-        personality=Personality.pragmatic,
         summary=SUMMARY,
     )
     result = turn.run()

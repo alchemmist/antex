@@ -62,7 +62,6 @@ async fn fast_selection_updates_the_captured_live_turn_and_future_settings() -> 
                 approvals_reviewer: None,
                 permission_profile: None,
                 active_permission_profile: None,
-                windows_sandbox_level: None,
                 model: None,
                 effort: None,
                 summary: None,

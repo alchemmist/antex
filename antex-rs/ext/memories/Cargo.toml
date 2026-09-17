@@ -17,6 +17,7 @@ antex-core = { workspace = true }
 antex-extension-api = { workspace = true }
 antex-features = { workspace = true }
 antex-otel = { workspace = true }
+antex-protocol = { workspace = true }
 antex-tools = { workspace = true }
 antex-utils-absolute-path = { workspace = true }
 antex-utils-output-truncation = { workspace = true }

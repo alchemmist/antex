@@ -8,6 +8,8 @@ use antex_install_context::StandalonePlatform;
 /// Update action the CLI should perform after the TUI exits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UpdateAction {
+    /// Replace the local daemon after restoring the terminal.
+    Daemon(DaemonUpdateSource),
     /// Update via `npm install -g @alchemmist/antex@latest`.
     NpmGlobalLatest,
     /// Update via `bun install -g @alchemmist/antex@latest`.
@@ -18,9 +20,9 @@ pub enum UpdateAction {
     PnpmGlobalLatest,
     /// Update via `brew upgrade antex`.
     BrewUpgrade,
-    /// Update via `curl -fsSL https://raw.githubusercontent.com/alchemmist/antex/main/scripts/install/install.sh | ANTEX_NON_INTERACTIVE=1 sh`.
+    /// Update via `curl -fsSL https://raw.githubusercontent.com/alchemmist/codex/main/scripts/install/install.sh | ANTEX_NON_INTERACTIVE=1 sh`.
     StandaloneUnix,
-    /// Update via `$env:ANTEX_NON_INTERACTIVE=1; irm https://raw.githubusercontent.com/alchemmist/antex/main/scripts/install/install.ps1 | iex`.
+    /// Update via `$env:ANTEX_NON_INTERACTIVE=1; irm https://raw.githubusercontent.com/alchemmist/codex/main/scripts/install/install.ps1 | iex`.
     StandaloneWindows,
 }
 
@@ -44,6 +46,7 @@ impl UpdateAction {
     /// Returns the list of command-line arguments for invoking the update.
     pub fn command_args(self) -> (&'static str, &'static [&'static str]) {
         match self {
+            UpdateAction::Daemon(source) => ("antex", source.command_args()),
             UpdateAction::NpmGlobalLatest => ("npm", &["install", "-g", "@alchemmist/antex"]),
             UpdateAction::BunGlobalLatest => ("bun", &["install", "-g", "@alchemmist/antex"]),
             UpdateAction::VitePlusGlobalLatest => ("vp", &["install", "-g", "@alchemmist/antex"]),
@@ -53,7 +56,7 @@ impl UpdateAction {
                 "sh",
                 &[
                     "-c",
-                    "curl -fsSL https://raw.githubusercontent.com/alchemmist/antex/main/scripts/install/install.sh | ANTEX_NON_INTERACTIVE=1 sh",
+                    "curl -fsSL https://raw.githubusercontent.com/alchemmist/codex/main/scripts/install/install.sh | ANTEX_NON_INTERACTIVE=1 sh",
                 ],
             ),
             UpdateAction::StandaloneWindows => (
@@ -62,7 +65,7 @@ impl UpdateAction {
                     "-ExecutionPolicy",
                     "Bypass",
                     "-c",
-                    "$env:ANTEX_NON_INTERACTIVE=1; irm https://raw.githubusercontent.com/alchemmist/antex/main/scripts/install/install.ps1 | iex",
+                    "$env:ANTEX_NON_INTERACTIVE=1; irm https://raw.githubusercontent.com/alchemmist/codex/main/scripts/install/install.ps1 | iex",
                 ],
             ),
         }
@@ -160,7 +163,7 @@ mod tests {
                 "sh",
                 &[
                     "-c",
-                    "curl -fsSL https://raw.githubusercontent.com/alchemmist/antex/main/scripts/install/install.sh | ANTEX_NON_INTERACTIVE=1 sh"
+                    "curl -fsSL https://raw.githubusercontent.com/alchemmist/codex/main/scripts/install/install.sh | ANTEX_NON_INTERACTIVE=1 sh"
                 ][..],
             )
         );
@@ -172,9 +175,25 @@ mod tests {
                     "-ExecutionPolicy",
                     "Bypass",
                     "-c",
-                    "$env:ANTEX_NON_INTERACTIVE=1; irm https://raw.githubusercontent.com/alchemmist/antex/main/scripts/install/install.ps1 | iex"
+                    "$env:ANTEX_NON_INTERACTIVE=1; irm https://raw.githubusercontent.com/alchemmist/codex/main/scripts/install/install.ps1 | iex"
                 ][..],
             )
         );
+    }
+}
+
+/// Package source explicitly selected by the user in the daemon menu.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DaemonUpdateSource {
+    PublicStable,
+    ThisCli,
+}
+
+impl DaemonUpdateSource {
+    pub fn command_args(self) -> &'static [&'static str] {
+        match self {
+            Self::PublicStable => &["app-server", "daemon", "update"],
+            Self::ThisCli => &["app-server", "daemon", "update", "--from-cli", "--yes"],
+        }
     }
 }

@@ -1,0 +1,15 @@
+---
+source: tui/src/app/tests.rs
+expression: rendered
+---
+ ▀▄       ▄▀
+  ▄▀█████▀▄    ╭─ alchemmist antex · unknown ─────╮
+▄█▀▀█████▀▀█▄  │  gpt-test                        │
+▀▀▄▄▀▀▀▀▀▄▄▀▀  │  /tmp/next                       │
+  ██  ▄  ██    ╰──────────────────────────────────╯
+   ▀▀▀ ▀▀▀
+
+  ✦ alchemmist feature: Test feature tip.
+
+
+ ┃ Next thread prompt

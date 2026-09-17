@@ -13,6 +13,7 @@ use crate::history_cell::new_proposed_plan;
 #[test]
 fn html_dump_groups_actions_and_sanitizes_model_markdown() {
     let user = Arc::new(UserHistoryCell {
+        spoken: false,
         message: "How do I run **tests**?".to_string(),
         text_elements: Vec::new(),
         local_image_paths: Vec::new(),

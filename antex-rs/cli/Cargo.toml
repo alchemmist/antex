@@ -58,12 +58,12 @@ antex-install-context = { workspace = true }
 antex-login = { workspace = true }
 antex-memories-write = { workspace = true }
 antex-mcp = { workspace = true }
-antex-mcp-server = { workspace = true }
 antex-model-provider = { workspace = true }
 antex-models-manager = { workspace = true }
 antex-plugin = { workspace = true }
 antex-protocol = { workspace = true }
 antex-responses-api-proxy = { workspace = true }
+antex-tcp-tunnel = { workspace = true }
 antex-rmcp-client = { workspace = true }
 antex-rollout = { workspace = true }
 antex-rollout-trace = { workspace = true }
@@ -76,7 +76,9 @@ antex-thread-store = { workspace = true }
 antex-tui = { workspace = true }
 antex-utils-absolute-path = { workspace = true }
 antex-utils-path = { workspace = true }
-crossterm = { workspace = true }
+antex-utils-path-uri = { workspace = true }
+crossterm = { workspace = true, features = ["event-stream"] }
+futures = { workspace = true }
 http = { workspace = true }
 libc = { workspace = true }
 os_info = { workspace = true }
@@ -123,7 +125,6 @@ assert_matches = { workspace = true }
 antex-utils-cargo-bin = { workspace = true }
 antex-utils-pty = { workspace = true }
 flate2 = { workspace = true }
-futures = { workspace = true }
 insta = { workspace = true }
 predicates = { workspace = true }
 pretty_assertions = { workspace = true }

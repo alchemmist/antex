@@ -13,18 +13,19 @@ doctest = false
 workspace = true
 
 [dependencies]
+anyhow = { workspace = true }
 antex-analytics = { workspace = true }
 antex-api = { workspace = true }
+antex-config = { workspace = true }
 antex-core = { workspace = true }
 antex-extension-api = { workspace = true }
 antex-features = { workspace = true }
 antex-guardian-context = { workspace = true }
+antex-guardian-reviewer = { workspace = true }
 antex-history = { workspace = true }
 antex-http-client = { workspace = true }
 antex-login = { workspace = true }
 antex-model-provider = { workspace = true }
-antex-models-manager = { workspace = true }
-antex-network-proxy = { workspace = true }
 antex-protocol = { workspace = true }
 dirs = { workspace = true }
 http = { workspace = true }
@@ -35,8 +36,8 @@ tracing = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
-anyhow = { workspace = true }
 antex-model-provider-info = { workspace = true }
 core_test_support = { workspace = true }
 pretty_assertions = { workspace = true }
+tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

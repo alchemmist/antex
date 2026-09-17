@@ -14,14 +14,16 @@ NORMALIZED_ANTEX_VERSION_PATTERN = re.compile(
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Resolve a Python runtime package version to its Antex release tag."
+        description="Resolve a Python runtime version or Antex release tag to both versions."
     )
     parser.add_argument("python_version")
     parser.add_argument("--github-output", type=Path, required=True)
     args = parser.parse_args(argv)
 
     try:
-        python_version, release_tag = resolve_python_runtime_release(args.python_version)
+        python_version, release_tag = resolve_python_runtime_release(
+            normalize_antex_version(args.python_version)
+        )
     except RuntimeError as exc:
         print(exc, file=sys.stderr)
         return 1

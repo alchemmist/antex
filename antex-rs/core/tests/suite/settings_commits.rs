@@ -1,3 +1,4 @@
+use antex_core::StartIfIdleSubmission;
 use antex_core::TurnInputRequest;
 use antex_core::TurnInputSubmission;
 use antex_core::config::Config;
@@ -8,7 +9,9 @@ use antex_history::RolloutItem;
 use antex_history::RolloutLine;
 use antex_protocol::protocol::EventMsg;
 use antex_protocol::protocol::Op;
+use antex_protocol::protocol::ThreadHistoryMode;
 use antex_protocol::protocol::ThreadSettingsOverrides;
+use antex_protocol::protocol::ThreadSettingsSnapshot;
 use antex_protocol::user_input::UserInput;
 use antex_utils_absolute_path::AbsolutePathBuf;
 use anyhow::Result;
@@ -17,6 +20,7 @@ use core_test_support::skip_if_no_network;
 use core_test_support::streaming_sse::StreamingSseChunk;
 use core_test_support::streaming_sse::start_streaming_sse_server;
 use core_test_support::submit_thread_settings;
+use core_test_support::test_antex::TestAntex;
 use core_test_support::test_antex::local_selections;
 use core_test_support::test_antex::test_antex;
 use core_test_support::wait_for_event;
@@ -33,6 +37,106 @@ use tokio::time::timeout;
 const INITIAL_MODEL: &str = "gpt-5.4";
 const COMMITTED_MODEL: &str = "gpt-5.2";
 const TIMEOUT: Duration = Duration::from_secs(10);
+
+fn assert_checkpoints(test: &TestAntex, expected: &[ThreadSettingsSnapshot]) -> Result<()> {
+    let rollout_path = test.antex.rollout_path().expect("rollout path");
+    let rollout: Vec<RolloutLine> = std::fs::read_to_string(rollout_path)?
+        .lines()
+        .map(antex_rollout::parse_rollout_line)
+        .collect::<std::result::Result<_, _>>()?;
+    let snapshots: Vec<_> = rollout
+        .into_iter()
+        .filter_map(|line| match line.item {
+            RolloutItem::EventMsg(EventMsg::ThreadSettingsApplied(applied))
+                if applied.thread_id == Some(test.session_configured.thread_id) =>
+            {
+                Some(applied.thread_settings)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(snapshots, expected);
+    Ok(())
+}
+
+#[test_case(ThreadHistoryMode::Legacy; "legacy")]
+#[test_case(ThreadHistoryMode::Paginated; "paginated")]
+#[tokio::test]
+async fn initial_plugin_ids_use_turn_context_without_extra_settings_checkpoints(
+    history_mode: ThreadHistoryMode,
+) -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = responses::start_mock_server().await;
+    let test = test_antex()
+        .with_history_mode(history_mode)
+        .build_with_auto_env(&server)
+        .await?;
+    let selected = vec!["slack@openai".to_string()];
+    submit_thread_settings(
+        &test.antex,
+        ThreadSettingsOverrides {
+            disabled_plugin_ids: Some(selected.clone()),
+            ..Default::default()
+        },
+    )
+    .await?;
+    let response = responses::mount_sse_once(&server, responses::sse_completed("first turn")).await;
+    let submission = test
+        .antex
+        .start_turn_if_idle(TurnInputRequest::user_input(Vec::new()))
+        .await?;
+    let StartIfIdleSubmission::Started { turn_id } = submission else {
+        panic!("expected an accepted first turn, got {submission:?}");
+    };
+    wait_for_event(
+        &test.antex,
+        |event| matches!(event, EventMsg::TurnComplete(completed) if completed.turn_id == turn_id),
+    )
+    .await;
+    test.antex.flush_rollout().await?;
+    assert_checkpoints(&test, &[])?;
+    let rollout_path = test.antex.rollout_path().expect("rollout path");
+    let (items, _, parse_errors) =
+        antex_rollout::RolloutRecorder::load_rollout_items(&rollout_path).await?;
+    assert_eq!(parse_errors, 0);
+    let context = items.iter().find_map(|item| match item {
+        RolloutItem::TurnContext(context)
+            if context.turn_id.as_deref() == Some(turn_id.as_str()) =>
+        {
+            Some(context)
+        }
+        _ => None,
+    });
+    assert_eq!(
+        context
+            .expect("inputless first turn context")
+            .disabled_plugin_ids,
+        Some(selected)
+    );
+    assert_eq!(response.requests().len(), 1);
+
+    submit_thread_settings(
+        &test.antex,
+        ThreadSettingsOverrides {
+            disabled_plugin_ids: Some(vec![]),
+            ..Default::default()
+        },
+    )
+    .await?;
+    let expected = vec![test.antex.thread_settings_snapshot().await];
+    assert!(expected[0].disabled_plugin_ids.is_empty());
+    test.antex.flush_rollout().await?;
+    assert_checkpoints(&test, &expected)?;
+    let response =
+        responses::mount_sse_once(&server, responses::sse_completed("second turn")).await;
+    test.submit_text_turn("second turn").await?;
+    test.antex.flush_rollout().await?;
+    assert_eq!(response.requests().len(), 1);
+    assert_checkpoints(&test, &expected)?;
+    test.antex.shutdown_and_wait().await?;
+    Ok(())
+}
 
 struct PauseAfterCommit {
     gate: Mutex<Option<(oneshot::Sender<()>, mpsc::Receiver<()>)>>,
@@ -94,9 +198,12 @@ async fn settings_notifications_keep_their_commit_across_postcommit_work(
         .with_extensions(Arc::new(extensions.build()))
         .build_with_auto_env(&server)
         .await?;
-    let initial = test.antex.restorable_thread_settings().await;
+    let mut initial = test.antex.restorable_thread_settings().await;
+    // Restore only runtime model settings, without overwriting the committed plugin selection.
+    initial.disabled_plugin_ids = None;
     let thread_settings = ThreadSettingsOverrides {
         model: Some(COMMITTED_MODEL.to_string()),
+        disabled_plugin_ids: Some(vec!["slack@openai".to_string()]),
         ..Default::default()
     };
     let submission = tokio::spawn({
@@ -128,11 +235,13 @@ async fn settings_notifications_keep_their_commit_across_postcommit_work(
     timeout(TIMEOUT, entered_rx).await??;
     let expected = test.antex.thread_settings_snapshot().await;
     assert_eq!(expected.model, COMMITTED_MODEL);
+    assert_eq!(expected.disabled_plugin_ids, vec!["slack@openai"]);
     // Submitted operations are serialized. Runtime restoration is an existing
     // direct writer, so it can overlap the first operation's post-commit work.
     timeout(TIMEOUT, test.antex.restore_thread_settings(initial)).await??;
     let restored = test.antex.thread_settings_snapshot().await;
     assert_eq!(restored.model, INITIAL_MODEL);
+    assert_eq!(restored.disabled_plugin_ids, vec!["slack@openai"]);
     release_tx.send(())?;
     let submission_id = timeout(TIMEOUT, submission).await???;
 
@@ -222,6 +331,7 @@ async fn compaction_checkpoints_settings_changed_during_its_model_request() -> R
         ThreadSettingsOverrides {
             environments: Some(local_selections(updated_cwd_path.clone())),
             model: Some(COMMITTED_MODEL.to_string()),
+            disabled_plugin_ids: Some(vec!["slack@openai".to_string()]),
             ..Default::default()
         },
     )
