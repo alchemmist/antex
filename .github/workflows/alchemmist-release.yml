@@ -59,7 +59,8 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7
+      - uses: actions/cache/restore@668228422ae6a00e4ad889ee87cd7109ec5666a7
+        id: cargo-cache
         with:
           path: |
             ~/.cargo/registry
@@ -99,6 +100,16 @@ jobs:
             cargo build --locked --release --target "$TARGET" -p antex-bwrap --bin bwrap
           fi
 
+      - name: Save release build cache
+        if: steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@668228422ae6a00e4ad889ee87cd7109ec5666a7
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            antex-rs/target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
+
       - name: Build native voice resources
         shell: bash
         env:
@@ -119,14 +130,13 @@ jobs:
         run: |
           set -euo pipefail
           binaries="$GITHUB_WORKSPACE/antex-rs/target/$TARGET/release"
-          extra=()
+          command=(python3 scripts/package-fork.py --target "$TARGET" --commit "$GITHUB_SHA"
+            --output "$RUNNER_TEMP/package" --release
+            --entrypoint-bin "$binaries/antex" --code-mode-host-bin "$binaries/antex-code-mode-host")
           if [[ "$TARGET" == *linux* ]]; then
-            extra+=(--bwrap-bin "$binaries/bwrap")
+            command+=(--bwrap-bin "$binaries/bwrap")
           fi
-          python3 scripts/package-fork.py --target "$TARGET" --commit "$GITHUB_SHA" \
-            --output "$RUNNER_TEMP/package" --release \
-            --entrypoint-bin "$binaries/antex" --code-mode-host-bin "$binaries/antex-code-mode-host" \
-            "${extra[@]}"
+          "${command[@]}"
 
       - name: Validate installed package
         shell: bash
