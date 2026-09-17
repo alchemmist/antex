@@ -1008,7 +1008,7 @@ fn resolve_windows_update_command_from_path(
         std::env::join_paths(std::env::split_paths(path_env).filter(|path| path.is_absolute()))?;
     if path_env.is_empty() {
         anyhow::bail!(
-            "Could not find an absolute update command `{command}` on PATH. Please update manually: https://github.com/alchemmist/codex"
+            "Could not find an absolute update command `{command}` on PATH. Please update manually: https://github.com/alchemmist/antex"
         );
     }
     which::which_in_global(command, Some(&path_env))?
@@ -1028,7 +1028,7 @@ fn run_update_command() -> anyhow::Result<()> {
     {
         let Some(action) = antex_tui::get_update_action() else {
             anyhow::bail!(
-                "Could not detect the Antex installation method. Please update manually: https://github.com/alchemmist/codex"
+                "Could not detect the Antex installation method. Please update manually: https://github.com/alchemmist/antex"
             );
         };
         run_update_action(action, /*cli_executable*/ None)
@@ -3184,7 +3184,7 @@ mod tests {
         assert_eq!(
             err.to_string(),
             format!(
-                "Could not find an absolute update command `{command}` on PATH. Please update manually: https://github.com/alchemmist/codex"
+                "Could not find an absolute update command `{command}` on PATH. Please update manually: https://github.com/alchemmist/antex"
             )
         );
     }

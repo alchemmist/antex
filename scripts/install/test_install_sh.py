@@ -23,7 +23,7 @@ class InstallShTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(
             requests,
-            [f"https://api.github.com/repos/alchemmist/codex/releases/tags/v{VERSION}"],
+            [f"https://api.github.com/repos/alchemmist/antex/releases/tags/v{VERSION}"],
         )
         self.assertIn(
             f"Could not fetch GitHub release metadata for Antex {VERSION}",
@@ -38,9 +38,9 @@ class InstallShTest(unittest.TestCase):
         self.assertEqual(
             requests,
             [
-                "https://api.github.com/repos/alchemmist/codex/releases/tags/"
+                "https://api.github.com/repos/alchemmist/antex/releases/tags/"
                 f"v{VERSION}",
-                "https://github.com/alchemmist/codex/releases/download/"
+                "https://github.com/alchemmist/antex/releases/download/"
                 f"v{VERSION}/antex-package_SHA256SUMS",
             ],
         )
@@ -54,9 +54,9 @@ class InstallShTest(unittest.TestCase):
         self.assertEqual(
             requests,
             [
-                "https://api.github.com/repos/alchemmist/codex/releases/tags/"
+                "https://api.github.com/repos/alchemmist/antex/releases/tags/"
                 f"v{version}",
-                "https://github.com/alchemmist/codex/releases/download/"
+                "https://github.com/alchemmist/antex/releases/download/"
                 f"v{version}/antex-package_SHA256SUMS",
             ],
         )
@@ -69,8 +69,8 @@ class InstallShTest(unittest.TestCase):
         self.assertEqual(
             requests,
             [
-                "https://api.github.com/repos/alchemmist/codex/releases/latest",
-                "https://github.com/alchemmist/codex/releases/download/"
+                "https://api.github.com/repos/alchemmist/antex/releases/latest",
+                "https://github.com/alchemmist/antex/releases/download/"
                 f"v{VERSION}/antex-package_SHA256SUMS",
             ],
         )
@@ -85,8 +85,8 @@ class InstallShTest(unittest.TestCase):
         self.assertEqual(
             requests,
             [
-                "https://api.github.com/repos/alchemmist/codex/releases/latest",
-                "https://github.com/alchemmist/codex/releases/download/"
+                "https://api.github.com/repos/alchemmist/antex/releases/latest",
+                "https://github.com/alchemmist/antex/releases/download/"
                 f"v{VERSION}/antex-package_SHA256SUMS",
             ],
         )
@@ -168,9 +168,9 @@ class InstallShTest(unittest.TestCase):
             self.assertEqual(
                 requests,
                 [
-                    f"https://api.github.com/repos/alchemmist/codex/releases/tags/v{version}",
-                    f"https://github.com/alchemmist/codex/releases/download/v{version}/{asset}",
-                    f"https://api.github.com/repos/alchemmist/codex/releases/tags/v{version}",
+                    f"https://api.github.com/repos/alchemmist/antex/releases/tags/v{version}",
+                    f"https://github.com/alchemmist/antex/releases/download/v{version}/{asset}",
+                    f"https://api.github.com/repos/alchemmist/antex/releases/tags/v{version}",
                 ],
             )
 
@@ -437,10 +437,10 @@ class InstallShTest(unittest.TestCase):
                         requests,
                         [
                             "https://releases.example.com/antex/channels/latest",
-                            "https://api.github.com/repos/alchemmist/codex/releases/latest",
-                            "https://github.com/alchemmist/codex/releases/download/"
+                            "https://api.github.com/repos/alchemmist/antex/releases/latest",
+                            "https://github.com/alchemmist/antex/releases/download/"
                             f"v{VERSION}/antex-package_SHA256SUMS",
-                            "https://github.com/alchemmist/codex/releases/download/"
+                            "https://github.com/alchemmist/antex/releases/download/"
                             f"v{VERSION}/antex-package-aarch64-apple-darwin.tar.gz",
                         ],
                     )
@@ -471,11 +471,11 @@ class InstallShTest(unittest.TestCase):
                 requests,
                 [
                     f"https://releases.example.com/antex/releases/{VERSION}/release.json",
-                    "https://api.github.com/repos/alchemmist/codex/releases/tags/"
+                    "https://api.github.com/repos/alchemmist/antex/releases/tags/"
                     f"v{VERSION}",
-                    "https://github.com/alchemmist/codex/releases/download/"
+                    "https://github.com/alchemmist/antex/releases/download/"
                     f"v{VERSION}/antex-package_SHA256SUMS",
-                    "https://github.com/alchemmist/codex/releases/download/"
+                    "https://github.com/alchemmist/antex/releases/download/"
                     f"v{VERSION}/antex-package-aarch64-apple-darwin.tar.gz",
                 ],
             )
@@ -503,10 +503,10 @@ class InstallShTest(unittest.TestCase):
                 [
                     "https://releases.example.com/antex/channels/latest",
                     f"https://releases.example.com/antex/releases/{VERSION}/antex-package_SHA256SUMS",
-                    "https://github.com/alchemmist/codex/releases/download/"
+                    "https://github.com/alchemmist/antex/releases/download/"
                     f"v{VERSION}/antex-package_SHA256SUMS",
                     f"https://releases.example.com/antex/releases/{VERSION}/antex-package-aarch64-apple-darwin.tar.gz",
-                    "https://github.com/alchemmist/codex/releases/download/"
+                    "https://github.com/alchemmist/antex/releases/download/"
                     f"v{VERSION}/antex-package-aarch64-apple-darwin.tar.gz",
                 ],
             )
@@ -534,10 +534,10 @@ class InstallShTest(unittest.TestCase):
                 [
                     "https://releases.example.com/antex/channels/latest",
                     f"https://releases.example.com/antex/releases/{VERSION}/antex-package_SHA256SUMS",
-                    "https://github.com/alchemmist/codex/releases/download/"
+                    "https://github.com/alchemmist/antex/releases/download/"
                     f"v{VERSION}/antex-package_SHA256SUMS",
                     f"https://releases.example.com/antex/releases/{VERSION}/antex-package-aarch64-apple-darwin.tar.gz",
-                    "https://github.com/alchemmist/codex/releases/download/"
+                    "https://github.com/alchemmist/antex/releases/download/"
                     f"v{VERSION}/antex-package-aarch64-apple-darwin.tar.gz",
                 ],
             )
@@ -570,9 +570,9 @@ class InstallShTest(unittest.TestCase):
                 [
                     "https://releases.example.com/antex/channels/latest",
                     f"https://releases.example.com/antex/releases/{VERSION}/antex-package_SHA256SUMS",
-                    "https://github.com/alchemmist/codex/releases/download/"
+                    "https://github.com/alchemmist/antex/releases/download/"
                     f"v{VERSION}/antex-package_SHA256SUMS",
-                    "https://api.github.com/repos/alchemmist/codex/releases/tags/"
+                    "https://api.github.com/repos/alchemmist/antex/releases/tags/"
                     f"v{VERSION}",
                     f"https://releases.example.com/antex/releases/{VERSION}/antex-package-aarch64-apple-darwin.tar.gz",
                 ],
@@ -614,9 +614,9 @@ class InstallShTest(unittest.TestCase):
                 [
                     "https://releases.example.com/antex/channels/latest",
                     f"https://releases.example.com/antex/releases/{VERSION}/antex-package_SHA256SUMS",
-                    "https://github.com/alchemmist/codex/releases/download/"
+                    "https://github.com/alchemmist/antex/releases/download/"
                     f"v{VERSION}/antex-package_SHA256SUMS",
-                    "https://api.github.com/repos/alchemmist/codex/releases/tags/"
+                    "https://api.github.com/repos/alchemmist/antex/releases/tags/"
                     f"v{VERSION}",
                     f"https://releases.example.com/antex/releases/{VERSION}/antex-package-aarch64-apple-darwin.tar.gz",
                 ],
@@ -645,9 +645,9 @@ class InstallShTest(unittest.TestCase):
                 [
                     "https://releases.example.com/antex/channels/latest",
                     f"https://releases.example.com/antex/releases/{VERSION}/antex-package_SHA256SUMS",
-                    "https://github.com/alchemmist/codex/releases/download/"
+                    "https://github.com/alchemmist/antex/releases/download/"
                     f"v{VERSION}/antex-package_SHA256SUMS",
-                    "https://api.github.com/repos/alchemmist/codex/releases/tags/"
+                    "https://api.github.com/repos/alchemmist/antex/releases/tags/"
                     f"v{VERSION}",
                 ],
             )
@@ -706,9 +706,9 @@ class InstallShTest(unittest.TestCase):
                 first_requests,
                 [
                     f"https://releases.example.com/antex/releases/{VERSION}/release.json",
-                    "https://api.github.com/repos/alchemmist/codex/releases/tags/"
+                    "https://api.github.com/repos/alchemmist/antex/releases/tags/"
                     f"v{VERSION}",
-                    "https://github.com/alchemmist/codex/releases/download/"
+                    "https://github.com/alchemmist/antex/releases/download/"
                     f"v{VERSION}/antex-npm-darwin-arm64-{VERSION}.tgz",
                 ],
             )
@@ -728,7 +728,7 @@ class InstallShTest(unittest.TestCase):
                 second_requests,
                 [
                     f"https://releases.example.com/antex/releases/{VERSION}/release.json",
-                    "https://api.github.com/repos/alchemmist/codex/releases/tags/"
+                    "https://api.github.com/repos/alchemmist/antex/releases/tags/"
                     f"v{VERSION}",
                 ],
             )
@@ -837,7 +837,7 @@ def run_installer_in(
                   exit 22
                 fi
                 ;;
-              https://github.com/alchemmist/codex/releases/download/*/antex-package_SHA256SUMS)
+              https://github.com/alchemmist/antex/releases/download/*/antex-package_SHA256SUMS)
                 if [ "$ANTEX_TEST_RELEASES_MODE" = "corrupt_checksum_and_github" ]; then
                   printf '<html>proxy error</html>\n' >"$output"
                   exit 0
@@ -848,14 +848,14 @@ def run_installer_in(
                   exit 22
                 fi
                 ;;
-              https://github.com/alchemmist/codex/releases/download/*/antex-*.tar.gz)
+              https://github.com/alchemmist/antex/releases/download/*/antex-*.tar.gz)
                 if [ -n "$ANTEX_TEST_ARCHIVE_PATH" ]; then
                   cp "$ANTEX_TEST_ARCHIVE_PATH" "$output"
                 else
                   exit 22
                 fi
                 ;;
-              https://github.com/alchemmist/codex/releases/download/*/antex-npm-*.tgz)
+              https://github.com/alchemmist/antex/releases/download/*/antex-npm-*.tgz)
                 if [ -n "$ANTEX_TEST_LEGACY_ARCHIVE_PATH" ]; then
                   cp "$ANTEX_TEST_LEGACY_ARCHIVE_PATH" "$output"
                 else

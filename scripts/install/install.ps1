@@ -163,9 +163,9 @@ function Resolve-ReleaseAssetSelection {
     $checksumFallbackUrl = $null
     if ($ResolvedRelease.Source -eq "ReleasesOpenAICom") {
         $packageUrl = "$ReleasesBaseUri/releases/$version/$packageAsset"
-        $packageFallbackUrl = "https://github.com/alchemmist/codex/releases/download/v$version/$packageAsset"
+        $packageFallbackUrl = "https://github.com/alchemmist/antex/releases/download/v$version/$packageAsset"
         $checksumUrl = "$ReleasesBaseUri/releases/$version/$checksumAsset"
-        $checksumFallbackUrl = "https://github.com/alchemmist/codex/releases/download/v$version/$checksumAsset"
+        $checksumFallbackUrl = "https://github.com/alchemmist/antex/releases/download/v$version/$checksumAsset"
     }
 
     $packageMetadata = Find-ReleaseAssetMetadata -AssetName $packageAsset -ReleaseMetadata $releaseMetadata -Url $packageUrl -FallbackUrl $packageFallbackUrl
@@ -184,7 +184,7 @@ function Resolve-ReleaseAssetSelection {
     $packageFallbackUrl = $null
     if ($ResolvedRelease.Source -eq "ReleasesOpenAICom") {
         $packageUrl = "$ReleasesBaseUri/releases/$version/$packageAsset"
-        $packageFallbackUrl = "https://github.com/alchemmist/codex/releases/download/v$version/$packageAsset"
+        $packageFallbackUrl = "https://github.com/alchemmist/antex/releases/download/v$version/$packageAsset"
     }
     $packageMetadata = Find-ReleaseAssetMetadata -AssetName $packageAsset -ReleaseMetadata $releaseMetadata -Url $packageUrl -FallbackUrl $packageFallbackUrl
     if ($null -eq $packageMetadata) {
@@ -323,11 +323,11 @@ function Resolve-ReleaseFromGitHub {
 
     if ($NormalizedVersion -eq "latest") {
         $requestedRelease = "latest"
-        $metadataUri = "https://api.github.com/repos/alchemmist/codex/releases/latest"
+        $metadataUri = "https://api.github.com/repos/alchemmist/antex/releases/latest"
     } else {
         $resolvedVersion = $NormalizedVersion
         $requestedRelease = $resolvedVersion
-        $metadataUri = "https://api.github.com/repos/alchemmist/codex/releases/tags/v$resolvedVersion"
+        $metadataUri = "https://api.github.com/repos/alchemmist/antex/releases/tags/v$resolvedVersion"
     }
 
     try {

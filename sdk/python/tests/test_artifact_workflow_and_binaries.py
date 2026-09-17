@@ -601,7 +601,7 @@ def test_source_sdk_package_declares_stable_documentation() -> None:
         "description": "Python SDK for Antex",
         "is_stable": True,
         "license": "Apache-2.0",
-        "documentation": "https://github.com/alchemmist/codex/tree/main/sdk/python/docs",
+        "documentation": "https://github.com/alchemmist/antex/tree/main/sdk/python/docs",
         "readme_is_stable": True,
         "local_license_file": False,
     }

@@ -19,10 +19,10 @@ classifiers = [
 dependencies = ["pydantic>=2.12", "packaging>=26.2", "antex-cli-bin==0.0.0-dev"]
 
 [project.urls]
-Homepage = "https://github.com/alchemmist/codex"
-Repository = "https://github.com/alchemmist/codex"
-Issues = "https://github.com/alchemmist/codex/issues"
-Documentation = "https://github.com/alchemmist/codex/tree/main/sdk/python/docs"
+Homepage = "https://github.com/alchemmist/antex"
+Repository = "https://github.com/alchemmist/antex"
+Issues = "https://github.com/alchemmist/antex/issues"
+Documentation = "https://github.com/alchemmist/antex/tree/main/sdk/python/docs"
 
 [dependency-groups]
 format = ["ruff>=0.15.8"]

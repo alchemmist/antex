@@ -4,7 +4,7 @@ set -euo pipefail
 
 platform="${1:-}"
 install_dir="${ANTEX_INSTALL_DIR:-$HOME/.local/bin}"
-repository="${ANTEX_RELEASE_REPOSITORY:-alchemmist/codex}"
+repository="${ANTEX_RELEASE_REPOSITORY:-alchemmist/antex}"
 
 case "$platform" in
   mac)

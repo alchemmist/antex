@@ -21,9 +21,9 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/alchemmist/codex"
-Repository = "https://github.com/alchemmist/codex"
-Issues = "https://github.com/alchemmist/codex/issues"
+Homepage = "https://github.com/alchemmist/antex"
+Repository = "https://github.com/alchemmist/antex"
+Issues = "https://github.com/alchemmist/antex/issues"
 
 [tool.hatch.build]
 exclude = [

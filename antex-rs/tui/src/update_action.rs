@@ -20,9 +20,9 @@ pub enum UpdateAction {
     PnpmGlobalLatest,
     /// Update via `brew upgrade antex`.
     BrewUpgrade,
-    /// Update via `curl -fsSL https://raw.githubusercontent.com/alchemmist/codex/main/scripts/install/install.sh | ANTEX_NON_INTERACTIVE=1 sh`.
+    /// Update via `curl -fsSL https://raw.githubusercontent.com/alchemmist/antex/main/scripts/install/install.sh | ANTEX_NON_INTERACTIVE=1 sh`.
     StandaloneUnix,
-    /// Update via `$env:ANTEX_NON_INTERACTIVE=1; irm https://raw.githubusercontent.com/alchemmist/codex/main/scripts/install/install.ps1 | iex`.
+    /// Update via `$env:ANTEX_NON_INTERACTIVE=1; irm https://raw.githubusercontent.com/alchemmist/antex/main/scripts/install/install.ps1 | iex`.
     StandaloneWindows,
 }
 
@@ -56,7 +56,7 @@ impl UpdateAction {
                 "sh",
                 &[
                     "-c",
-                    "curl -fsSL https://raw.githubusercontent.com/alchemmist/codex/main/scripts/install/install.sh | ANTEX_NON_INTERACTIVE=1 sh",
+                    "curl -fsSL https://raw.githubusercontent.com/alchemmist/antex/main/scripts/install/install.sh | ANTEX_NON_INTERACTIVE=1 sh",
                 ],
             ),
             UpdateAction::StandaloneWindows => (
@@ -65,7 +65,7 @@ impl UpdateAction {
                     "-ExecutionPolicy",
                     "Bypass",
                     "-c",
-                    "$env:ANTEX_NON_INTERACTIVE=1; irm https://raw.githubusercontent.com/alchemmist/codex/main/scripts/install/install.ps1 | iex",
+                    "$env:ANTEX_NON_INTERACTIVE=1; irm https://raw.githubusercontent.com/alchemmist/antex/main/scripts/install/install.ps1 | iex",
                 ],
             ),
         }
@@ -163,7 +163,7 @@ mod tests {
                 "sh",
                 &[
                     "-c",
-                    "curl -fsSL https://raw.githubusercontent.com/alchemmist/codex/main/scripts/install/install.sh | ANTEX_NON_INTERACTIVE=1 sh"
+                    "curl -fsSL https://raw.githubusercontent.com/alchemmist/antex/main/scripts/install/install.sh | ANTEX_NON_INTERACTIVE=1 sh"
                 ][..],
             )
         );
@@ -175,7 +175,7 @@ mod tests {
                     "-ExecutionPolicy",
                     "Bypass",
                     "-c",
-                    "$env:ANTEX_NON_INTERACTIVE=1; irm https://raw.githubusercontent.com/alchemmist/codex/main/scripts/install/install.ps1 | iex"
+                    "$env:ANTEX_NON_INTERACTIVE=1; irm https://raw.githubusercontent.com/alchemmist/antex/main/scripts/install/install.ps1 | iex"
                 ][..],
             )
         );

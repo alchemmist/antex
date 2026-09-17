@@ -62,7 +62,7 @@ pub fn get_upgrade_version(config: &Config) -> Option<String> {
 const HOMEBREW_CASK_API_URL: &str = "https://formulae.brew.sh/api/cask/codex.json";
 const LATEST_RELEASE_URL: &str = "https://api.github.com/repos/openai/codex/releases/latest";
 const FORK_LATEST_RELEASE_URL: &str =
-    "https://api.github.com/repos/alchemmist/codex/releases/latest";
+    "https://api.github.com/repos/alchemmist/antex/releases/latest";
 const FORK_VERSION: &str = match option_env!("ALCHEMMIST_FORK_VERSION") {
     Some(version) => version,
     None => include_str!("../../../FORK_VERSION"),

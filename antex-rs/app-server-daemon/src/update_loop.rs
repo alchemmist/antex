@@ -64,10 +64,10 @@ const INITIAL_UPDATE_DELAY: Duration = Duration::from_secs(5 * 60);
 const RESTART_RETRY_INTERVAL: Duration = Duration::from_millis(50);
 #[cfg(unix)]
 const INSTALL_URL: &str =
-    "https://raw.githubusercontent.com/alchemmist/codex/main/scripts/install/install.sh";
+    "https://raw.githubusercontent.com/alchemmist/antex/main/scripts/install/install.sh";
 #[cfg(windows)]
 const INSTALL_URL: &str =
-    "https://raw.githubusercontent.com/alchemmist/codex/main/scripts/install/install.ps1";
+    "https://raw.githubusercontent.com/alchemmist/antex/main/scripts/install/install.ps1";
 
 pub(crate) async fn run(
     http_client_factory: HttpClientFactory,

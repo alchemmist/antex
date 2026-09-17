@@ -10,7 +10,7 @@ ANTEX_TARGET_DIR := $(ANTEX_RS_DIR)/target
 ANTEX_BINARY := $(ANTEX_TARGET_DIR)/release/antex
 ANTEX_CODE_MODE_HOST_BINARY := $(ANTEX_TARGET_DIR)/release/antex-code-mode-host
 ANTEX_INSTALL_DIR ?= $(HOME)/.local/bin
-ANTEX_RELEASE_REPOSITORY ?= alchemmist/codex
+ANTEX_RELEASE_REPOSITORY ?= alchemmist/antex
 ANTEX_GIT_COMMIT := $(shell git rev-parse HEAD 2>/dev/null || printf unknown)
 ANTEX_GIT_DIRTY := $(shell test -z "$$(git status --porcelain --untracked-files=normal -- . ':(exclude)antex-conversation-*.html' 2>/dev/null)" || printf +dirty)
 ANTEX_BUILD_COMMIT := $(ANTEX_GIT_COMMIT)$(ANTEX_GIT_DIRTY)

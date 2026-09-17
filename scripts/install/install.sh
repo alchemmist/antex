@@ -315,7 +315,7 @@ release_url_for_asset() {
   asset="$1"
   resolved_version="$2"
 
-  printf 'https://github.com/alchemmist/codex/releases/download/v%s/%s\n' "$resolved_version" "$asset"
+  printf 'https://github.com/alchemmist/antex/releases/download/v%s/%s\n' "$resolved_version" "$asset"
 }
 
 releases_url_for_asset() {
@@ -328,7 +328,7 @@ releases_url_for_asset() {
 release_metadata_url() {
   resolved_version="$1"
 
-  printf 'https://api.github.com/repos/alchemmist/codex/releases/tags/v%s\n' "$resolved_version"
+  printf 'https://api.github.com/repos/alchemmist/antex/releases/tags/v%s\n' "$resolved_version"
 }
 
 parse_downloaded_release_metadata() {
@@ -357,7 +357,7 @@ resolve_release_from_github() {
   normalized_version="$1"
   if [ "$normalized_version" = "latest" ]; then
     requested_release="latest"
-    metadata_url="https://api.github.com/repos/alchemmist/codex/releases/latest"
+    metadata_url="https://api.github.com/repos/alchemmist/antex/releases/latest"
   else
     resolved_version="$normalized_version"
     requested_release="$resolved_version"
