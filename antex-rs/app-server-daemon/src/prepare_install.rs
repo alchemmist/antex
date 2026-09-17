@@ -241,8 +241,15 @@ async fn prepare_from_package(
     );
     let binary_version =
         managed_install::managed_antex_version(&stage.path().join(entrypoint)).await?;
+    let expected_binary_version = metadata
+        .get("upstreamVersion")
+        .cloned()
+        .map(serde_json::from_value::<semver::Version>)
+        .transpose()?
+        .unwrap_or(manifest.version)
+        .to_string();
     anyhow::ensure!(
-        !stable || version == binary_version,
+        !stable || expected_binary_version == binary_version,
         "the CLI package version does not match its executable"
     );
     let name = if stable && mode == InstallMode::Missing {

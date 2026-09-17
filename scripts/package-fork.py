@@ -1,4 +1,5 @@
 import argparse
+import json
 import os
 import shutil
 import subprocess
@@ -67,6 +68,10 @@ def main():
         subprocess.run(
             command, env=os.environ | {"ANTEX_REPO_ROOT": str(ROOT)}, check=True
         )
+        manifest_path = base / "antex-package.json"
+        metadata = json.loads(manifest_path.read_text())
+        metadata["upstreamVersion"] = read_workspace_version()
+        manifest_path.write_text(json.dumps(metadata, indent=2) + "\n")
         if args.release:
             reported = subprocess.check_output(
                 [str(base / "bin/antex"), "--version"], text=True, timeout=20
@@ -83,6 +88,7 @@ def main():
         )
         helper = work / "antex-voice-host"
         shutil.copy2(binaries / "voice-host/antex-voice-host", helper)
+        helper.chmod(0o755)
         if args.release:
             subprocess.run(
                 [
@@ -99,9 +105,16 @@ def main():
                     file.suffix == ".dylib" or os.access(file, os.X_OK)
                 ):
                     file.chmod(file.stat().st_mode | 0o200)
-                    subprocess.run(
-                        ["codesign", "--force", "--sign", "-", str(file)], check=True
-                    )
+                    command = ["codesign", "--force", "--sign", "-"]
+                    if file == helper:
+                        command += [
+                            "--entitlements",
+                            str(
+                                ROOT
+                                / ".github/scripts/macos-signing/codex-voice-host.entitlements.plist"
+                            ),
+                        ]
+                    subprocess.run([*command, str(file)], check=True)
         if args.release:
             seal(runtime, args.target)
         assemble(
@@ -114,6 +127,9 @@ def main():
             release_version=version if args.release else None,
         )
     write_archive(output, output.parent / f"antex-{args.target}.tar.gz", force=False)
+    (output.parent / f"antex-package-{args.target}.tar.gz").hardlink_to(
+        output.parent / f"antex-{args.target}.tar.gz"
+    )
     print(output)
 
 

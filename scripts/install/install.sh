@@ -474,6 +474,12 @@ select_release_assets() {
   download_fallback_url=""
   checksum_fallback_url=""
 
+  if ! release_asset_exists "$package_asset" &&
+    release_asset_exists "antex-package-$flat_target.tar.gz"; then
+    vendor_target="$flat_target"
+    package_asset="antex-package-$vendor_target.tar.gz"
+  fi
+
   if release_asset_exists "$package_asset" &&
     release_asset_exists "$checksum_asset"; then
     install_layout="package"

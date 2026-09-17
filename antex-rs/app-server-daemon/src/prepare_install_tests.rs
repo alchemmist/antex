@@ -113,6 +113,39 @@ async fn incomplete_source_fails_without_selecting_it() {
     assert!(!home.join("packages/app-server-daemon/current").exists());
 }
 
+#[tokio::test]
+async fn fork_package_checks_its_upstream_binary_version() {
+    for upstream_version in ["0.153.4", "0.153.3"] {
+        let temp = tempfile::TempDir::new().expect("temp");
+        let source = temp.path().join("package");
+        let bin = package(&source, "0.153.4");
+        let path = source.join("antex-package.json");
+        let mut metadata: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).expect("manifest")).expect("metadata");
+        metadata["version"] = "0.1.4".into();
+        metadata["upstreamVersion"] = upstream_version.into();
+        std::fs::write(path, metadata.to_string()).expect("fork manifest");
+        let home = temp.path().join("home");
+        let result = prepare_from_package(
+            &daemon(&home),
+            &DaemonSettings::default(),
+            InstallMode::Missing,
+            Some(&source),
+            &bin,
+            |_| Ok(true),
+        )
+        .await;
+        let accepted = upstream_version == "0.153.4";
+        assert_eq!(
+            (
+                result.is_ok(),
+                home.join("packages/app-server-daemon/current").exists()
+            ),
+            (accepted, accepted),
+        );
+    }
+}
+
 #[cfg(target_os = "macos")]
 #[tokio::test]
 async fn provisioned_macos_bundle_seeds_from_its_running_executable() {

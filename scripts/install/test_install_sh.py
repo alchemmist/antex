@@ -3,6 +3,7 @@
 import hashlib
 import json
 import os
+import platform
 from pathlib import Path
 import subprocess
 import tarfile
@@ -17,6 +18,33 @@ MISMATCH_VERSION = "0.145.0"
 
 
 class InstallShTest(unittest.TestCase):
+    @unittest.skipUnless(
+        platform.system() == "Linux" and platform.machine() == "x86_64",
+        "GNU Linux fixture",
+    )
+    def test_gnu_release_uses_complete_package_layout(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            archive, checksums, metadata = create_package_release(
+                root, target="x86_64-unknown-linux-gnu"
+            )
+            result, requests = run_installer_in(
+                root,
+                VERSION,
+                archive_path=archive,
+                checksum_path=checksums,
+                metadata_json=metadata,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            current = root / "antex-home/packages/standalone/current"
+            self.assertTrue((current / "antex-path/rg").is_file())
+            self.assertTrue(
+                any(
+                    url.endswith("antex-package-x86_64-unknown-linux-gnu.tar.gz")
+                    for url in requests
+                )
+            )
+
     def test_metadata_fetch_failure_is_not_reported_as_missing_assets(self) -> None:
         result, requests = run_installer(VERSION, metadata_failure=True)
 
@@ -970,6 +998,7 @@ def create_package_release(
     root: Path,
     *,
     metadata_version: str = VERSION,
+    target: str = "aarch64-apple-darwin",
 ) -> tuple[Path, Path, str]:
     package_dir = root / "package"
     (package_dir / "bin").mkdir(parents=True)
@@ -984,8 +1013,11 @@ def create_package_release(
         "#!/bin/sh\nexit 0\n",
     )
     write_executable(package_dir / "antex-path" / "rg", "#!/bin/sh\nexit 0\n")
+    if "linux" in target:
+        (package_dir / "antex-resources").mkdir()
+        write_executable(package_dir / "antex-resources/bwrap", "#!/bin/sh\nexit 0\n")
 
-    asset = "antex-package-aarch64-apple-darwin.tar.gz"
+    asset = f"antex-package-{target}.tar.gz"
     archive_path = root / asset
     with tarfile.open(archive_path, "w:gz") as archive:
         for path in package_dir.iterdir():

@@ -59,6 +59,16 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            antex-rs/target
+          key: fork-package-${{ matrix.target }}-${{ hashFiles('antex-rs/Cargo.lock', 'antex-rs/rust-toolchain.toml') }}-${{ github.sha }}
+          restore-keys: |
+            fork-package-${{ matrix.target }}-${{ hashFiles('antex-rs/Cargo.lock', 'antex-rs/rust-toolchain.toml') }}-
+
       - name: Configure rusty_v8 artifacts
         uses: ./.github/actions/setup-rusty-v8
         with:
@@ -129,17 +139,20 @@ jobs:
           python3 scripts/smoke-code-mode-host.py "$RUNNER_TEMP/installed/bin/antex-code-mode-host"
           python3 scripts/smoke-voice-package.py "$RUNNER_TEMP/installed/bin/antex" "$GITHUB_SHA"
           python3 scripts/smoke-tui-voice.py "$RUNNER_TEMP/installed/bin/antex"
+          python3 scripts/smoke-daemon-package.py "$RUNNER_TEMP/installed/bin/antex"
           python3 -m unittest discover -s scripts -p 'test_install_fork_package.py'
+          python3 -m unittest discover -s scripts/install -p 'test_install_sh.py'
           python3 -m unittest discover -s third_party/voice -p 'test_assemble_package.py'
           cd "$RUNNER_TEMP"
           python3 - "$TARGET" <<'PYTHON'
           import hashlib
           import pathlib
           import sys
-          archive = pathlib.Path(f"antex-{sys.argv[1]}.tar.gz")
-          archive.with_suffix(archive.suffix + ".sha256").write_text(
-              hashlib.sha256(archive.read_bytes()).hexdigest() + "  " + archive.name + "\n"
-          )
+          for name in (f"antex-{sys.argv[1]}.tar.gz", f"antex-package-{sys.argv[1]}.tar.gz"):
+              archive = pathlib.Path(name)
+              archive.with_suffix(archive.suffix + ".sha256").write_text(
+                  hashlib.sha256(archive.read_bytes()).hexdigest() + "  " + archive.name + "\n"
+              )
           PYTHON
 
       - name: Upload release artifact
@@ -149,6 +162,8 @@ jobs:
           path: |
             ${{ runner.temp }}/antex-${{ matrix.target }}.tar.gz
             ${{ runner.temp }}/antex-${{ matrix.target }}.tar.gz.sha256
+            ${{ runner.temp }}/antex-package-${{ matrix.target }}.tar.gz
+            ${{ runner.temp }}/antex-package-${{ matrix.target }}.tar.gz.sha256
           if-no-files-found: error
           retention-days: 1
 
@@ -166,6 +181,9 @@ jobs:
           pattern: release-*
           path: dist
           merge-multiple: true
+
+      - name: Assemble package checksums
+        run: cat dist/antex-package-*.tar.gz.sha256 > dist/antex-package_SHA256SUMS
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe
