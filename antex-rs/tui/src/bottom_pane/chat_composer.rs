@@ -1508,7 +1508,7 @@ impl ChatComposer {
             if !spans.is_empty() {
                 spans.push(" · ".dim());
             }
-            spans.push("stashed".magenta());
+            spans.push("".magenta());
         }
         if spans.is_empty() {
             None
@@ -1534,7 +1534,7 @@ impl ChatComposer {
             if !line.spans.is_empty() {
                 line.spans.push(" · ".dim());
             }
-            line.spans.push("stashed".magenta());
+            line.spans.push("".magenta());
         }
         line
     }

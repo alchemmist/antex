@@ -6,6 +6,27 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 
 #[test]
+fn prompt_stash_indicator_snapshots() {
+    let width = 100;
+    let enhanced_keys_supported = true;
+    for (name, status_line_enabled) in [
+        ("footer_mode_prompt_stashed", true),
+        ("footer_mode_prompt_stashed_without_status_line", false),
+    ] {
+        super::tests::snapshot_composer_state_with_width(
+            name,
+            width,
+            enhanced_keys_supported,
+            |composer| {
+                composer.set_status_line_enabled(status_line_enabled);
+                composer.set_status_line(Some("gpt-6-astra · ~/code/antex".into()));
+                composer.show_prompt_stashed_indicator();
+            },
+        );
+    }
+}
+
+#[test]
 fn draft_and_voice_composer_snapshots() {
     use crate::bottom_pane::voice_strip::VoiceStripPhase;
     use crate::bottom_pane::voice_strip::VoiceStripState;
