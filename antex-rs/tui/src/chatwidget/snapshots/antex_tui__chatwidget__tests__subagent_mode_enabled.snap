@@ -2,6 +2,6 @@
 source: tui/src/chatwidget/tests/slash_commands.rs
 expression: "render_bottom_popup(&chat, 80)"
 ---
- ┃ Subagents · next prompt
+ ┃ Ask Antex to do anything
 
-  gpt-5.6-sol default · /tmp/project
+  gpt-5.6-sol default · /tmp/project · 

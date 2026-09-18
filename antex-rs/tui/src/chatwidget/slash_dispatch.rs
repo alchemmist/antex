@@ -363,14 +363,12 @@ impl ChatWidget {
                 self.app_event_tx.send(AppEvent::OpenAgentsOverview);
             }
             SlashCommand::MultiAgents => {
-                self.subagents_armed = !self.subagents_armed;
-                self.sync_subagents_armed_indicator();
-                let message = if self.subagents_armed {
-                    "Subagents enabled for the next prompt."
+                let policy = if self.subagents_enabled {
+                    SubagentSpawnPolicy::Disallow
                 } else {
-                    "Subagents disabled for the next prompt."
+                    SubagentSpawnPolicy::Allow
                 };
-                self.add_info_message(message.to_string(), /*hint*/ None);
+                self.set_subagent_mode(policy);
             }
             SlashCommand::Permissions => {
                 if self.remote_connection.is_some()
@@ -785,7 +783,15 @@ impl ChatWidget {
                     ),
                 });
             }
+            SlashCommand::MultiAgents if matches!(trimmed, "on" | "off") => {
+                self.set_subagent_mode(if trimmed == "on" {
+                    SubagentSpawnPolicy::Allow
+                } else {
+                    SubagentSpawnPolicy::Disallow
+                });
+            }
             SlashCommand::MultiAgents if !trimmed.is_empty() => {
+                self.set_subagent_mode(SubagentSpawnPolicy::Allow);
                 let user_message = self.prepared_inline_user_message(
                     args,
                     text_elements,
@@ -794,20 +800,13 @@ impl ChatWidget {
                     mention_bindings,
                     source,
                 );
-                if self.is_user_turn_pending_or_running() || !self.is_session_configured() {
-                    self.queue_user_message_with_subagents(
-                        user_message,
-                        SubagentSpawnPolicy::Allow,
-                    );
-                } else {
-                    self.submit_user_message_with_history_and_shell_escape_policy(
-                        user_message,
-                        UserMessageHistoryRecord::UserMessageText,
-                        ShellEscapePolicy::Disallow,
-                        SubagentSpawnPolicy::Allow,
-                        UserMessageSource::Prompt,
-                    );
-                }
+                self.submit_user_message_with_history_and_shell_escape_policy(
+                    user_message,
+                    UserMessageHistoryRecord::UserMessageText,
+                    ShellEscapePolicy::Disallow,
+                    SubagentSpawnPolicy::Allow,
+                    UserMessageSource::Prompt,
+                );
             }
             SlashCommand::Cd => self.request_working_directory_change(trimmed),
             SlashCommand::Pwd => {

@@ -596,6 +596,7 @@ impl AntexThread {
         } = overrides;
         SessionSettingsUpdate {
             step_settings: StepSettingsUpdate {
+                subagent_spawn_policy: None,
                 model,
                 effort,
                 collaboration_mode,

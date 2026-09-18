@@ -224,6 +224,7 @@ impl TurnRequestProcessor {
             Op::TurnSettings {
                 turn_id: params.turn_id,
                 update: TurnSettingsUpdate {
+                    subagent_spawn_policy: params.subagent_spawn_policy,
                     approvals_reviewer: params
                         .approvals_reviewer
                         .map(antex_app_server_protocol::ApprovalsReviewer::to_core),

@@ -69,6 +69,24 @@ fn configured_thread_session(thread_id: ThreadId) -> crate::session_state::Threa
 }
 
 #[tokio::test]
+async fn subagent_mode_is_preserved_per_thread() {
+    let model_override = None;
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(model_override).await;
+    let first = configured_thread_session(ThreadId::new());
+    let second = configured_thread_session(ThreadId::new());
+    chat.handle_thread_session(first.clone());
+    chat.dispatch_command(SlashCommand::MultiAgents);
+    assert!(chat.subagents_enabled);
+    chat.handle_thread_session_quiet(second.clone());
+    assert!(!chat.subagents_enabled);
+    chat.handle_thread_session_quiet(first);
+    assert!(chat.subagents_enabled);
+    chat.dispatch_command(SlashCommand::MultiAgents);
+    chat.handle_thread_session_quiet(second);
+    assert!(!chat.subagents_enabled);
+}
+
+#[tokio::test]
 async fn session_and_settings_sync_server_provider_id() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.2")).await;
     chat.config.model_provider.base_url = Some("https://local-provider.example/v1".to_string());

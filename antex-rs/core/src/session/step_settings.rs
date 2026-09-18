@@ -39,6 +39,7 @@ pub(crate) struct StepSettings {
 /// snapshot does not change steps or actions that have already captured it.
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedStepSettings {
+    pub(crate) subagent_spawn_policy: Option<antex_protocol::config_types::SubagentSpawnPolicy>,
     /// Inputs for later sparse patches. Unset defaults and unsupported requested
     /// tiers must not be reconstructed from the effective values below.
     selected: Arc<StepSettings>,
@@ -73,6 +74,7 @@ impl ResolvedStepSettings {
             reasoning_summary,
             service_tier,
             mcp_approvals_reviewer_override: None,
+            subagent_spawn_policy: None,
         }
     }
 
@@ -141,6 +143,7 @@ impl ResolvedStepSettings {
             Arc::new(selected.resolve_model_info(models_manager, overrides).await)
         };
         let mut next = Self::new(Arc::new(selected), model_info, fast_mode_enabled);
+        next.subagent_spawn_policy = update.subagent_spawn_policy.or(self.subagent_spawn_policy);
         next.mcp_approvals_reviewer_override = update
             .approvals_reviewer
             .or(self.mcp_approvals_reviewer_override);
@@ -220,6 +223,7 @@ impl ModelInfoOverrides {
 /// that full value for another. Merge the requested edits with each target.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct StepSettingsUpdate {
+    pub(crate) subagent_spawn_policy: Option<antex_protocol::config_types::SubagentSpawnPolicy>,
     pub(crate) model: Option<String>,
     pub(crate) effort: Option<Option<ReasoningEffort>>,
     /// A complete collaboration mode takes precedence over model and effort edits.

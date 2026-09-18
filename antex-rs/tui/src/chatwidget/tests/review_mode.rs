@@ -438,7 +438,7 @@ async fn identical_steer_receipts_only_acknowledge_the_matching_submission() {
 }
 
 #[tokio::test]
-async fn steer_enter_queues_while_plan_stream_is_active() {
+async fn steer_enter_reaches_backend_while_plan_stream_is_active() {
     let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.thread_id = Some(ThreadId::new());
     chat.set_feature_enabled(Feature::CollaborationModes, /*enabled*/ true);
@@ -450,17 +450,18 @@ async fn steer_enter_queues_while_plan_stream_is_active() {
     let _ = drain_insert_history(&mut rx);
 
     chat.bottom_pane
-        .set_composer_text("queued submission".to_string(), Vec::new(), Vec::new());
+        .set_composer_text("steer submission".to_string(), Vec::new(), Vec::new());
     chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
 
     assert_eq!(chat.active_collaboration_mode_kind(), ModeKind::Plan);
-    assert_eq!(chat.input_queue.queued_user_messages.len(), 1);
-    assert_eq!(
-        chat.input_queue.queued_user_messages.front().unwrap().text,
-        "queued submission"
+    assert!(chat.input_queue.queued_user_messages.is_empty());
+    assert_eq!(chat.input_queue.pending_steers.len(), 1);
+    assert!(matches!(op_rx.try_recv(), Ok(Op::UserTurn { .. })));
+    let width = 80;
+    assert_chatwidget_snapshot!(
+        "enter_steers_during_plan",
+        render_bottom_popup(&chat, width)
     );
-    assert!(chat.input_queue.pending_steers.is_empty());
-    assert_no_submit_op(&mut op_rx);
     assert!(drain_insert_history(&mut rx).is_empty());
 }
 

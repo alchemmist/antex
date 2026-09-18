@@ -47,6 +47,8 @@ pub enum TurnStatus {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[ts(export_to = "v2/")]
 pub struct TurnSettingsUpdateParams {
+    #[ts(optional = nullable)]
+    pub subagent_spawn_policy: Option<SubagentSpawnPolicy>,
     pub thread_id: String,
     pub turn_id: String,
     /// Changes the active turn's reviewer without changing future thread settings.

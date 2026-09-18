@@ -3794,6 +3794,7 @@ impl Session {
                     Arc::clone(&settings.model_info),
                     self.features.enabled(Feature::FastMode),
                 );
+                inherited_settings.subagent_spawn_policy = settings.subagent_spawn_policy;
                 inherited_settings.mcp_approvals_reviewer_override =
                     settings.mcp_approvals_reviewer_override;
                 settings = Arc::new(inherited_settings);
@@ -3878,6 +3879,9 @@ impl Session {
         extension_data.insert(selected_plugins.clone());
         turn_context.extension_data.insert(selected_plugins);
         let tool_router = turn::built_tools(
+            settings
+                .subagent_spawn_policy
+                .unwrap_or(turn_context.subagent_spawn_policy),
             self.as_ref(),
             turn_context.as_ref(),
             &settings.model_info,

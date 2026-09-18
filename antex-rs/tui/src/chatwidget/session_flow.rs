@@ -61,6 +61,10 @@ impl ChatWidget {
         let connector_scope_changed = previous_thread_id != Some(session.thread_id)
             || self.config.cwd.as_path() != session.cwd.as_path();
         self.thread_id = Some(session.thread_id);
+        if previous_thread_id.is_none() && self.subagents_enabled {
+            self.subagent_mode_threads.insert(session.thread_id);
+        }
+        self.subagents_enabled = self.subagent_mode_threads.contains(&session.thread_id);
         #[cfg(target_os = "windows")]
         if self.windows_sandbox_local_server
             && matches!(self.antex_op_target, AntexOpTarget::AppEvent)

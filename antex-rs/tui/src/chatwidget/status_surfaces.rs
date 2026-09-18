@@ -455,6 +455,9 @@ impl ChatWidget {
         {
             items.push(StatusLineItem::FastMode);
         }
+        if self.subagents_enabled && !items.contains(&StatusLineItem::Subagents) {
+            items.push(StatusLineItem::Subagents);
+        }
         (items, invalid)
     }
 
@@ -811,6 +814,7 @@ impl ChatWidget {
                 .is_none_or(|preset| preset.supports_fast_mode())
                 .then_some("⚡".to_string())
                 .filter(|_| self.current_service_tier() == Some(ServiceTier::Fast.request_value())),
+            StatusLineItem::Subagents => self.subagents_enabled.then(|| "".to_string()),
             StatusLineItem::RawOutput => self.raw_output_mode().then(|| "raw output".to_string()),
             StatusLineItem::ThreadName => {
                 self.thread_name.as_deref().and_then(normalize_thread_name)
@@ -867,6 +871,7 @@ impl ChatWidget {
             StatusSurfacePreviewItem::EstimatedThreadCost => StatusLineItem::EstimatedThreadCost,
             StatusSurfacePreviewItem::SessionId => StatusLineItem::SessionId,
             StatusSurfacePreviewItem::FastMode => StatusLineItem::FastMode,
+            StatusSurfacePreviewItem::Subagents => StatusLineItem::Subagents,
             StatusSurfacePreviewItem::RawOutput => StatusLineItem::RawOutput,
             StatusSurfacePreviewItem::WorkspaceHeadline => StatusLineItem::WorkspaceHeadline,
             StatusSurfacePreviewItem::Model => StatusLineItem::ModelName,

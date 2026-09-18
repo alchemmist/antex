@@ -436,6 +436,7 @@ mod service_tiers;
 mod settings;
 mod settings_popups;
 mod side;
+mod subagent_mode;
 use self::safety_buffering::SafetyBufferingState;
 mod status_state;
 mod windows_sandbox_prompts;
@@ -738,8 +739,8 @@ pub(crate) struct ChatWidget {
     suppress_initial_user_message_submit: bool,
     input_queue: InputQueueState,
     stashed_composer: Option<ThreadComposerState>,
-    subagents_armed: bool,
-    active_turn_subagent_spawn_policy: SubagentSpawnPolicy,
+    subagents_enabled: bool,
+    subagent_mode_threads: HashSet<ThreadId>,
     safety_buffering_prompt: Option<UserMessage>,
     safety_buffering_source: UserMessageSource,
     /// Main chat-surface bindings resolved from `tui.keymap.chat`.

@@ -238,13 +238,16 @@ impl Session {
         turn_id: &str,
         update: TurnSettingsUpdate,
     ) -> TurnSettingsUpdateOutcome {
-        let reviewer_or_service_tier_only = (update.approvals_reviewer.is_some()
-            || update.service_tier.is_some())
+        let non_model_update = (update.approvals_reviewer.is_some()
+            || update.service_tier.is_some()
+            || update.subagent_spawn_policy.is_some())
             && update.model.is_none()
             && update.effort.is_none()
             && update.summary.is_none();
-        let reviewer_only = reviewer_or_service_tier_only && update.service_tier.is_none();
-        if !reviewer_or_service_tier_only && !self.features.enabled(Feature::StepModelSwitching) {
+        let reviewer_only = non_model_update
+            && update.service_tier.is_none()
+            && update.subagent_spawn_policy.is_none();
+        if !non_model_update && !self.features.enabled(Feature::StepModelSwitching) {
             return TurnSettingsUpdateOutcome::Rejected {
                 reason: "turn settings updates require the step_model_switching feature"
                     .to_string(),
@@ -272,6 +275,7 @@ impl Session {
             return TurnSettingsUpdateOutcome::TargetUnavailable;
         };
         let TurnSettingsUpdate {
+            subagent_spawn_policy,
             approvals_reviewer,
             model,
             effort,
@@ -279,6 +283,7 @@ impl Session {
             service_tier,
         } = update;
         let update = StepSettingsUpdate {
+            subagent_spawn_policy,
             approvals_reviewer,
             model,
             effort,

@@ -91,7 +91,7 @@ impl ChatWidget {
             user_message,
             history_record,
             ShellEscapePolicy::Allow,
-            SubagentSpawnPolicy::Disallow,
+            self.selected_subagent_spawn_policy(),
             UserMessageSource::Prompt,
         )
         .0
@@ -121,7 +121,7 @@ impl ChatWidget {
             user_message,
             UserMessageHistoryRecord::UserMessageText,
             shell_escape_policy,
-            SubagentSpawnPolicy::Disallow,
+            self.selected_subagent_spawn_policy(),
             UserMessageSource::Prompt,
         )
         .1
@@ -219,24 +219,6 @@ impl ChatWidget {
             return (false, None);
         }
         self.maybe_begin_explicit_plan_implementation(&user_message);
-        if self.turn_lifecycle.agent_turn_running
-            && subagent_spawn_policy != self.active_turn_subagent_spawn_policy
-        {
-            self.input_queue
-                .queued_user_messages
-                .push_back(QueuedUserMessage {
-                    user_message,
-                    action: QueuedInputAction::Plain,
-                    pending_pastes: Vec::new(),
-                    subagent_spawn_policy,
-                    source,
-                });
-            self.input_queue
-                .queued_user_message_history_records
-                .push_back(history_record);
-            self.refresh_pending_input_preview();
-            return (true, None);
-        }
         if (!user_message.local_images.is_empty() || !user_message.remote_image_urls.is_empty())
             && !self.current_model_supports_images()
         {
@@ -278,9 +260,6 @@ impl ChatWidget {
                 )),
             };
             return (app_command.is_some(), app_command);
-        }
-        if render_in_history {
-            self.active_turn_subagent_spawn_policy = subagent_spawn_policy;
         }
 
         for image_url in &remote_image_urls {

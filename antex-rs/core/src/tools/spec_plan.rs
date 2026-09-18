@@ -110,6 +110,7 @@ const IMAGEGEN_TOOL_NAME: &str = "imagegen";
 #[derive(Clone, Copy)]
 struct CoreToolPlanContext<'a> {
     turn_context: &'a TurnContext,
+    subagent_spawn_policy: antex_protocol::config_types::SubagentSpawnPolicy,
     model_info: &'a ModelInfo,
     model_messages: Option<&'a ModelMessages>,
     environments: &'a TurnEnvironmentSnapshot,
@@ -123,6 +124,7 @@ struct CoreToolPlanContext<'a> {
 #[instrument(level = "trace", skip_all)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_tool_router(
+    subagent_spawn_policy: antex_protocol::config_types::SubagentSpawnPolicy,
     session: &Session,
     turn_context: &TurnContext,
     model_info: &ModelInfo,
@@ -140,6 +142,7 @@ pub(crate) fn build_tool_router(
         .thread_extension_data
         .get::<crate::WaitForEnvironmentToolConfig>();
     let context = CoreToolPlanContext {
+        subagent_spawn_policy,
         turn_context,
         model_info,
         model_messages,
@@ -277,6 +280,7 @@ pub(crate) fn build_core_tool_registry(
     let default_agent_type_description =
         crate::agent::role::spawn_tool_spec::build(&std::collections::BTreeMap::new());
     let context = CoreToolPlanContext {
+        subagent_spawn_policy: turn_context.subagent_spawn_policy,
         turn_context,
         model_info,
         model_messages: model_info.model_messages.as_ref(),
@@ -1257,7 +1261,7 @@ fn add_collaboration_tools(context: &CoreToolPlanContext<'_>, registry: &mut Too
             let hide_spawn_agent_metadata =
                 turn_context.config.multi_agent_v2.hide_spawn_agent_metadata;
             if matches!(
-                turn_context.subagent_spawn_policy,
+                context.subagent_spawn_policy,
                 antex_protocol::config_types::SubagentSpawnPolicy::Allow
             ) {
                 registry.register_trusted_with_exposure(
@@ -1317,7 +1321,7 @@ fn add_collaboration_tools(context: &CoreToolPlanContext<'_>, registry: &mut Too
                 ToolExposure::Direct
             };
             if matches!(
-                turn_context.subagent_spawn_policy,
+                context.subagent_spawn_policy,
                 antex_protocol::config_types::SubagentSpawnPolicy::Allow
             ) {
                 registry.add_with_exposure(

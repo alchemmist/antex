@@ -149,7 +149,7 @@ impl SlashCommand {
             SlashCommand::Goal => "set or view the goal for a long-running task",
             SlashCommand::Workflow => "run, pause, resume, or cancel a Python workflow",
             SlashCommand::Agents => "view and switch between all active agent sessions",
-            SlashCommand::MultiAgents => "switch between this session's subagents",
+            SlashCommand::MultiAgents => "toggle subagent mode",
             SlashCommand::Side | SlashCommand::Btw => {
                 "start a side conversation in an ephemeral fork"
             }

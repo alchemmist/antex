@@ -1199,6 +1199,11 @@ pub(crate) enum AppEvent {
         voice: antex_protocol::protocol::RealtimeVoice,
     },
 
+    SetSubagentMode {
+        thread_id: ThreadId,
+        policy: antex_protocol::config_types::SubagentSpawnPolicy,
+    },
+
     /// Persist the selected service tier to the appropriate config.
     PersistServiceTierSelection {
         service_tier: Option<String>,

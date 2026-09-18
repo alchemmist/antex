@@ -2262,6 +2262,13 @@ impl App {
             AppEvent::PersistRealtimeVoiceSelection { voice } => {
                 self.persist_realtime_voice(app_server, voice).await;
             }
+            AppEvent::SetSubagentMode { thread_id, policy } => {
+                if let Some(turn_id) = self.active_turn_id_for_thread(thread_id).await
+                    && let Err(err) = app_server.update_active_subagent_mode(thread_id, turn_id, policy).await
+                {
+                    self.chat_widget.add_error_message(format!("Subagent mode changed for future prompts, but the active turn could not be updated: {err}"));
+                }
+            }
             AppEvent::PersistServiceTierSelection { service_tier } => {
                 self.refresh_status_line();
                 self.config.service_tier = service_tier.clone();

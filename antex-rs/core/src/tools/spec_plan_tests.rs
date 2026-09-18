@@ -608,6 +608,7 @@ async fn internal_guardian_sessions_exclude_optional_core_tools() {
     let step_context = StepContext::for_test(Arc::clone(&turn));
 
     let router = super::build_tool_router(
+        step_context.turn.subagent_spawn_policy,
         &session,
         step_context.turn.as_ref(),
         step_context.turn.model_info(),
@@ -662,6 +663,7 @@ async fn internal_guardian_sessions_respect_managed_shell_restrictions() {
         let step_context = StepContext::for_test(Arc::clone(&turn));
 
         let router = super::build_tool_router(
+            step_context.turn.subagent_spawn_policy,
             &session,
             step_context.turn.as_ref(),
             step_context.turn.model_info(),
@@ -700,6 +702,7 @@ async fn internal_guardian_sessions_preserve_code_mode() {
     let step_context = StepContext::for_test(Arc::clone(&turn));
 
     let router = super::build_tool_router(
+        step_context.turn.subagent_spawn_policy,
         &session,
         step_context.turn.as_ref(),
         step_context.turn.model_info(),
@@ -772,6 +775,7 @@ async fn internal_guardian_sessions_require_managed_secondary_environments() {
         let step_context = StepContext::for_test(Arc::clone(&turn));
 
         let router = super::build_tool_router(
+            step_context.turn.subagent_spawn_policy,
             &session,
             step_context.turn.as_ref(),
             step_context.turn.model_info(),

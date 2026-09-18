@@ -20,6 +20,7 @@ impl AppServerSession {
                 params: TurnSettingsUpdateParams {
                     thread_id: thread_id.to_string(),
                     turn_id,
+                    subagent_spawn_policy: None,
                     approvals_reviewer: None,
                     model: None,
                     effort: None,
@@ -29,6 +30,30 @@ impl AppServerSession {
             })
             .await
             .wrap_err("turn/settings/update failed while changing the active service tier")?;
+        Ok(())
+    }
+}
+
+impl AppServerSession {
+    pub(crate) async fn update_active_subagent_mode(
+        &mut self,
+        thread_id: ThreadId,
+        turn_id: String,
+        policy: antex_protocol::config_types::SubagentSpawnPolicy,
+    ) -> Result<()> {
+        let request_id = self.next_request_id();
+        self.client
+            .request_typed::<TurnSettingsUpdateResponse>(ClientRequest::TurnSettingsUpdate {
+                request_id,
+                params: TurnSettingsUpdateParams {
+                    thread_id: thread_id.to_string(),
+                    turn_id,
+                    subagent_spawn_policy: Some(policy),
+                    ..Default::default()
+                },
+            })
+            .await
+            .wrap_err("turn/settings/update failed while changing subagent mode")?;
         Ok(())
     }
 }

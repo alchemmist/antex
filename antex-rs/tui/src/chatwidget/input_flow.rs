@@ -10,30 +10,12 @@ use crate::bottom_pane::slash_commands::SlashCommandItem;
 use crate::bottom_pane::slash_commands::find_slash_command;
 
 impl ChatWidget {
-    pub(super) fn sync_subagents_armed_indicator(&mut self) {
-        let placeholder = if self.subagents_armed {
-            "Subagents · next prompt"
-        } else if self.active_side_conversation {
-            self.side_placeholder_text.as_str()
-        } else {
-            self.normal_placeholder_text.as_str()
-        };
-        self.bottom_pane
-            .set_placeholder_text(placeholder.to_string());
-        self.request_redraw();
-    }
-
-    fn take_subagent_spawn_policy(&mut self) -> SubagentSpawnPolicy {
-        let policy = if self.subagents_armed {
+    pub(super) fn selected_subagent_spawn_policy(&self) -> SubagentSpawnPolicy {
+        if self.subagents_enabled {
             SubagentSpawnPolicy::Allow
         } else {
             SubagentSpawnPolicy::Disallow
-        };
-        if self.subagents_armed {
-            self.subagents_armed = false;
-            self.sync_subagents_armed_indicator();
         }
-        policy
     }
 
     pub(crate) fn set_parent_owned_thread(&mut self) {
@@ -60,7 +42,6 @@ impl ChatWidget {
                     return;
                 }
                 let should_submit_now = self.is_session_configured()
-                    && !self.is_plan_streaming_in_tui()
                     && !self.input_queue.suppress_queue_autosend
                     && !self.input_queue.rate_limit_recovery_pending
                     && (!self.input_queue.user_turn_pending_start
@@ -81,14 +62,14 @@ impl ChatWidget {
                     let subagent_spawn_policy = if user_message.text.starts_with('!') {
                         SubagentSpawnPolicy::Disallow
                     } else {
-                        self.take_subagent_spawn_policy()
+                        self.selected_subagent_spawn_policy()
                     };
                     self.submit_user_message_with_subagents(user_message, subagent_spawn_policy);
                 } else {
                     let subagent_spawn_policy = if user_message.text.starts_with('!') {
                         SubagentSpawnPolicy::Disallow
                     } else {
-                        self.take_subagent_spawn_policy()
+                        self.selected_subagent_spawn_policy()
                     };
                     self.queue_user_message_with_subagents(user_message, subagent_spawn_policy);
                 }
@@ -103,7 +84,7 @@ impl ChatWidget {
                 let subagent_spawn_policy = if action == QueuedInputAction::RunShell {
                     SubagentSpawnPolicy::Disallow
                 } else {
-                    self.take_subagent_spawn_policy()
+                    self.selected_subagent_spawn_policy()
                 };
                 self.queue_user_message_with_options_and_subagents(
                     user_message,
@@ -199,7 +180,7 @@ impl ChatWidget {
             user_message,
             action,
             pending_pastes,
-            SubagentSpawnPolicy::Disallow,
+            self.selected_subagent_spawn_policy(),
             source,
         )
     }
@@ -295,9 +276,11 @@ impl ChatWidget {
         }
         let mut submitted_follow_up = false;
         while !self.is_user_turn_pending_or_running() {
-            let Some((queued_message, history_record)) = self.pop_next_queued_user_message() else {
+            let Some((mut queued_message, history_record)) = self.pop_next_queued_user_message()
+            else {
                 break;
             };
+            queued_message.subagent_spawn_policy = self.selected_subagent_spawn_policy();
             match queued_message.action {
                 QueuedInputAction::Plain => {
                     let subagent_spawn_policy = queued_message.subagent_spawn_policy;

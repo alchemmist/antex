@@ -12,6 +12,99 @@ use base64::Engine;
 use pretty_assertions::assert_eq;
 use std::collections::VecDeque;
 
+#[tokio::test]
+async fn enter_reaches_active_turn_after_subagents_prompt() {
+    for pasted in [false, true] {
+        let model_override = None;
+        let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(model_override).await;
+        chat.thread_id = Some(ThreadId::new());
+        chat.dispatch_command(SlashCommand::MultiAgents);
+        chat.bottom_pane.set_composer_text(
+            "delegate this task".to_string(),
+            Vec::new(),
+            Vec::new(),
+        );
+        chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(matches!(
+            next_submit_op(&mut op_rx),
+            Op::UserTurn {
+                subagent_spawn_policy: SubagentSpawnPolicy::Allow,
+                ..
+            }
+        ));
+        handle_turn_started(&mut chat, "turn-1");
+        chat.bottom_pane
+            .set_composer_text("afterwards".to_string(), Vec::new(), Vec::new());
+        chat.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+
+        if pasted {
+            chat.handle_paste("change direction".to_string());
+        } else {
+            chat.bottom_pane.set_composer_text(
+                "change direction".to_string(),
+                Vec::new(),
+                Vec::new(),
+            );
+        }
+        chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        assert!(
+            matches!(
+                op_rx.try_recv(),
+                Ok(Op::UserTurn {
+                    subagent_spawn_policy: SubagentSpawnPolicy::Allow,
+                    ..
+                })
+            ),
+            "Enter did not steer the active subagent-enabled turn"
+        );
+        assert_eq!(chat.queued_user_message_texts(), vec!["afterwards"]);
+        complete_user_message(&mut chat, "steer-1", "change direction");
+        let duration_ms = None;
+        handle_turn_completed(&mut chat, "turn-1", duration_ms);
+        assert!(matches!(
+            next_submit_op(&mut op_rx),
+            Op::UserTurn {
+                subagent_spawn_policy: SubagentSpawnPolicy::Allow,
+                ..
+            }
+        ));
+    }
+}
+
+#[tokio::test]
+async fn enabling_subagents_does_not_queue_enter() {
+    let model_override = None;
+    let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(model_override).await;
+    chat.thread_id = Some(ThreadId::new());
+    handle_turn_started(&mut chat, "turn-1");
+    chat.bottom_pane
+        .set_composer_text("later".to_string(), Vec::new(), Vec::new());
+    chat.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    chat.dispatch_command(SlashCommand::MultiAgents);
+    chat.bottom_pane
+        .set_composer_text("delegate next".to_string(), Vec::new(), Vec::new());
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(matches!(
+        next_submit_op(&mut op_rx),
+        Op::UserTurn {
+            subagent_spawn_policy: SubagentSpawnPolicy::Allow,
+            ..
+        }
+    ));
+    assert_eq!(chat.queued_user_message_texts(), vec!["later"]);
+    complete_user_message(&mut chat, "steer-1", "delegate next");
+    let duration_ms = None;
+    handle_turn_completed(&mut chat, "turn-1", duration_ms);
+    assert!(matches!(
+        next_submit_op(&mut op_rx),
+        Op::UserTurn {
+            subagent_spawn_policy: SubagentSpawnPolicy::Allow,
+            ..
+        }
+    ));
+}
+
 fn paste_hidden_shell_payload(chat: &mut ChatWidget) -> String {
     let payload = format!("!echo {}", "x".repeat(1000));
     chat.handle_paste(payload.clone());

@@ -2655,6 +2655,122 @@ async fn service_tier_updates_apply_during_a_turn_without_model_switching() -> R
     Ok(())
 }
 
+#[test_case(Feature::Collab; "v1")]
+#[test_case(Feature::MultiAgentV2; "v2")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn subagent_mode_changes_tools_during_the_same_turn(feature: Feature) -> Result<()> {
+    skip_if_no_network!(Ok(()));
+    let server = start_mock_server().await;
+    let response_mock = mount_sse_sequence(
+        &server,
+        vec![
+            paused_response("resp-1", "pause-first"),
+            paused_response("resp-2", "pause-second"),
+            sse_completed("resp-3"),
+        ],
+    )
+    .await;
+    let test = direct_tool_settings_test()
+        .with_config(move |config| {
+            config
+                .features
+                .enable(feature)
+                .expect("enable collaboration");
+            for model in &mut config.model_catalog.as_mut().expect("models").models {
+                model.supports_search_tool = false;
+                model.multi_agent_version = Some(if feature == Feature::Collab {
+                    antex_protocol::protocol::MultiAgentVersion::V1
+                } else {
+                    antex_protocol::protocol::MultiAgentVersion::V2
+                });
+            }
+            config
+                .features
+                .disable(Feature::StepModelSwitching)
+                .expect("disable model switching");
+        })
+        .build_with_auto_env(&server)
+        .await?;
+    let initial = test.antex.thread_settings_snapshot().await;
+    let first = start_paused_turn(&test.antex).await?;
+    assert_eq!(
+        submit_turn_settings(
+            &test.antex,
+            &first.turn_id,
+            TurnSettingsUpdate {
+                subagent_spawn_policy: Some(
+                    antex_protocol::config_types::SubagentSpawnPolicy::Disallow
+                ),
+                ..Default::default()
+            },
+        )
+        .await?,
+        TurnSettingsUpdateOutcome::Applied
+    );
+    answer_paused_turn(&test.antex, &first.turn_id).await?;
+    let second = wait_for_event_match(&test.antex, |event| match event {
+        EventMsg::RequestUserInput(request) => Some(request.clone()),
+        _ => None,
+    })
+    .await;
+    assert_eq!(
+        submit_turn_settings(
+            &test.antex,
+            &second.turn_id,
+            TurnSettingsUpdate {
+                subagent_spawn_policy: Some(
+                    antex_protocol::config_types::SubagentSpawnPolicy::Allow
+                ),
+                ..Default::default()
+            },
+        )
+        .await?,
+        TurnSettingsUpdateOutcome::Applied
+    );
+    answer_paused_turn(&test.antex, &second.turn_id).await?;
+    wait_for_event(&test.antex, |event| {
+        matches!(event, EventMsg::TurnComplete(_))
+    })
+    .await;
+    let requests = response_mock.requests();
+    assert_eq!(
+        requests
+            .iter()
+            .map(|request| {
+                let body = request.body_json();
+                let has_spawn = body["tools"].as_array().expect("tools").iter().any(|tool| {
+                    tool["name"] == "spawn_agent"
+                        || tool["tools"].as_array().is_some_and(|tools| {
+                            tools.iter().any(|tool| tool["name"] == "spawn_agent")
+                        })
+                });
+                (request_turn_id(request), has_spawn)
+            })
+            .collect::<Vec<_>>(),
+        vec![
+            (first.turn_id.clone(), true),
+            (first.turn_id.clone(), false),
+            (first.turn_id.clone(), true)
+        ]
+    );
+    assert_eq!(test.antex.thread_settings_snapshot().await, initial);
+    assert_eq!(
+        submit_turn_settings(
+            &test.antex,
+            &first.turn_id,
+            TurnSettingsUpdate {
+                subagent_spawn_policy: Some(
+                    antex_protocol::config_types::SubagentSpawnPolicy::Disallow
+                ),
+                ..Default::default()
+            },
+        )
+        .await?,
+        TurnSettingsUpdateOutcome::TargetUnavailable
+    );
+    Ok(())
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn captured_step_controls_exec_completion_and_write_stdin_output() -> Result<()> {
     core_test_support::skip_if_target_windows!(Ok(()), "uses POSIX read and printf");

@@ -79,6 +79,7 @@ pub(super) fn prepare_update(overrides: ThreadSettingsOverrides) -> SessionSetti
     } = overrides;
     SessionSettingsUpdate {
         step_settings: StepSettingsUpdate {
+            subagent_spawn_policy: None,
             model,
             effort,
             collaboration_mode,

@@ -537,6 +537,80 @@ async fn live_reviewer_updates_route_approvals_without_changing_future_turns(
     Ok(())
 }
 
+#[tokio::test]
+async fn subagent_mode_updates_spawn_tools_in_the_active_turn() -> Result<()> {
+    let server = responses::start_mock_server().await;
+    let requests = responses::mount_sse_sequence(&server, vec![
+        responses::sse(vec![
+            responses::ev_response_created("response-1"),
+            responses::ev_function_call("pause", "request_user_input", &json!({
+                "questions": [{"id": "continue", "header": "Continue", "question": "Continue?",
+                    "options": [{"label": "Yes", "description": "Continue"}, {"label": "No", "description": "Stop"}]}]
+            }).to_string()),
+            responses::ev_completed("response-1"),
+        ]),
+        responses::sse(vec![responses::ev_response_created("response-2"), responses::ev_completed("response-2")]),
+    ]).await;
+    let home = TempDir::new()?;
+    mock_config(home.path(), &server.uri())?
+        .enable_feature(Feature::MultiAgentV2)
+        .write(home.path())?;
+    let mut app = TestAppServer::builder()
+        .with_antex_home(home.path())
+        .build_initialized_with_timeout(DEFAULT_TIMEOUT)
+        .await?;
+    let id = app
+        .send_thread_start_request_with_auto_env(ThreadStartParams::default())
+        .await?;
+    let ThreadStartResponse { thread, .. } = app.read_response(id).await?;
+    let turn_id = start_turn(&mut app, &thread.id).await?;
+    let request = app.read_stream_until_request_message().await?;
+    let ServerRequest::ToolRequestUserInput { request_id, .. } = request else {
+        anyhow::bail!("expected paused turn, received {request:?}");
+    };
+    let result: TurnSettingsUpdateResponse = app
+        .request(|request_id| ClientRequest::TurnSettingsUpdate {
+            request_id,
+            params: TurnSettingsUpdateParams {
+                thread_id: thread.id,
+                turn_id,
+                subagent_spawn_policy: Some(
+                    antex_protocol::config_types::SubagentSpawnPolicy::Disallow,
+                ),
+                ..Default::default()
+            },
+        })
+        .await?;
+    assert_eq!(
+        result,
+        TurnSettingsUpdateResponse {
+            status: TurnSettingsUpdateStatus::Applied
+        }
+    );
+    app.send_response(
+        request_id,
+        json!({"answers": {"continue": {"answers": ["Yes"]}}}),
+    )
+    .await?;
+    let _: TurnCompletedNotification = app.read_notification("turn/completed").await?;
+    assert_eq!(
+        requests
+            .requests()
+            .iter()
+            .map(|request| request.body_json()["tools"]
+                .as_array()
+                .expect("tools")
+                .iter()
+                .any(|tool| tool["name"] == "spawn_agent"
+                    || tool["tools"].as_array().is_some_and(|tools| tools
+                        .iter()
+                        .any(|tool| tool["name"] == "spawn_agent"))))
+            .collect::<Vec<_>>(),
+        vec![true, false]
+    );
+    Ok(())
+}
+
 async fn start_turn(app: &mut TestAppServer, thread_id: &str) -> Result<String> {
     let request_id = app
         .send_turn_start_request(TurnStartParams {

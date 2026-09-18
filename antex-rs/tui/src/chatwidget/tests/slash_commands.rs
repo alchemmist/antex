@@ -116,14 +116,14 @@ async fn agents_command_opens_agents_overview() {
 }
 
 #[tokio::test]
-async fn subagents_command_arms_exactly_one_prompt() {
+async fn subagents_command_stays_enabled_until_toggled() {
     let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.thread_id = Some(ThreadId::new());
 
     chat.dispatch_command(SlashCommand::MultiAgents);
-    assert!(chat.subagents_armed);
+    assert!(chat.subagents_enabled);
     assert_chatwidget_snapshot!(
-        "subagents_armed_composer",
+        "subagent_mode_enabled",
         render_bottom_popup(&chat, /*width*/ 80)
     );
 
@@ -135,11 +135,36 @@ async fn subagents_command_arms_exactly_one_prompt() {
         } => assert_eq!(subagent_spawn_policy, SubagentSpawnPolicy::Allow),
         other => panic!("expected user turn, got {other:?}"),
     }
-    assert!(!chat.subagents_armed);
+    assert!(chat.subagents_enabled);
+    handle_turn_started(&mut chat, "turn-1");
+    let duration_ms = None;
+    handle_turn_completed(&mut chat, "turn-1", duration_ms);
+    submit_composer_text(&mut chat, "delegate again");
+    assert!(matches!(
+        next_submit_op(&mut op_rx),
+        Op::UserTurn {
+            subagent_spawn_policy: SubagentSpawnPolicy::Allow,
+            ..
+        }
+    ));
+    handle_turn_started(&mut chat, "turn-2");
+    handle_turn_completed(&mut chat, "turn-2", duration_ms);
+    chat.dispatch_command(SlashCommand::MultiAgents);
+    assert!(!chat.subagents_enabled);
+    let width = 80;
+    assert_chatwidget_snapshot!("subagent_mode_disabled", render_bottom_popup(&chat, width));
+    submit_composer_text(&mut chat, "work without subagents");
+    assert!(matches!(
+        next_submit_op(&mut op_rx),
+        Op::UserTurn {
+            subagent_spawn_policy: SubagentSpawnPolicy::Disallow,
+            ..
+        }
+    ));
 }
 
 #[tokio::test]
-async fn inline_subagents_authorizes_only_its_clean_prompt() {
+async fn inline_subagents_enables_mode_and_submits_clean_prompt() {
     let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.thread_id = Some(ThreadId::new());
 
@@ -158,6 +183,25 @@ async fn inline_subagents_authorizes_only_its_clean_prompt() {
             );
         }
         other => panic!("expected user turn, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn subagent_mode_on_off_commands_are_idempotent() {
+    let model_override = None;
+    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(model_override).await;
+    let thread_id = ThreadId::new();
+    chat.thread_id = Some(thread_id);
+    for (command, expected) in [
+        ("/subagents on", true),
+        ("/subagents on", true),
+        ("/subagents off", false),
+        ("/subagents off", false),
+    ] {
+        submit_composer_text(&mut chat, command);
+        assert_eq!(chat.subagents_enabled, expected);
+        assert_no_submit_op(&mut op_rx);
+        assert!(std::iter::from_fn(|| rx.try_recv().ok()).any(|event| matches!(event, AppEvent::SetSubagentMode { thread_id: id, policy } if id == thread_id && (policy == SubagentSpawnPolicy::Allow) == expected)));
     }
 }
 

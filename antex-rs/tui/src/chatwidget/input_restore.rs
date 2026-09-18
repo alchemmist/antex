@@ -358,7 +358,7 @@ impl ChatWidget {
                     user_message,
                     history_record,
                     ShellEscapePolicy::Allow,
-                    self.active_turn_subagent_spawn_policy,
+                    self.selected_subagent_spawn_policy(),
                     source,
                 );
             } else if let Some(combined) = self.drain_pending_messages_for_restore() {

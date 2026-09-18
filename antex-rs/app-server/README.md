@@ -288,6 +288,8 @@ process control and custom output caps do not apply to MXC.
 
 `thread/context/read` returns the exact base instructions, current model-visible history items, cached token usage, and latest complete logical Responses API request for a loaded thread.
 
-# Active service-tier updates (experimental)
+# Active turn settings (experimental)
 
 `turn/settings/update` accepts `serviceTier` for the active `threadId` and `turnId` without enabling `step_model_switching`. It applies to subsequent steps in that turn; already captured steps retain their settings. Model, effort, and summary changes still require `step_model_switching`.
+
+`turn/settings/update` also accepts `subagentSpawnPolicy` (`allow` or `disallow`) without `step_model_switching`. This changes spawn-tool availability on subsequent requests of the named active turn. Existing steps and agents, and future turns, retain their original policy.

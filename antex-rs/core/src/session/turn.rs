@@ -1717,6 +1717,7 @@ pub(crate) async fn prepare_tool_recommendations(
     )
 )]
 pub(crate) async fn built_tools(
+    subagent_spawn_policy: antex_protocol::config_types::SubagentSpawnPolicy,
     sess: &Session,
     turn_context: &TurnContext,
     model_info: &antex_protocol::openai_models::ModelInfo,
@@ -1787,6 +1788,7 @@ pub(crate) async fn built_tools(
             .await
         };
     Ok(Arc::new(build_tool_router(
+        subagent_spawn_policy,
         sess,
         turn_context,
         model_info,

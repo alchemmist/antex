@@ -1,0 +1,16 @@
+---
+source: tui/src/chatwidget/tests/review_mode.rs
+expression: "render_bottom_popup(&chat, width)"
+---
+• Proposed Plan
+
+
+  - Step 1
+
+• Messages to be submitted after next tool call (press esc to interrupt and send
+  immediately)
+  ↳ steer submission
+
+ ┃ Ask Antex to do anything
+
+  gpt-5.6-sol medium · /tmp/project                                  Plan mode

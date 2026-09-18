@@ -493,6 +493,7 @@ pub struct ConversationSpeechParams {
 /// task kind. Child sessions and consumers of frozen initial settings are unchanged.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TurnSettingsUpdate {
+    pub subagent_spawn_policy: Option<crate::config_types::SubagentSpawnPolicy>,
     /// Changes the reviewer for subsequent approval requests, not pending reviews.
     pub approvals_reviewer: Option<ApprovalsReviewer>,
     pub model: Option<String>,
