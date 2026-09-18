@@ -799,6 +799,9 @@ def run_installer_in(
     fail_ps: bool = False,
     daemon_only: bool = False,
     manual_update: bool = False,
+    script_input: str | None = None,
+    script_args: tuple[str, ...] = (),
+    interactive: bool = False,
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     bin_dir = root / "bin"
     bin_dir.mkdir(exist_ok=True)
@@ -931,7 +934,7 @@ def run_installer_in(
         {
             "ANTEX_HOME": str(root / "antex-home"),
             "ANTEX_INSTALL_DIR": str(root / "install-bin"),
-            "ANTEX_NON_INTERACTIVE": "1",
+            "ANTEX_NON_INTERACTIVE": "0" if interactive else "1",
             "ANTEX_RELEASE": release,
             "ANTEX_INSTALL_DAEMON_ONLY": "1" if daemon_only else "0",
             "ANTEX_TEST_ARCHIVE_PATH": str(archive_path or ""),
@@ -972,8 +975,15 @@ def run_installer_in(
         env["ANTEX_RELEASES_BASE_URL"] = "https://releases.example.com/antex"
     else:
         env.pop("ANTEX_RELEASES_BASE_URL", None)
+    command = (
+        ["/bin/sh", str(INSTALL_SCRIPT)]
+        if script_input is None
+        else ["/bin/sh", "-s", "--"]
+    )
     result = subprocess.run(
-        ["/bin/sh", str(INSTALL_SCRIPT)],
+        [*command, *script_args],
+        input=script_input,
+        cwd=root,
         capture_output=True,
         check=False,
         env=env,
@@ -999,6 +1009,7 @@ def create_package_release(
     *,
     metadata_version: str = VERSION,
     target: str = "aarch64-apple-darwin",
+    extra_files: dict[str, str] | None = None,
 ) -> tuple[Path, Path, str]:
     package_dir = root / "package"
     (package_dir / "bin").mkdir(parents=True)
@@ -1016,6 +1027,11 @@ def create_package_release(
     if "linux" in target:
         (package_dir / "antex-resources").mkdir()
         write_executable(package_dir / "antex-resources/bwrap", "#!/bin/sh\nexit 0\n")
+
+    for name, content in (extra_files or {}).items():
+        path = package_dir / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        write_executable(path, content)
 
     asset = f"antex-package-{target}.tar.gz"
     archive_path = root / asset

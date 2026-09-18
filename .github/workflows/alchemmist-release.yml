@@ -151,7 +151,7 @@ jobs:
           python3 scripts/smoke-tui-voice.py "$RUNNER_TEMP/installed/bin/antex"
           python3 scripts/smoke-daemon-package.py "$RUNNER_TEMP/installed/bin/antex"
           python3 -m unittest discover -s scripts -p 'test_install_fork_package.py'
-          python3 -m unittest discover -s scripts/install -p 'test_install_sh.py'
+          python3 -m unittest discover -s scripts/install -p 'test_*.py'
           python3 -m unittest discover -s third_party/voice -p 'test_assemble_package.py'
           cd "$RUNNER_TEMP"
           python3 - "$TARGET" <<'PYTHON'

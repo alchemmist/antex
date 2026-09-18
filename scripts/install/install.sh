@@ -17,7 +17,13 @@ BIN_DIR="${ANTEX_INSTALL_DIR:-$HOME/.local/bin}"
 BIN_PATH="$BIN_DIR/antex"
 CODE_MODE_HOST_BIN_PATH="$BIN_DIR/antex-code-mode-host"
 ANTEX_HOME_DIR="${ANTEX_HOME:-$HOME/.antex}"
+legacy_home="${CODEX_HOME:-$HOME/.codex}"
+migration_needed="false"
 STANDALONE_ROOT="$ANTEX_HOME_DIR/packages/standalone"
+if [ ! -e "$ANTEX_HOME_DIR" ] && [ -d "$legacy_home" ] && [ -n "$(ls -A "$legacy_home")" ]; then
+  migration_needed="true"
+  STANDALONE_ROOT="$BIN_DIR/.antex-bootstrap"
+fi
 if [ "$DAEMON_ONLY" = "1" ]; then
   STANDALONE_ROOT="$ANTEX_HOME_DIR/packages/app-server-daemon"
 fi
@@ -41,6 +47,7 @@ conflict_manager=""
 conflict_path=""
 lock_kind=""
 tmp_dir=""
+stage_release=""
 
 step() {
   printf '==> %s\n' "$1"
@@ -889,25 +896,29 @@ prompt_yes_no() {
 }
 
 print_launch_instructions() {
+  launch_command="antex"
+  if [ "$migration_needed" = "true" ]; then
+    launch_command="antex migrate"
+  fi
   case "$path_action" in
     added)
-      step "Current terminal: export PATH=\"$BIN_DIR:\$PATH\" && antex"
-      step "Future terminals: open a new terminal and run: antex"
+      step "Current terminal: export PATH=\"$BIN_DIR:\$PATH\" && $launch_command"
+      step "Future terminals: open a new terminal and run: $launch_command"
       step "PATH was added to $path_profile"
       ;;
     updated)
-      step "Current terminal: export PATH=\"$BIN_DIR:\$PATH\" && antex"
-      step "Future terminals: open a new terminal and run: antex"
+      step "Current terminal: export PATH=\"$BIN_DIR:\$PATH\" && $launch_command"
+      step "Future terminals: open a new terminal and run: $launch_command"
       step "PATH was updated in $path_profile"
       ;;
     configured)
-      step "Current terminal: export PATH=\"$BIN_DIR:\$PATH\" && antex"
-      step "Future terminals: open a new terminal and run: antex"
+      step "Current terminal: export PATH=\"$BIN_DIR:\$PATH\" && $launch_command"
+      step "Future terminals: open a new terminal and run: $launch_command"
       step "PATH is already configured in $path_profile"
       ;;
     *)
-      step "Current terminal: antex"
-      step "Future terminals: open a new terminal and run: antex"
+      step "Current terminal: $launch_command"
+      step "Future terminals: open a new terminal and run: $launch_command"
       ;;
   esac
 }
@@ -915,7 +926,11 @@ print_launch_instructions() {
 maybe_launch_antex_now() {
   if prompt_yes_no "Start Antex now?"; then
     step "Launching Antex"
-    "$BIN_PATH"
+    if ( : </dev/tty ) 2>/dev/null; then
+      "$BIN_PATH" </dev/tty >/dev/tty 2>&1
+    else
+      "$BIN_PATH"
+    fi
   fi
 }
 
@@ -960,6 +975,16 @@ handle_conflicting_install() {
   fi
 }
 
+verify_release_command() {
+  if ! "$1" --version >/dev/null; then
+    echo "Downloaded Antex cannot run on this system; the existing installation was not changed." >&2
+    if [ "$os" = "linux" ]; then
+      echo "Linux GNU releases require glibc 2.39+ and the OpenSSL 3 runtime (libssl.so.3)." >&2
+    fi
+    return 1
+  fi
+}
+
 install_package_release() {
   release_dir="$1"
   archive_path="$2"
@@ -977,6 +1002,7 @@ install_package_release() {
     chmod 0755 "$stage_release/antex-resources/bwrap"
   fi
   ln -sf "bin/antex" "$stage_release/antex"
+  verify_release_command "$stage_release/bin/antex"
 
   if [ -e "$release_dir" ] || [ -L "$release_dir" ]; then
     rm -rf "$release_dir"
@@ -999,6 +1025,7 @@ install_flat_release() {
   chmod 0755 "$stage_release/bin/antex" "$stage_release/bin/antex-code-mode-host"
   printf '{"version":"%s"}\n' "$resolved_version" > "$stage_release/antex-package.json"
   ln -s bin/antex "$stage_release/antex"
+  verify_release_command "$stage_release/bin/antex"
   if [ -e "$release_dir" ] || [ -L "$release_dir" ]; then
     rm -rf "$release_dir"
   fi
@@ -1026,6 +1053,7 @@ install_legacy_platform_npm_release() {
     chmod 0755 "$stage_release/antex-resources/bwrap"
   fi
 
+  verify_release_command "$stage_release/antex"
   if [ -e "$release_dir" ] || [ -L "$release_dir" ]; then
     rm -rf "$release_dir"
   fi
@@ -1209,6 +1237,9 @@ fi
 tmp_dir="$(mktemp -d)"
 cleanup() {
   release_install_lock
+  if [ -n "${stage_release:-}" ]; then
+    rm -rf "$stage_release"
+  fi
   if [ -n "$tmp_dir" ]; then
     rm -rf "$tmp_dir"
   fi
@@ -1217,8 +1248,7 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-legacy_home="${CODEX_HOME:-$HOME/.codex}"
-if [ ! -e "$ANTEX_HOME_DIR" ] && [ -d "$legacy_home" ] && [ -n "$(ls -A "$legacy_home")" ]; then
+if [ "$migration_needed" = "true" ] && [ "$DAEMON_ONLY" = "1" ]; then
   echo "Existing Codex data found at $legacy_home. Install the release binaries first and run antex migrate before using the managed installer." >&2
   exit 1
 fi
@@ -1327,6 +1357,7 @@ if [ "$DAEMON_ONLY" = "1" ] && [ "${ANTEX_INSTALL_DEFER_SELECTION:-0}" != "1" ];
     exit 1
   fi
 fi
+verify_release_command "$release_dir/$(release_antex_relative_path "$release_dir")"
 update_current_link "$release_dir"
 if [ "$RELEASE" = "latest" ]; then
   printf '%s' "$release_name" > "$AUTO_UPDATE_VERSION.tmp.$$"
@@ -1361,4 +1392,10 @@ case "$path_action" in
 esac
 
 printf 'Antex CLI %s installed successfully.\n' "$resolved_version"
-maybe_launch_antex_now
+if [ "$migration_needed" = "true" ]; then
+  step "Existing Codex data was left unchanged at $legacy_home"
+  step "Run antex migrate to review the migration, then antex migrate --apply when ready."
+  step "After migration, run this installer again to enable managed updates."
+else
+  maybe_launch_antex_now
+fi

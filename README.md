@@ -7,7 +7,7 @@ A terminal-native coding agent built on [OpenAI Codex](https://github.com/openai
 - The TUI uses the terminal palette and updates the composer, conversation history, plans, and diffs immediately when the terminal theme changes.
 - The configurable startup cockpit identifies alchemmist antex, shows its exact build commit, rotates fork-specific feature tips, and includes two animated ant mascot skins.
 - `Ctrl+S` stashes the current prompt draft, persists it across restarts, and restores it on the next press.
-- `/subagents <prompt>` explicitly enables subagents for one request; `/subagents` arms them for the next prompt.
+- `/subagents` toggles subagent mode for subsequent prompts in the current chat and can update an active turn.
 - `/statusline` can show the number of active subagents, while `/agents` opens an overview of their work.
 - Fast mode is process-local, resets to standard on every start or resume, and shows `⚡` in the status line while active.
 - `/cd <path>` changes the current session's working directory without restarting Antex.
@@ -21,9 +21,33 @@ A terminal-native coding agent built on [OpenAI Codex](https://github.com/openai
 - Prompts interrupted before work begins return to the editor; later interruptions are shown without a noisy error message.
 - Force pushes always require an explicit Yes or No selection in the TUI.
 - Fixes include tmux pane resize redraws, focus-related flickering, and a stable `Working` animation.
-- The root `Makefile` installs a local build or downloads ready-made macOS and Linux releases.
+- Install complete macOS and Linux releases with one curl command, or use the root `Makefile` for release downloads and local builds.
 
-## Build and install
+## Install
+
+Install the latest release without cloning the repository:
+
+```shell
+curl -fsSL https://raw.githubusercontent.com/alchemmist/antex/main/scripts/install/install.sh | sh
+```
+
+The installer detects macOS (Apple Silicon) or Linux (x86_64), verifies SHA-256 checksums, and installs the complete package, including Code Mode, voice, and bundled tools. It needs `curl`, `sh`, `tar`, and standard system utilities; Git, Make, Python, and Rust are not required. Current prebuilt Linux releases require glibc 2.39+ and OpenSSL 3 (`libssl.so.3`); release builds are tested on Ubuntu 24.04.
+
+The command is installed in `~/.local/bin`, and packages are stored under `~/.antex/packages/standalone`. The installer configures your shell's PATH when needed. Open a new terminal and run `antex`, or follow the launch command printed by the installer. Run the same installation command again to update.
+
+To install a specific release:
+
+```shell
+curl -fsSL https://raw.githubusercontent.com/alchemmist/antex/main/scripts/install/install.sh | sh -s -- --release 0.1.4
+```
+
+`ANTEX_INSTALL_DIR` changes the command directory; `ANTEX_HOME` changes the data and package directory. Set `ANTEX_NON_INTERACTIVE=1` on the `sh` process to skip optional prompts:
+
+```shell
+curl -fsSL https://raw.githubusercontent.com/alchemmist/antex/main/scripts/install/install.sh | ANTEX_NON_INTERACTIVE=1 sh
+```
+
+## Build and install from a checkout
 
 ```shell
 make install-local
@@ -35,7 +59,7 @@ Upstream documentation: [developers.openai.com/codex](https://developers.openai.
 
 ## Existing installations
 
-Launch the application with `antex`. To bring over an existing installation, run `antex migrate` to inspect the source and destination. After stopping Codex clients, repeat the command with `--apply`, then use `antex resume`. The migration keeps the original data and writes the new home to `~/.antex`; `--source` and `--destination` select other locations.
+Launch the application with `antex`. To bring over an existing installation, run `antex migrate` to inspect the source and destination. After stopping Codex clients, repeat the command with `--apply`, then use `antex resume`. The migration keeps the original data and writes the new home to `~/.antex`; `--source` and `--destination` select other locations. If the curl installer finds existing Codex data before the Antex home exists, it installs the binaries separately so you can run the migration first. Run the installer again after migrating to enable managed updates.
 
 `ANTEX_HOME` selects the Antex home. OpenAI service identifiers, model names, and existing session/protocol field names retain their upstream spelling for compatibility.
 
