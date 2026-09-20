@@ -49,6 +49,10 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Test TUI smoke process lifecycle
+        timeout-minutes: 2
+        run: python3 -m unittest discover -s scripts -p 'test_smoke_tui_voice.py' -v
+
       - uses: bazel-contrib/setup-bazel@c5acdfb288317d0b5c0bbd7a396a3dc868bb0f86
         with:
           bazelisk-version: 1.28.1
@@ -139,6 +143,7 @@ jobs:
           "${command[@]}"
 
       - name: Validate installed package
+        timeout-minutes: 5
         shell: bash
         env:
           TARGET: ${{ matrix.target }}
@@ -148,7 +153,19 @@ jobs:
           "$RUNNER_TEMP/installed/bin/antex" --help > /dev/null
           python3 scripts/smoke-code-mode-host.py "$RUNNER_TEMP/installed/bin/antex-code-mode-host"
           python3 scripts/smoke-voice-package.py "$RUNNER_TEMP/installed/bin/antex" "$GITHUB_SHA"
-          python3 scripts/smoke-tui-voice.py "$RUNNER_TEMP/installed/bin/antex"
+
+      - name: Validate installed TUI voice picker
+        timeout-minutes: 2
+        shell: bash
+        run: python3 -u scripts/smoke-tui-voice.py "$RUNNER_TEMP/installed/bin/antex"
+
+      - name: Validate daemon and installers
+        timeout-minutes: 5
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
           python3 scripts/smoke-daemon-package.py "$RUNNER_TEMP/installed/bin/antex"
           python3 -m unittest discover -s scripts -p 'test_install_fork_package.py'
           python3 -m unittest discover -s scripts/install -p 'test_*.py'

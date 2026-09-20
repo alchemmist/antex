@@ -1,4 +1,5 @@
 import argparse
+import errno
 import fcntl
 import json
 import os
@@ -39,6 +40,7 @@ def smoke(binary):
                 ],
             )
         output = bytearray()
+        plain = b""
         pending = b""
         ready_at = None
         submitted = False
@@ -47,7 +49,12 @@ def smoke(binary):
         try:
             while time.monotonic() < deadline:
                 if select.select([terminal], [], [], 0.05)[0]:
-                    data = os.read(terminal, 65536)
+                    try:
+                        data = os.read(terminal, 65536)
+                    except OSError as error:
+                        if error.errno != errno.EIO:
+                            raise
+                        break
                     if not data:
                         break
                     output.extend(data)
@@ -74,7 +81,8 @@ def smoke(binary):
                     raise RuntimeError("installed TUI does not recognize /voice")
                 if b"Select voice" in plain and b"next voice conversation" in plain:
                     print(
-                        "Installed TUI passed: /voice settings opens the voice picker"
+                        "Installed TUI passed: /voice settings opens the voice picker",
+                        flush=True,
                     )
                     return
             raise RuntimeError(
@@ -82,11 +90,24 @@ def smoke(binary):
             )
         finally:
             try:
-                os.kill(pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
-            os.waitpid(pid, 0)
-            os.close(terminal)
+                stopped = False
+                for termination_signal in (signal.SIGTERM, signal.SIGKILL):
+                    try:
+                        os.killpg(pid, termination_signal)
+                    except ProcessLookupError:
+                        pass
+                    stop_deadline = time.monotonic() + 1
+                    while time.monotonic() < stop_deadline:
+                        if os.waitpid(pid, os.WNOHANG)[0] == pid:
+                            stopped = True
+                            break
+                        time.sleep(0.02)
+                    if stopped:
+                        break
+                if not stopped:
+                    raise RuntimeError("installed TUI did not terminate after SIGKILL")
+            finally:
+                os.close(terminal)
 
 
 if __name__ == "__main__":
