@@ -92,8 +92,16 @@ def smoke(binary):
             try:
                 stopped = False
                 for termination_signal in (signal.SIGTERM, signal.SIGKILL):
+                    if os.waitpid(pid, os.WNOHANG)[0] == pid:
+                        stopped = True
+                        break
                     try:
                         os.killpg(pid, termination_signal)
+                    except PermissionError:
+                        try:
+                            os.kill(pid, termination_signal)
+                        except ProcessLookupError:
+                            pass
                     except ProcessLookupError:
                         pass
                     stop_deadline = time.monotonic() + 1
