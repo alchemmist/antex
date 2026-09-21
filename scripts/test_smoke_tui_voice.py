@@ -11,7 +11,14 @@ SCRIPT = Path(__file__).with_name("smoke-tui-voice.py")
 
 @unittest.skipUnless(os.name == "posix", "PTY smoke test")
 class VoiceSmokeTests(unittest.TestCase):
-    def run_probe(self, *, ignore_term, recognize_voice, exit_before_startup=False):
+    def run_probe(
+        self,
+        *,
+        ignore_term,
+        recognize_voice,
+        exit_before_startup=False,
+        deny_group_signal=False,
+    ):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             marker = root / "child.pid"
@@ -20,6 +27,7 @@ class VoiceSmokeTests(unittest.TestCase):
                 f"#!{sys.executable}\n"
                 "import os, signal, sys, time\n"
                 "from pathlib import Path\n"
+                "signal.signal(signal.SIGHUP, signal.SIG_IGN)\n"
                 f"Path({str(marker)!r}).write_text(str(os.getpid()))\n"
                 + (
                     "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
@@ -38,8 +46,21 @@ class VoiceSmokeTests(unittest.TestCase):
                 + "while True: time.sleep(1)\n"
             )
             binary.chmod(0o755)
+            command = [sys.executable, str(SCRIPT), str(binary)]
+            if deny_group_signal:
+                command = [
+                    sys.executable,
+                    "-c",
+                    "import os, runpy, sys\n"
+                    "def deny(*args): raise PermissionError(1, 'Operation not permitted')\n"
+                    "os.killpg = deny\n"
+                    "sys.argv = sys.argv[1:]\n"
+                    "runpy.run_path(sys.argv[0], run_name='__main__')\n",
+                    str(SCRIPT),
+                    str(binary),
+                ]
             process = subprocess.Popen(
-                [sys.executable, str(SCRIPT), str(binary)],
+                command,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -64,6 +85,13 @@ class VoiceSmokeTests(unittest.TestCase):
                     except subprocess.TimeoutExpired:
                         process.kill()
                         process.communicate(timeout=2)
+
+    def test_picker_passes_when_group_signal_is_denied(self):
+        code, stdout, stderr = self.run_probe(
+            ignore_term=True, recognize_voice=True, deny_group_signal=True
+        )
+        self.assertEqual(code, 0, stderr)
+        self.assertIn("voice picker", stdout)
 
     def test_early_exit_reports_missing_picker(self):
         code, _, stderr = self.run_probe(
