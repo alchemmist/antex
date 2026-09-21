@@ -923,17 +923,6 @@ print_launch_instructions() {
   esac
 }
 
-maybe_launch_antex_now() {
-  if prompt_yes_no "Start Antex now?"; then
-    step "Launching Antex"
-    if ( : </dev/tty ) 2>/dev/null; then
-      "$BIN_PATH" </dev/tty >/dev/tty 2>&1
-    else
-      "$BIN_PATH"
-    fi
-  fi
-}
-
 detect_conflicting_install() {
   existing_path="$(resolve_existing_antex)"
   manager="$(classify_existing_antex "$existing_path" || true)"
@@ -1396,6 +1385,4 @@ if [ "$migration_needed" = "true" ]; then
   step "Existing Codex data was left unchanged at $legacy_home"
   step "Run antex migrate to review the migration, then antex migrate --apply when ready."
   step "After migration, run this installer again to enable managed updates."
-else
-  maybe_launch_antex_now
 fi
