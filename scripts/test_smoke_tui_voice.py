@@ -12,7 +12,12 @@ SCRIPT = Path(__file__).with_name("smoke-tui-voice.py")
 @unittest.skipUnless(os.name == "posix", "PTY smoke test")
 class VoiceSmokeTests(unittest.TestCase):
     def run_probe(
-        self, *, ignore_term, recognize_voice, exit_before_startup=False, deny_group_signal=False
+        self,
+        *,
+        ignore_term,
+        recognize_voice,
+        exit_before_startup=False,
+        deny_group_signal=False,
     ):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -22,6 +27,7 @@ class VoiceSmokeTests(unittest.TestCase):
                 f"#!{sys.executable}\n"
                 "import os, signal, sys, time\n"
                 "from pathlib import Path\n"
+                "signal.signal(signal.SIGHUP, signal.SIG_IGN)\n"
                 f"Path({str(marker)!r}).write_text(str(os.getpid()))\n"
                 + (
                     "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"

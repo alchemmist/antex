@@ -89,33 +89,31 @@ def smoke(binary):
                 f"installed TUI did not open the voice picker: {plain[-1200:]!r}"
             )
         finally:
-            try:
-                stopped = False
-                for termination_signal in (signal.SIGTERM, signal.SIGKILL):
+            os.close(terminal)
+            stopped = False
+            for termination_signal in (signal.SIGTERM, signal.SIGKILL):
+                if os.waitpid(pid, os.WNOHANG)[0] == pid:
+                    stopped = True
+                    break
+                try:
+                    os.killpg(pid, termination_signal)
+                except PermissionError:
+                    try:
+                        os.kill(pid, termination_signal)
+                    except ProcessLookupError:
+                        pass
+                except ProcessLookupError:
+                    pass
+                stop_deadline = time.monotonic() + 1
+                while time.monotonic() < stop_deadline:
                     if os.waitpid(pid, os.WNOHANG)[0] == pid:
                         stopped = True
                         break
-                    try:
-                        os.killpg(pid, termination_signal)
-                    except PermissionError:
-                        try:
-                            os.kill(pid, termination_signal)
-                        except ProcessLookupError:
-                            pass
-                    except ProcessLookupError:
-                        pass
-                    stop_deadline = time.monotonic() + 1
-                    while time.monotonic() < stop_deadline:
-                        if os.waitpid(pid, os.WNOHANG)[0] == pid:
-                            stopped = True
-                            break
-                        time.sleep(0.02)
-                    if stopped:
-                        break
-                if not stopped:
-                    raise RuntimeError("installed TUI did not terminate after SIGKILL")
-            finally:
-                os.close(terminal)
+                    time.sleep(0.02)
+                if stopped:
+                    break
+            if not stopped:
+                raise RuntimeError("installed TUI did not terminate after SIGKILL")
 
 
 if __name__ == "__main__":
