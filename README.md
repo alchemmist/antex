@@ -2,6 +2,8 @@
 
 A terminal-native coding agent built on [OpenAI Codex](https://github.com/openai/codex) and kept in sync with upstream.
 
+![Antex running in a terminal with its ant mascot and prompt editor](assets/antex-terminal.png)
+
 ## What's included
 
 - The TUI uses the terminal palette and updates the composer, conversation history, plans, and diffs immediately when the terminal theme changes.
