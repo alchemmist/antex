@@ -227,7 +227,6 @@ impl App {
     /// not spend footer space restating that the user is already on the main conversation.
     pub(super) fn sync_agent_status_ui(&mut self) {
         let thread_id = self.current_displayed_thread_id();
-        crate::tmux_session::publish_thread_id(thread_id);
         let label = self
             .agent_navigation
             .active_agent_label(thread_id, self.primary_thread_id);
@@ -1552,6 +1551,10 @@ impl App {
                 self.chat_widget.handle_thread_session(session);
             }
         }
+        crate::tmux_session::publish_thread_id(
+            self.primary_thread_id,
+            self.config.codex_home.as_path(),
+        );
         let should_buffer_initial_replay = !turns.is_empty();
         let replayed_final_items = realtime_delivery::completed_agent_items_from_turns(&turns);
         let replayed_voice_texts = realtime_delivery::replayed_voice_texts_from_turns(&turns);

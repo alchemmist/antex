@@ -1015,6 +1015,9 @@ pub async fn run_main(
     loader_overrides: LoaderOverrides,
     explicit_remote_endpoint: Option<RemoteAppServerEndpoint>,
 ) -> std::io::Result<AppExitInfo> {
+    if explicit_remote_endpoint.is_none() {
+        tmux_session::initialize(&cli);
+    }
     system_motion::initialize().await;
     // Keep the startup future out of the CLI caller's frame while the TUI is running.
     match Box::pin(startup_orchestration::run_main_inner(

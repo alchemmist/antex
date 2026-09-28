@@ -1068,6 +1068,7 @@ impl App {
 
 impl Drop for App {
     fn drop(&mut self) {
+        crate::tmux_session::clear_binding();
         if let Err(err) = self.chat_widget.clear_managed_terminal_title() {
             tracing::debug!(error = %err, "failed to clear terminal title on app drop");
         }

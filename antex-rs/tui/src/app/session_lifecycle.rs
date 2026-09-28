@@ -734,6 +734,10 @@ impl App {
         self.active_thread_id = None;
         self.active_thread_rx = None;
         self.primary_thread_id = None;
+        crate::tmux_session::publish_thread_id(
+            self.primary_thread_id,
+            self.config.codex_home.as_path(),
+        );
         self.last_subagent_backfill_attempt = None;
         self.primary_session_configured = None;
         self.pending_primary_events.clear();

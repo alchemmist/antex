@@ -9655,3 +9655,6 @@ mod active_reconnect;
 #[cfg(unix)]
 #[path = "tests/navigation_reconnect_tests.rs"]
 mod navigation_reconnect;
+
+#[path = "tests/tmux_session_tests.rs"]
+mod tmux_session_tests;
