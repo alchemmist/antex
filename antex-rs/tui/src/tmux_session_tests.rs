@@ -20,7 +20,11 @@ fn binding_carries_root_identity_and_quoted_option_values() {
         "/tmp/path with spaces",
         "a prompt that must not be replayed",
     ]);
-    let argv = resume_argv(id, &resume_options(&cli));
+    let argv = resume_argv(
+        id,
+        &resume_options(&cli),
+        Path::new("/workspace with spaces"),
+    );
     assert_eq!(
         argv,
         vec![
@@ -34,6 +38,8 @@ fn binding_carries_root_identity_and_quoted_option_values() {
             "--no-alt-screen",
             "--add-dir",
             "/tmp/path with spaces",
+            "--cd",
+            "/workspace with spaces",
         ]
     );
     let binding = Binding {
@@ -63,12 +69,12 @@ fn resume_target_changes_without_replaying_initial_prompt_or_creating_worktree()
     let next = ThreadId::from_string("01a0cee1-2987-7b13-81cc-777ec4861be7").unwrap();
     let cli = crate::cli::Cli::parse_from(["antex", "--worktree", "initial prompt"]);
     assert_eq!(
-        resume_argv(first, &resume_options(&cli)),
-        vec!["antex", "resume", &first.to_string()]
+        resume_argv(first, &resume_options(&cli), Path::new("/workspace")),
+        vec!["antex", "resume", &first.to_string(), "--cd", "/workspace"]
     );
     assert_eq!(
-        resume_argv(next, &resume_options(&cli)),
-        vec!["antex", "resume", &next.to_string()]
+        resume_argv(next, &resume_options(&cli), Path::new("/workspace")),
+        vec!["antex", "resume", &next.to_string(), "--cd", "/workspace"]
     );
 }
 
@@ -78,4 +84,44 @@ fn ownership_check_escapes_tmux_format_delimiters() {
         ownership_condition(r###"{"pid":42,"home":"/a#b}"}"###),
         r###"#{==:#{@antex_binding},{"pid":42#,"home":"/a##b#}"#}}"###
     );
+}
+
+#[test]
+fn successful_publication_acknowledges_only_the_current_restore_attempt() {
+    let token = Some("attempt123");
+    assert_eq!(
+        binding_command_args("/tmp/socket", "%19", "payload", token),
+        vec![
+            "-S",
+            "/tmp/socket",
+            "set-option",
+            "-p",
+            "-t",
+            "%19",
+            "@antex_binding",
+            "payload",
+            ";",
+            "set-option",
+            "-p",
+            "-t",
+            "%19",
+            "@antex_restore_ack",
+            "attempt123",
+        ]
+    );
+    for token in [None, Some(""), Some("invalid;token")] {
+        assert_eq!(
+            binding_command_args("/tmp/socket", "%19", "payload", token),
+            vec![
+                "-S",
+                "/tmp/socket",
+                "set-option",
+                "-p",
+                "-t",
+                "%19",
+                "@antex_binding",
+                "payload",
+            ]
+        );
+    }
 }

@@ -3,6 +3,7 @@
 //! This module owns the typed JSON-RPC calls needed by the TUI and keeps
 //! request/response plumbing out of `App` and `ChatWidget`.
 
+mod account_bootstrap;
 mod fs;
 mod history;
 mod models;
@@ -715,16 +716,18 @@ impl AppServerSession {
     /// Used by both `bootstrap` (to populate the initial UI) and `get_login_status`
     /// (to check auth mode without the overhead of a full bootstrap).
     pub(crate) async fn read_account(&mut self) -> Result<GetAccountResponse> {
-        let account_request_id = self.next_request_id();
-        self.client
-            .request_typed(ClientRequest::GetAccount {
-                request_id: account_request_id,
+        let client = self.request_handle();
+        account_bootstrap::retry_account_read(|| {
+            let request_id = self.next_request_id();
+            client.request_typed(ClientRequest::GetAccount {
+                request_id,
                 params: GetAccountParams {
                     refresh_token: false,
                 },
             })
-            .await
-            .map_err(|err| bootstrap_request_error("account/read failed during TUI bootstrap", err))
+        })
+        .await
+        .map_err(|err| bootstrap_request_error("account/read failed during TUI bootstrap", err))
     }
 
     pub(crate) async fn external_agent_config_detect(

@@ -1554,6 +1554,7 @@ impl App {
         crate::tmux_session::publish_thread_id(
             self.primary_thread_id,
             self.config.codex_home.as_path(),
+            self.config.cwd.as_path(),
         );
         let should_buffer_initial_replay = !turns.is_empty();
         let replayed_final_items = realtime_delivery::completed_agent_items_from_turns(&turns);

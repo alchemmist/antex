@@ -81,18 +81,19 @@ struct Binding<'a> {
     resume_argv: Vec<String>,
 }
 
-fn resume_argv(thread_id: ThreadId, options: &[String]) -> Vec<String> {
+fn resume_argv(thread_id: ThreadId, options: &[String], cwd: &Path) -> Vec<String> {
     let mut argv = vec![
         "antex".to_owned(),
         "resume".to_owned(),
         thread_id.to_string(),
     ];
     argv.extend_from_slice(options);
+    argv.extend(["--cd".to_owned(), cwd.to_string_lossy().into_owned()]);
     argv
 }
 
 #[cfg(all(unix, not(test)))]
-pub(crate) fn publish_thread_id(thread_id: Option<ThreadId>, home: &Path) {
+pub(crate) fn publish_thread_id(thread_id: Option<ThreadId>, home: &Path, cwd: &Path) {
     use std::process::Command;
     if thread_id.is_none() {
         clear_binding();
@@ -149,6 +150,7 @@ pub(crate) fn publish_thread_id(thread_id: Option<ThreadId>, home: &Path) {
             resume_argv: resume_argv(
                 thread_id,
                 RESUME_OPTIONS.get().map(Vec::as_slice).unwrap_or_default(),
+                cwd,
             ),
         }),
         None => Ok(String::new()),
@@ -157,17 +159,14 @@ pub(crate) fn publish_thread_id(thread_id: Option<ThreadId>, home: &Path) {
         tracing::warn!("cannot serialize Antex tmux binding");
         return;
     };
+    let token = std::env::var("LAZY_TMUX_RESTORE_TOKEN").ok();
     match Command::new("tmux")
-        .args([
-            "-S",
+        .args(binding_command_args(
             socket,
-            "set-option",
-            "-p",
-            "-t",
             &pane,
-            "@antex_binding",
             &payload,
-        ])
+            token.as_deref(),
+        ))
         .status()
     {
         Ok(status) if status.success() => {
@@ -181,10 +180,10 @@ pub(crate) fn publish_thread_id(thread_id: Option<ThreadId>, home: &Path) {
 }
 
 #[cfg(all(not(unix), not(test)))]
-pub(crate) fn publish_thread_id(_thread_id: Option<ThreadId>, _home: &Path) {}
+pub(crate) fn publish_thread_id(_thread_id: Option<ThreadId>, _home: &Path, _cwd: &Path) {}
 
 #[cfg(test)]
-pub(crate) fn publish_thread_id(thread_id: Option<ThreadId>, _home: &Path) {
+pub(crate) fn publish_thread_id(thread_id: Option<ThreadId>, _home: &Path, _cwd: &Path) {
     tests::PUBLISHED_THREAD.set(thread_id);
 }
 
@@ -220,6 +219,46 @@ pub(crate) fn clear_binding() {
 
 #[cfg(any(not(unix), test))]
 pub(crate) fn clear_binding() {}
+
+fn binding_command_args(
+    socket: &str,
+    pane: &str,
+    payload: &str,
+    restore_token: Option<&str>,
+) -> Vec<String> {
+    let mut args = [
+        "-S",
+        socket,
+        "set-option",
+        "-p",
+        "-t",
+        pane,
+        "@antex_binding",
+        payload,
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect::<Vec<_>>();
+    if let Some(token) = restore_token
+        && !token.is_empty()
+        && token.bytes().all(|byte| byte.is_ascii_alphanumeric())
+    {
+        args.extend(
+            [
+                ";",
+                "set-option",
+                "-p",
+                "-t",
+                pane,
+                "@antex_restore_ack",
+                token,
+            ]
+            .into_iter()
+            .map(str::to_owned),
+        );
+    }
+    args
+}
 
 #[cfg(test)]
 #[path = "tmux_session_tests.rs"]
