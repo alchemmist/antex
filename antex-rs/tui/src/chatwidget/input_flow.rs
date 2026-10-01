@@ -217,7 +217,9 @@ impl ChatWidget {
                                 || matches!(
                                     command,
                                     SlashCommandItem::Builtin(
-                                        SlashCommand::Plan | SlashCommand::Review
+                                        SlashCommand::Plan
+                                            | SlashCommand::Review
+                                            | SlashCommand::Simplify
                                     )
                                 )
                         })

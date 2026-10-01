@@ -3,6 +3,37 @@ use tokio::sync::watch;
 
 use super::*;
 
+#[tokio::test]
+async fn agent_event_failures_require_successful_recovery() {
+    let cases = [
+        (
+            "{\"type\":\"error\",\"message\":\"request timed out\"}\n",
+            Some("request timed out"),
+        ),
+        (
+            "{\"type\":\"error\",\"message\":\"retrying\"}\n{\"type\":\"turn.completed\"}\n",
+            None,
+        ),
+        (
+            "{\"type\":\"error\",\"message\":\"retrying\"}\n{\"type\":\"turn.failed\",\"error\":{\"message\":\"retries exhausted\"}}\n",
+            Some("retries exhausted"),
+        ),
+        (
+            "{\"type\":\"turn.failed\",\"error\":{\"message\":\"terminal failure\"}}\n{\"type\":\"turn.completed\"}\n",
+            Some("terminal failure"),
+        ),
+        ("{\"type\":\"turn.failed\"}\n", Some("agent turn failed")),
+    ];
+    for (events, expected) in cases {
+        let (activity_tx, _activity_rx) = mpsc::unbounded_channel();
+        let agent_index = 0;
+        let parsed = read_agent_events(events.as_bytes(), agent_index, activity_tx)
+            .await
+            .expect("read agent events");
+        assert_eq!(parsed.turn_error.as_deref(), expected, "{events}");
+    }
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn nested_antex_jsonl_is_reduced_to_a_bounded_agent_result() {
@@ -17,6 +48,7 @@ printf '%s\n' "$@" > "$0.args"
 printf '%s' "$ANTEX_WORKFLOW_FORBID_QUALITY_GRAPH_IGNORE" > "$0.guard"
 cat >/dev/null
 printf '%s\n' '{"type":"turn.started"}'
+printf '%s\n' '{"type":"error","message":"Reconnecting... 3/5 (request timed out)"}'
 printf '%s\n' '{"type":"item.started","item":{"id":"cmd","type":"command_execution","command":"git status"}}'
 printf '%s\n' '{"type":"item.completed","item":{"id":"mcp","type":"mcp_tool_call","server":"github","tool":"get_pull_request"}}'
 printf '%s\n' '{"type":"item.completed","item":{"id":"msg","type":"agent_message","text":"fixed"}}'

@@ -436,6 +436,7 @@ mod service_tiers;
 mod settings;
 mod settings_popups;
 mod side;
+mod simplify;
 mod subagent_mode;
 use self::safety_buffering::SafetyBufferingState;
 mod status_state;

@@ -95,6 +95,20 @@ WORKFLOW = {
 }
 
 
+def agent_succeeded(reply):
+    if reply.get("success"):
+        return True
+    error = reply.get("error")
+    return (
+        type(reply.get("exit_code")) is int
+        and reply["exit_code"] == 0
+        and isinstance(error, str)
+        and error.startswith("Reconnecting... ")
+        and isinstance(reply.get("message"), str)
+        and bool(reply["message"].strip())
+    )
+
+
 def parse_json(message, expected_type):
     text = message.strip()
     if text.startswith("```"):
@@ -314,7 +328,7 @@ arrays of objects with number/reason, needs_user objects with number/reason/next
 """
     try:
         reply = ctx.agent(prompt, model=model, sandbox="read-only", timeout_seconds=600)
-        if not reply.get("success"):
+        if not agent_succeeded(reply):
             raise RuntimeError(reply.get("error") or "report repair agent failed")
         repaired = parse_json(reply.get("message", ""), dict)
         validate_report(repaired, repository)
@@ -379,7 +393,7 @@ Return the same JSON schema, accounting for exactly the requested PR numbers.
             if action == "merge" and not repository.get("archived", False)
             else "inherit",
         )
-        if not reply.get("success"):
+        if not agent_succeeded(reply):
             raise RuntimeError(reply.get("error") or "recovery agent failed")
         retried = parse_json(reply.get("message", ""), dict)
         validate_report(retried, repository)
@@ -457,7 +471,7 @@ def run(ctx):
             model=model,
             timeout_seconds=1800,
         )
-        if not inventory.get("success"):
+        if not agent_succeeded(inventory):
             raise RuntimeError(
                 inventory.get("error") or "repository inventory agent failed"
             )
@@ -474,6 +488,48 @@ def run(ctx):
     total = len(repositories)
     if next_index > total:
         raise RuntimeError("workflow checkpoint points past the repository inventory")
+
+    by_name = {
+        f"{repository['owner']}/{repository['name']}": repository
+        for repository in repositories
+    }
+    for index, result in enumerate(results):
+        if not result.get("failed"):
+            continue
+        repository = by_name.get(result.get("repository"))
+        if repository is None:
+            raise RuntimeError("saved report repository is missing from the inventory")
+        ctx.progress(f"Retrying saved failures: {result['repository']}")
+        if any("number" not in entry for entry in result["failed"]) and not any(
+            result.get(category) for category in ("merged", "fixed", "skipped", "needs_user")
+        ):
+            try:
+                reply = ctx.agent(
+                    repository_prompt(repository, action, merge_method)
+                    + "\nThe previous attempt ended without a valid report. Re-read current GitHub state; do not attribute already closed PRs to this attempt.\n",
+                    model=model,
+                    timeout_seconds=7200,
+                    approval_mode="auto-review"
+                    if action == "merge" and not repository.get("archived", False)
+                    else "inherit",
+                )
+                if not agent_succeeded(reply):
+                    raise RuntimeError(reply.get("error") or "repository recovery failed")
+                results[index] = parse_repository_report(
+                    ctx, reply.get("message", ""), repository, model
+                )
+            except (RuntimeError, TypeError, json.JSONDecodeError) as error:
+                results[index] = {**result, "failed": [{"reason": str(error)[:2000]}]}
+        else:
+            results[index] = retry_failed_candidates(
+                ctx, repository, result, action, merge_method, model
+            )
+        state = {
+            "repositories": repositories,
+            "next_index": next_index,
+            "results": results,
+        }
+        ctx.checkpoint(state)
 
     for offset in range(next_index, total, parallelism):
         wave = repositories[offset : offset + parallelism]
@@ -498,7 +554,7 @@ def run(ctx):
         ]
         agent_results = ctx.agent_batch(requests, parallelism=parallelism)
         for repository, agent_result in zip(wave, agent_results):
-            if agent_result.get("success"):
+            if agent_succeeded(agent_result):
                 try:
                     result = parse_repository_report(
                         ctx, agent_result.get("message", ""), repository, model

@@ -45,6 +45,7 @@ pub enum SlashCommand {
     Workflow,
     Agents,
     Side,
+    Simplify,
     Btw,
     Copy,
     Export,
@@ -100,6 +101,9 @@ impl SlashCommand {
             SlashCommand::Compact => "summarize conversation to prevent hitting the context limit",
             SlashCommand::Recap => "summarize the current conversation now",
             SlashCommand::Review => "review my current changes and find issues",
+            SlashCommand::Simplify => {
+                "review code for reuse, quality, and efficiency, then simplify it"
+            }
             SlashCommand::Rename => "rename the current thread",
             SlashCommand::Resume => "resume a saved chat",
             SlashCommand::Archive => "archive this session",
@@ -180,6 +184,7 @@ impl SlashCommand {
         matches!(
             self,
             SlashCommand::Review
+                | SlashCommand::Simplify
                 | SlashCommand::Rename
                 | SlashCommand::New
                 | SlashCommand::Clear
@@ -245,6 +250,7 @@ impl SlashCommand {
             | SlashCommand::Memories
             | SlashCommand::Import
             | SlashCommand::Review
+            | SlashCommand::Simplify
             | SlashCommand::Plan
             | SlashCommand::Cd
             | SlashCommand::Clear

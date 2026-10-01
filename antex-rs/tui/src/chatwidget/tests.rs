@@ -275,6 +275,8 @@ mod review_mode;
 #[path = "tests/session_model_selection_tests.rs"]
 mod session_model_selection_tests;
 mod side;
+#[path = "tests/simplify_tests.rs"]
+mod simplify_tests;
 mod slash_commands;
 mod status_and_layout;
 mod status_command_tests;

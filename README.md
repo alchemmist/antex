@@ -6,6 +6,7 @@ A terminal-native coding agent built on [OpenAI Codex](https://github.com/openai
 
 ## What's included
 
+- `/simplify [focus]` reviews changed code for reuse, quality, and efficiency with three parallel reviewers, then applies worthwhile behavior-preserving fixes.
 - The TUI uses the terminal palette and updates the composer, conversation history, plans, and diffs immediately when the terminal theme changes.
 - The configurable startup cockpit identifies alchemmist antex, shows its exact build commit, rotates fork-specific feature tips, and includes two animated ant mascot skins.
 - `Ctrl+S` stashes the current prompt draft, persists it across restarts, and restores it on the next press.

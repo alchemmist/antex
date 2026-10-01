@@ -400,6 +400,7 @@ async fn read_agent_events(
     activity_tx: mpsc::UnboundedSender<AgentActivity>,
 ) -> std::io::Result<ParsedAgentEvents> {
     let mut parsed = ParsedAgentEvents::default();
+    let mut pending_error = None;
     let mut lines = BufReader::new(reader).lines();
     while let Some(line) = lines.next_line().await? {
         let Ok(event) = serde_json::from_str::<serde_json::Value>(&line) else {
@@ -426,6 +427,7 @@ async fn read_agent_events(
                 }
             }
             Some("turn.completed") => {
+                pending_error = None;
                 parsed.input_tokens = event
                     .pointer("/usage/input_tokens")
                     .and_then(serde_json::Value::as_i64)
@@ -439,16 +441,25 @@ async fn read_agent_events(
                     .and_then(serde_json::Value::as_i64)
                     .unwrap_or_default();
             }
-            Some("turn.failed") | Some("error") => {
+            Some("turn.failed") => {
                 parsed.turn_error = event
                     .pointer("/error/message")
                     .or_else(|| event.get("message"))
+                    .and_then(serde_json::Value::as_str)
+                    .map(|message| truncate_string(message, MAX_AGENT_MESSAGE_BYTES))
+                    .or_else(|| Some("agent turn failed".to_string()));
+            }
+            Some("error") => {
+                pending_error = event
+                    .get("message")
+                    .or_else(|| event.pointer("/error/message"))
                     .and_then(serde_json::Value::as_str)
                     .map(|message| truncate_string(message, MAX_AGENT_MESSAGE_BYTES));
             }
             _ => {}
         }
     }
+    parsed.turn_error = parsed.turn_error.or(pending_error);
     Ok(parsed)
 }
 

@@ -3,6 +3,7 @@ import json
 import pathlib
 import tempfile
 import unittest
+from unittest.mock import patch
 
 PATH = pathlib.Path(__file__).with_name("builtin_github_bot_pr_maintenance.py")
 SPEC = importlib.util.spec_from_file_location("workflow", PATH)
@@ -151,6 +152,88 @@ class Tests(unittest.TestCase):
             MODULE.run(ctx)
         with self.assertRaisesRegex(RuntimeError, "MCP approval denied"):
             MODULE.run(ctx)
+
+    def test_resume_retries_saved_failures_without_reprocessing_successes(self):
+        report = self.report()
+        report.update(candidates=2, merged=[1], failed=[{"number": 2, "reason": "timeout"}])
+        ctx = Context(report)
+        ctx.state.update(next_index=1, results=[report])
+        ctx.retry_report = self.report()
+        ctx.retry_report["merged"] = [2]
+        result = MODULE.run(ctx)
+        self.assertEqual((result["merged"], result["failed"]), (2, 0))
+        self.assertEqual(len(ctx.requests), 1)
+        self.assertIn("Retry only these PR numbers: [2]", ctx.requests[0]["prompt"])
+        self.assertEqual(ctx.state["results"][0]["merged"], [1, 2])
+        ctx.requests.clear()
+        MODULE.run(ctx)
+        self.assertEqual(ctx.requests, [])
+
+    def test_resume_recovery_failure_keeps_checkpoint_and_is_bounded(self):
+        report = self.report()
+        report.update(candidates=2, merged=[1], failed=[{"number": 2, "reason": "timeout"}])
+        ctx = Context(report)
+        ctx.state.update(next_index=1, results=[report])
+        ctx.retry_error = "network unavailable"
+        with self.assertRaisesRegex(RuntimeError, "network unavailable"):
+            MODULE.run(ctx)
+        self.assertEqual(len(ctx.requests), 1)
+        self.assertEqual(ctx.state["results"][0]["merged"], [1])
+        self.assertEqual(ctx.state["next_index"], 1)
+
+    def test_resume_accepts_valid_report_after_legacy_reconnection_error(self):
+        report = self.report()
+        report["failed"] = [{"number": 2, "reason": "timeout"}]
+        ctx = Context(report)
+        ctx.state.update(next_index=1, results=[report])
+        retried = self.report()
+        retried["merged"] = [2]
+        reply = {
+            "success": False,
+            "exit_code": 0,
+            "error": "Reconnecting... 3/5 (request timed out)",
+            "message": json.dumps(retried),
+        }
+        with patch.object(ctx, "agent", return_value=reply) as agent:
+            result = MODULE.run(ctx)
+        self.assertEqual((result["merged"], result["failed"]), (1, 0))
+        agent.assert_called_once()
+
+    def test_resume_retries_repository_that_failed_before_reporting_candidates(self):
+        report = self.report()
+        report.update(candidates=0, failed=[{"reason": "agent timed out"}])
+        ctx = Context(report)
+        ctx.state.update(next_index=1, results=[report])
+        ctx.retry_report = self.report()
+        ctx.retry_report["merged"] = [2]
+        result = MODULE.run(ctx)
+        self.assertEqual((result["merged"], result["failed"]), (1, 0))
+        self.assertEqual(len(ctx.requests), 1)
+        self.assertEqual(ctx.requests[0]["approval_mode"], "auto-review")
+
+    def test_legacy_reconnection_recovery_still_validates_report(self):
+        report = self.report()
+        report["failed"] = [{"number": 2, "reason": "timeout"}]
+        for exit_code, error, message in [
+            (1, "Reconnecting... 3/5", json.dumps(report)),
+            (None, "Reconnecting... 3/5", json.dumps(report)),
+            (0, "permission denied", json.dumps(report)),
+            (0, "Reconnecting... 3/5", ""),
+            (0, "Reconnecting... 3/5", "invalid JSON"),
+            (0, "Reconnecting... 3/5", json.dumps({**report, "failed": [], "merged": [99]})),
+        ]:
+            with self.subTest(exit_code=exit_code, error=error, message=message):
+                ctx = Context(report)
+                ctx.state.update(next_index=1, results=[report])
+                with patch.object(ctx, "agent", return_value={
+                    "success": False,
+                    "exit_code": exit_code,
+                    "error": error,
+                    "message": message,
+                }):
+                    with self.assertRaises(RuntimeError):
+                        MODULE.run(ctx)
+                self.assertEqual(ctx.state["results"][0]["merged"], [])
 
     def test_review_only_skip_completes(self):
         report = self.report()
