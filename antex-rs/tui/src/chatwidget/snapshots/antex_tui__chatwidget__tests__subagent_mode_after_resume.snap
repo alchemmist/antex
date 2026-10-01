@@ -1,0 +1,7 @@
+---
+source: tui/src/chatwidget/tests/subagent_mode_tests.rs
+expression: "render_bottom_popup(&resumed, 80)"
+---
+ ┃ Ask Antex to do anything
+
+  gpt-5.2 default · /tmp/thread-settings · 

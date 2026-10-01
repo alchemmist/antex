@@ -9,7 +9,7 @@ A terminal-native coding agent built on [OpenAI Codex](https://github.com/openai
 - The TUI uses the terminal palette and updates the composer, conversation history, plans, and diffs immediately when the terminal theme changes.
 - The configurable startup cockpit identifies alchemmist antex, shows its exact build commit, rotates fork-specific feature tips, and includes two animated ant mascot skins.
 - `Ctrl+S` stashes the current prompt draft, persists it across restarts, and restores it on the next press.
-- `/subagents` toggles subagent mode for subsequent prompts in the current chat and can update an active turn.
+- `/subagents` toggles subagent mode for subsequent prompts in the current chat, restores the setting on resume, and can update an active turn.
 - `/statusline` can show the number of active subagents, while `/agents` opens an overview of their work.
 - Fast mode is process-local, resets to standard on every start or resume, and shows `⚡` in the status line while active.
 - `/cd <path>` changes the current session's working directory without restarting Antex.

@@ -279,6 +279,8 @@ mod slash_commands;
 mod status_and_layout;
 mod status_command_tests;
 mod status_surface_previews;
+#[path = "tests/subagent_mode_tests.rs"]
+mod subagent_mode_tests;
 mod terminal_title;
 mod usage;
 mod workflows;
