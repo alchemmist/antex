@@ -17,7 +17,7 @@ def smoke(binary):
             json.dumps(
                 {
                     "shutdownGraceSeconds": 1,
-                    "updater": {"auto_update_enabled": False},
+                    "updater": {"autoUpdateEnabled": False},
                 }
             )
         )
@@ -32,6 +32,11 @@ def smoke(binary):
                 timeout=90,
                 capture_output=True,
             )
+            if any(
+                (state / name).exists()
+                for name in ("app-server-updater.pid", "daemon-updater.pid")
+            ):
+                raise RuntimeError("daemon smoke test unexpectedly started an updater")
             result = subprocess.check_output(
                 [*command, "version"], env=environment, cwd=home, text=True, timeout=15
             )
