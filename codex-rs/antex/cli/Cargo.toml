@@ -15,12 +15,14 @@ antex-extension-protocol = { path = "../extension-protocol" }
 antex-provider-openai = { path = "../provider-openai" }
 antex-runtime = { path = "../runtime" }
 antex-tui = { path = "../tui" }
+base64 = "0.22"
 clap = { version = "4", features = ["derive", "env"] }
 futures.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "signal"] }
 tokio-util.workspace = true
 serde_json.workspace = true
 toml = "1"
+uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
 insta = "1"

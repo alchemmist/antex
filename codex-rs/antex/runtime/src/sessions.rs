@@ -58,6 +58,12 @@ pub struct SessionMessage {
     pub message: Message,
 }
 
+pub struct ImportedSession {
+    pub id: Uuid,
+    pub messages: Vec<Message>,
+    pub ui_state: Vec<(String, Value)>,
+}
+
 struct Index {
     parent: Option<Uuid>,
     offset: u64,
@@ -105,10 +111,27 @@ impl SessionStore {
     }
 
     pub fn create(&self) -> io::Result<Session> {
+        self.create_with_id(Uuid::new_v4())
+    }
+
+    pub fn import(&self, imported: ImportedSession) -> io::Result<()> {
+        if imported.messages.len() > MAX_RECORDS || imported.ui_state.len() > 64 {
+            return Err(io::Error::other("imported session exceeds its record budget"));
+        }
+        let mut session = self.create_with_id(imported.id)?;
+        for message in imported.messages {
+            session.append(&message)?;
+        }
+        for (name, value) in imported.ui_state {
+            session.save_ui_state(&name, &value)?;
+        }
+        session.finish_turn()
+    }
+
+    fn create_with_id(&self, id: Uuid) -> io::Result<Session> {
         let home = Dir::open_ambient_dir(&self.home, ambient_authority())?;
         home.create_dir_all(&self.relative)?;
         let directory = home.open_dir(&self.relative)?;
-        let id = Uuid::new_v4();
         let mut options = OpenOptions::new();
         options.read(true).append(true).create_new(true);
         #[cfg(unix)]

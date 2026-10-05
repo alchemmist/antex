@@ -8,6 +8,7 @@ use antex_core::ToolOutput;
 use antex_core::ToolScope;
 use antex_core::UserInput;
 use antex_runtime::SessionStore;
+use antex_runtime::ImportedSession;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 
@@ -287,4 +288,35 @@ fn newer_checkpoints_replace_only_the_view_and_old_branches_remain_accessible() 
             tool_calls: Vec::new()
         }
     );
+}
+
+#[test]
+fn imported_sessions_preserve_identity_messages_and_ui_state() {
+    let home = tempfile::tempdir().unwrap();
+    let workspace = tempfile::tempdir().unwrap();
+    let store = SessionStore::new(home.path(), workspace.path()).unwrap();
+    let id = uuid::Uuid::new_v4();
+    store
+        .import(ImportedSession {
+            id,
+            messages: vec![Message::User("imported request".into())],
+            ui_state: vec![("promptStash".into(), json!({"text":"draft"}))],
+        })
+        .unwrap();
+    let mut session = store.open(id).unwrap();
+    assert_eq!(
+        session.active_path().unwrap()[0].message,
+        Message::User("imported request".into())
+    );
+    assert_eq!(
+        session.load_ui_state("promptStash").unwrap(),
+        Some(json!({"text":"draft"}))
+    );
+    assert!(store
+        .import(ImportedSession {
+            id,
+            messages: Vec::new(),
+            ui_state: Vec::new(),
+        })
+        .is_err());
 }

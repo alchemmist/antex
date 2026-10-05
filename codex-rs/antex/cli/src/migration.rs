@@ -10,9 +10,13 @@ use toml::Value;
 
 const MCP_BRIDGE: &[u8] = include_bytes!("../../extensions/mcp/antex_ext_mcp.py");
 
+#[path = "migration_sessions.rs"]
+mod legacy_sessions;
+
 pub(crate) struct MigrationPlan {
     writes: Vec<MigrationWrite>,
     descriptions: Vec<String>,
+    sessions: Vec<legacy_sessions::PlannedSession>,
 }
 
 struct MigrationWrite {
@@ -40,16 +44,13 @@ impl MigrationPlan {
         migrate_config(&root, destination, &mut writes, &mut descriptions)?;
         migrate_mcp(&root, destination, &mut writes, &mut descriptions)?;
         migrate_skills(source, destination, &mut writes, &mut descriptions)?;
-        for name in ["sessions", "prompt stash"] {
-            descriptions.push(format!(
-                "skip {name}: independent migration is not implemented"
-            ));
-        }
+        let sessions = legacy_sessions::plan(source, destination, &mut descriptions)?;
         descriptions.sort();
         writes.sort_by(|left, right| left.path.cmp(&right.path));
         Ok(Self {
             writes,
             descriptions,
+            sessions,
         })
     }
 
@@ -87,6 +88,15 @@ impl MigrationPlan {
             file.write_all(&write.bytes)?;
             file.sync_all()?;
             fs::rename(&temporary, &write.path)?;
+        }
+        for planned in self.sessions {
+            fs::create_dir_all(&planned.home)?;
+            let store = antex_runtime::SessionStore::new(&planned.home, &planned.workspace)?;
+            if let Err(error) = store.import(planned.session)
+                && error.kind() != io::ErrorKind::AlreadyExists
+            {
+                return Err(error);
+            }
         }
         Ok(())
     }
