@@ -39,6 +39,60 @@ const FIRST_MODEL_ROOT_ROLE_TEXT: &str = "First model root role.";
 const SECOND_MODEL_ROOT_ROLE_TEXT: &str = "Second model root role.";
 const ROOT_USAGE_HINT_TEXT: &str = "Root usage hint.";
 
+#[test_case(true; "direct collaboration tools")]
+#[test_case(false; "nested collaboration tools")]
+#[tokio::test]
+async fn collaboration_guidance_matches_code_mode_exposure(non_code_mode_only: bool) -> Result<()> {
+    let server = start_mock_server().await;
+    let response = mount_sse_once(
+        &server,
+        sse(vec![ev_response_created("resp-1"), ev_completed("resp-1")]),
+    )
+    .await;
+    let test = test_antex()
+        .with_config(move |config| {
+            configure_multi_agent_v2(config);
+            config
+                .features
+                .enable(Feature::CodeModeOnly)
+                .expect("enable code mode");
+            config.multi_agent_v2.non_code_mode_only = non_code_mode_only;
+        })
+        .build_with_auto_env(&server)
+        .await?;
+    test.antex
+        .start_or_steer_turn(
+            TurnInputRequest::user_input(vec![UserInput::Text {
+                text: "Compare two research approaches using parallel agents".to_string(),
+                text_elements: Vec::new(),
+            }])
+            .with_thread_settings(ThreadSettingsOverrides {
+                subagent_spawn_policy: SubagentSpawnPolicy::Allow,
+                ..Default::default()
+            }),
+        )
+        .await?;
+    wait_for_event(&test.antex, |event| {
+        matches!(event, EventMsg::TurnComplete(_))
+    })
+    .await;
+    let request = response.single_request();
+    let body = request.body_json();
+    assert_eq!(
+        collaboration_tool_names(&body).contains(&"spawn_agent"),
+        non_code_mode_only
+    );
+    let input = request.input();
+    let texts = developer_texts(&input);
+    assert!(texts.iter().any(|text| text.contains(
+        "When a collaboration tool is listed in `functions.exec`, call its declared `tools.*` function there."
+    )));
+    assert!(texts.iter().any(|text| {
+        text.contains("When it is exposed as a direct tool, call its declared recipient directly.")
+    }));
+    Ok(())
+}
+
 #[derive(Clone, Copy, Debug)]
 enum ModeHintSource {
     ConfiguredHint,
