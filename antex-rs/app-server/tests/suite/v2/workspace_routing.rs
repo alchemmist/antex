@@ -29,6 +29,84 @@ use wiremock::matchers::path;
 
 const READ_TIMEOUT: Duration = Duration::from_secs(/*secs*/ 60);
 
+#[tokio::test]
+async fn slow_workspace_discovery_completes_and_is_cached() -> Result<()> {
+    let backend = MockServer::start().await;
+    Mock::given(path("/backend-api/wham/accounts/check"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_delay(Duration::from_secs(12))
+                .set_body_json(json!({"accounts": [{
+                    "id": "selected",
+                    "workspace_backend_origin": "https://chatgpt.com",
+                    "account_routing_override": "NO_CONSTRAINT"
+                }]})),
+        )
+        .expect(1)
+        .mount(&backend)
+        .await;
+    let home = TempDir::new()?;
+    config(&home, &backend).await?;
+    write_chatgpt_auth(
+        home.path(),
+        ChatGptAuthFixture::new("token")
+            .account_id("selected")
+            .email("user@example.com")
+            .plan_type("pro"),
+        AuthCredentialsStoreMode::File,
+    )?;
+    let mut server = start(&home).await?;
+    let expected = json!({
+        "account": {"type": "chatgpt", "email": "user@example.com", "planType": "pro"},
+        "requiresOpenaiAuth": true,
+        "workspaceRouting": routing("selected", "https://chatgpt.com", "NO_CONSTRAINT")
+    });
+    assert_eq!(read(&mut server).await?, expected);
+    assert_eq!(read(&mut server).await?, expected);
+    backend.verify().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn discovery_errors_report_retryability_without_response_bodies() -> Result<()> {
+    for (status, retryable) in [(401, false), (403, false), (429, true), (503, true)] {
+        let backend = MockServer::start().await;
+        Mock::given(path("/backend-api/wham/accounts/check"))
+            .respond_with(ResponseTemplate::new(status).set_body_string("private response body"))
+            .mount(&backend)
+            .await;
+        let home = TempDir::new()?;
+        config(&home, &backend).await?;
+        write_chatgpt_auth(
+            home.path(),
+            ChatGptAuthFixture::new("token")
+                .account_id("selected")
+                .plan_type("pro"),
+            AuthCredentialsStoreMode::File,
+        )?;
+        let mut server = start(&home).await?;
+        let request = server
+            .send_get_account_request(GetAccountParams {
+                refresh_token: false,
+            })
+            .await?;
+        let error = timeout(
+            READ_TIMEOUT,
+            server.read_stream_until_error_message(RequestId::Integer(request)),
+        )
+        .await??;
+        assert_eq!(
+            error.error,
+            antex_app_server_protocol::JSONRPCErrorError {
+                code: -32603,
+                message: "workspace routing discovery failed".to_string(),
+                data: Some(json!({"retryable": retryable, "httpStatus": status})),
+            }
+        );
+    }
+    Ok(())
+}
+
 async fn config(home: &TempDir, backend: &MockServer) -> Result<()> {
     std::fs::write(
         home.path().join("config.toml"),

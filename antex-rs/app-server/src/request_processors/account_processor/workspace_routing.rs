@@ -123,10 +123,23 @@ impl AccountRequestProcessor {
                         auth,
                         config.http_client_factory(),
                     );
-                    let response = client
-                        .get_accounts_check()
-                        .await
-                        .map_err(|_| internal_error("workspace routing discovery failed"))?;
+                    let response = client.get_accounts_check().await.map_err(|error| {
+                        let status = error.status().map(|status| status.as_u16());
+                        let retryable = status.is_none_or(|status| {
+                            status == 408 || status == 429 || (500..600).contains(&status)
+                        });
+                        tracing::warn!(
+                            ?status,
+                            retryable,
+                            "workspace routing discovery request failed"
+                        );
+                        let mut error = internal_error("workspace routing discovery failed");
+                        error.data = Some(serde_json::json!({
+                            "retryable": retryable,
+                            "httpStatus": status,
+                        }));
+                        error
+                    })?;
                     let mut accounts = response
                         .accounts
                         .into_iter()
@@ -192,7 +205,7 @@ impl AccountRequestProcessor {
             _ = auth_changes.wait_for(|state| state.owner_generation != auth_state.owner_generation) => {
                 return Err(internal_error("account changed during workspace routing discovery"));
             }
-            result = tokio::time::timeout(Duration::from_secs(/*secs*/ 10), read) => {
+            result = tokio::time::timeout(Duration::from_secs(/*secs*/ 30), read) => {
                 result.map_err(|_| internal_error("workspace routing discovery timed out"))?
             }
         };

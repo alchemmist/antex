@@ -1,0 +1,5 @@
+---
+source: tui/src/app_server_session/account_bootstrap_tests.rs
+expression: error.to_string()
+---
+account/read transport error: account discovery did not recover within two minutes; check connectivity and retry
