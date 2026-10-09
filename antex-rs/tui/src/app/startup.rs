@@ -736,6 +736,7 @@ See the Antex keymap documentation for supported actions and examples."
             local_settings,
             launch_cwd,
             runtime_working_directory_override: None,
+            adopted_working_directory: None,
             state_db,
             cli_kv_overrides,
             harness_overrides,

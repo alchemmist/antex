@@ -250,6 +250,7 @@ mod tests {
         ThreadSettings {
             disabled_plugin_ids: Vec::new(),
             cwd: test_path_buf("/tmp/thread-settings").abs(),
+            runtime_workspace_roots: None,
             approval_policy: antex_app_server_protocol::AskForApproval::Never,
             approvals_reviewer: antex_app_server_protocol::ApprovalsReviewer::User,
             sandbox_policy: antex_app_server_protocol::SandboxPolicy::ReadOnly {

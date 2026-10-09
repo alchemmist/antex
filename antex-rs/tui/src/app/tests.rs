@@ -5962,6 +5962,7 @@ async fn make_test_app() -> App {
         workspace_command_runner: None,
         launch_cwd: config.cwd.to_path_buf(),
         runtime_working_directory_override: None,
+        adopted_working_directory: None,
         local_settings: crate::local_settings::LocalSettings::from(&config),
         config,
         state_db: None,
@@ -6065,6 +6066,7 @@ pub(super) async fn make_test_app_with_channels() -> (
             workspace_command_runner: None,
             launch_cwd: config.cwd.to_path_buf(),
             runtime_working_directory_override: None,
+            adopted_working_directory: None,
             local_settings: crate::local_settings::LocalSettings::from(&config),
             config,
             state_db: None,
@@ -7857,16 +7859,27 @@ async fn in_app_resume_uses_configured_or_explicit_cwd() -> Result<()> {
     let mut local_app_server = None;
     let mut remote_app_server = None;
 
-    for (configured_mode, has_explicit_cwd, has_remote_exec, has_runtime_cwd, expected_directory) in [
-        ("current", false, false, false, "launch"),
-        ("session", false, false, false, "session"),
-        ("session", true, false, false, "explicit"),
-        ("session", false, true, false, "session"),
-        ("session", true, true, false, "explicit"),
-        ("current", false, false, true, "runtime"),
-        ("current", true, false, true, "runtime"),
-        ("session", false, false, true, "runtime"),
-        ("session", true, false, true, "runtime"),
+    for (
+        configured_mode,
+        has_explicit_cwd,
+        has_remote_exec,
+        has_runtime_cwd,
+        adopted_cwd,
+        expected_directory,
+    ) in [
+        ("current", false, false, false, false, "launch"),
+        ("session", false, false, false, false, "session"),
+        ("session", true, false, false, false, "explicit"),
+        ("session", false, true, false, false, "session"),
+        ("session", true, true, false, false, "explicit"),
+        ("current", false, false, true, false, "runtime"),
+        ("current", true, false, true, false, "runtime"),
+        ("session", false, false, true, false, "runtime"),
+        ("session", true, false, true, false, "runtime"),
+        ("current", false, false, false, true, "active"),
+        ("session", false, false, false, true, "session"),
+        ("session", true, false, false, true, "active"),
+        ("current", false, false, true, true, "active"),
     ] {
         std::fs::write(
             codex_home.join("config.toml"),
@@ -7961,6 +7974,7 @@ async fn in_app_resume_uses_configured_or_explicit_cwd() -> Result<()> {
         app.environment_manager = environment_manager;
         app.harness_overrides.cwd = has_explicit_cwd.then_some(explicit_cwd.clone());
         app.runtime_working_directory_override = has_runtime_cwd.then_some(runtime_cwd.clone());
+        app.adopted_working_directory = adopted_cwd.then_some(active_cwd.clone());
         app.chat_widget
             .handle_thread_session_quiet(test_thread_session(ThreadId::new(), active_cwd.clone()));
         let mut tui = crate::tui::test_support::make_test_tui()?;
@@ -9389,6 +9403,7 @@ async fn inactive_thread_settings_notification_updates_cached_collaboration_mode
         thread_settings: ThreadSettings {
             disabled_plugin_ids: Vec::new(),
             cwd: test_absolute_path("/tmp/thread-settings"),
+            runtime_workspace_roots: None,
             approval_policy: AskForApproval::OnRequest,
             approvals_reviewer: antex_app_server_protocol::ApprovalsReviewer::AutoReview,
             sandbox_policy: antex_app_server_protocol::SandboxPolicy::ReadOnly {

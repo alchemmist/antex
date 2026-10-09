@@ -10,6 +10,30 @@ static LAST_BINDING: std::sync::Mutex<Option<(String, String, String)>> =
 
 static RESUME_OPTIONS: OnceLock<Vec<String>> = OnceLock::new();
 
+pub(crate) fn synchronize_process_directory(
+    thread_id: ThreadId,
+    home: &Path,
+    cwd: &Path,
+) -> std::io::Result<()> {
+    std::env::set_current_dir(cwd)?;
+    publish_thread_id(Some(thread_id), home, cwd);
+    Ok(())
+}
+
+#[cfg(not(test))]
+pub(crate) use synchronize_process_directory as synchronize_directory;
+
+#[cfg(test)]
+pub(crate) fn synchronize_directory(
+    thread_id: ThreadId,
+    home: &Path,
+    cwd: &Path,
+) -> std::io::Result<()> {
+    tests::SYNCHRONIZED_CWD.set(Some(cwd.to_path_buf()));
+    publish_thread_id(Some(thread_id), home, cwd);
+    Ok(())
+}
+
 pub(crate) fn initialize(cli: &crate::cli::Cli) {
     let _ = RESUME_OPTIONS.set(resume_options(cli));
     clear_binding();
@@ -78,6 +102,7 @@ struct Binding<'a> {
     pane_id: &'a str,
     socket_path: &'a str,
     home: &'a Path,
+    cwd: &'a Path,
     resume_argv: Vec<String>,
 }
 
@@ -147,6 +172,7 @@ pub(crate) fn publish_thread_id(thread_id: Option<ThreadId>, home: &Path, cwd: &
             pane_id: &pane,
             socket_path: socket,
             home,
+            cwd,
             resume_argv: resume_argv(
                 thread_id,
                 RESUME_OPTIONS.get().map(Vec::as_slice).unwrap_or_default(),

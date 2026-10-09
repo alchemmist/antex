@@ -269,6 +269,7 @@ mod tests {
         ThreadSettings {
             disabled_plugin_ids: Vec::new(),
             cwd: AbsolutePathBuf::from_absolute_path("/tmp").expect("absolute path"),
+            runtime_workspace_roots: None,
             approval_policy: AskForApproval::OnRequest,
             approvals_reviewer: ApprovalsReviewer::User,
             sandbox_policy: SandboxPolicy::ReadOnly {

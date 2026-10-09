@@ -9993,6 +9993,9 @@ class ThreadSettings(BaseModel):
             description="@deprecated Reports the saved setting; `friendly` and `pragmatic` no longer select a style."
         ),
     ] = None
+    runtime_workspace_roots: Annotated[
+        list[AbsolutePathBuf] | None, Field(alias="runtimeWorkspaceRoots")
+    ] = None
     sandbox_policy: Annotated[SandboxPolicy, Field(alias="sandboxPolicy")]
     service_tier: Annotated[str | None, Field(alias="serviceTier")] = None
     summary: ReasoningSummary | None = None

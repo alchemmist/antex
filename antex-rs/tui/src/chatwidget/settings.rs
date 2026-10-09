@@ -446,6 +446,12 @@ impl ChatWidget {
         self.invalidate_permission_discovery();
         let cwd_changed = self.config.cwd != settings.cwd;
         self.apply_thread_settings_cwd(settings.cwd.clone());
+        if let Some(roots) = settings.runtime_workspace_roots.take() {
+            self.config.workspace_roots = roots;
+            self.config
+                .permissions
+                .set_workspace_roots(self.config.workspace_roots.clone());
+        }
         self.config.model_provider_id = settings.model_provider.clone();
         let service_tier = if settings.service_tier.as_deref()
             == Some(ServiceTier::Fast.request_value())

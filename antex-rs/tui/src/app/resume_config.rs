@@ -29,7 +29,11 @@ impl App {
             self.local_settings.tui.resume_cwd,
             cwd_override,
         );
-        let remembered_current_cwd = cwd_override.unwrap_or(self.launch_cwd.as_path());
+        let remembered_current_cwd = self
+            .adopted_working_directory
+            .as_deref()
+            .or(cwd_override)
+            .unwrap_or(self.launch_cwd.as_path());
         let current_cwd = if matches!(resume_cwd_mode, Some(ResumeCwdMode::Current)) {
             remembered_current_cwd.to_path_buf()
         } else {

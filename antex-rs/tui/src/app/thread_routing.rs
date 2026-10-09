@@ -1523,6 +1523,7 @@ impl App {
         self.config.approvals_reviewer = session.approvals_reviewer;
 
         let thread_id = session.thread_id;
+        let primary_cwd = session.cwd.clone();
         self.pending_server_profiles.remove(&thread_id);
         if self.primary_thread_id != Some(thread_id) {
             self.recap.reset_for_new_thread(Instant::now());
@@ -1551,11 +1552,18 @@ impl App {
                 self.chat_widget.handle_thread_session(session);
             }
         }
-        crate::tmux_session::publish_thread_id(
-            self.primary_thread_id,
-            self.config.codex_home.as_path(),
-            self.config.cwd.as_path(),
-        );
+        if crate::uses_remote_workspace_or_environment(
+            &self.app_server_target,
+            self.environment_manager.as_ref(),
+        ) {
+            crate::tmux_session::publish_thread_id(
+                self.primary_thread_id,
+                self.config.codex_home.as_path(),
+                self.config.cwd.as_path(),
+            );
+        } else {
+            self.synchronize_primary_directory(thread_id, &primary_cwd);
+        }
         let should_buffer_initial_replay = !turns.is_empty();
         let replayed_final_items = realtime_delivery::completed_agent_items_from_turns(&turns);
         let replayed_voice_texts = realtime_delivery::replayed_voice_texts_from_turns(&turns);

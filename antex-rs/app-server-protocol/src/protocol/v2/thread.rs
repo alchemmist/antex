@@ -306,6 +306,7 @@ pub struct ThreadSettings {
     #[serde(default)]
     pub disabled_plugin_ids: Vec<String>,
     pub cwd: AbsolutePathBuf,
+    pub runtime_workspace_roots: Option<Vec<AbsolutePathBuf>>,
     pub approval_policy: AskForApproval,
     pub approvals_reviewer: ApprovalsReviewer,
     pub sandbox_policy: SandboxPolicy,

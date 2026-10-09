@@ -473,6 +473,7 @@ impl App {
         self.keymap = keymap;
         self.merge_startup_warnings(tui, &history_cell::StartupWarningsCell::default());
         self.restore_runtime_theme_from_config();
+        self.adopted_working_directory = None;
         self.runtime_working_directory_override = Some(cwd.to_path_buf());
         if let Some(message) = project_config_warning(&self.config) {
             self.chat_widget.add_warning_message(message);

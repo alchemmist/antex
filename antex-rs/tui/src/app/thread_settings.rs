@@ -220,6 +220,21 @@ impl App {
                 apply_thread_settings_to_session(session, settings);
             }
         }
+        if self.primary_thread_id == Some(thread_id)
+            && !crate::uses_remote_workspace_or_environment(
+                &self.app_server_target,
+                self.environment_manager.as_ref(),
+            )
+        {
+            if self.config.cwd != settings.cwd {
+                self.adopted_working_directory = Some(settings.cwd.to_path_buf());
+            }
+            if let Some(roots) = settings.runtime_workspace_roots.as_ref() {
+                self.config.workspace_roots = roots.clone();
+                self.config.permissions.set_workspace_roots(roots.clone());
+            }
+        }
+        self.synchronize_primary_directory(thread_id, &settings.cwd);
     }
 
     pub(super) async fn send_thread_settings_update(
@@ -268,7 +283,12 @@ fn apply_thread_settings_to_session(session: &mut ThreadSessionState, settings: 
         settings.cwd.as_path(),
     );
     session.active_permission_profile = settings.active_permission_profile.clone().map(Into::into);
-    session.set_cwd_retargeting_implicit_runtime_workspace_root(settings.cwd.clone());
+    if let Some(roots) = settings.runtime_workspace_roots.as_ref() {
+        session.cwd = settings.cwd.clone();
+        session.runtime_workspace_roots = roots.clone();
+    } else {
+        session.set_cwd_retargeting_implicit_runtime_workspace_root(settings.cwd.clone());
+    }
     session.personality = settings.personality;
     let mut collaboration_mode = settings.collaboration_mode.clone();
     collaboration_mode

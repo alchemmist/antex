@@ -15,6 +15,7 @@ fn thread_settings_for_test(
         thread_settings: antex_app_server_protocol::ThreadSettings {
             disabled_plugin_ids: Vec::new(),
             cwd: test_path_buf("/tmp/thread-settings").abs(),
+            runtime_workspace_roots: None,
             approval_policy: AskForApproval::OnRequest,
             approvals_reviewer: antex_app_server_protocol::ApprovalsReviewer::AutoReview,
             sandbox_policy: antex_app_server_protocol::SandboxPolicy::ReadOnly {
@@ -1958,6 +1959,50 @@ async fn live_app_server_thread_closed_requests_immediate_exit() {
     );
 
     assert_matches!(rx.try_recv(), Ok(AppEvent::Exit(ExitMode::Immediate)));
+}
+
+#[tokio::test]
+async fn thread_settings_preserve_authoritative_workspace_roots_when_cwd_changes() {
+    for roots in [vec![test_path_buf("/tmp/original").abs()], Vec::new()] {
+        let (mut chat, _rx, _op_rx) = make_chatwidget_manual(None).await;
+        let thread_id = ThreadId::new();
+        chat.thread_id = Some(thread_id);
+        chat.config.cwd = test_path_buf("/tmp/original").abs();
+        chat.config.workspace_roots = vec![chat.config.cwd.clone()];
+        let mut notification = thread_settings_for_test("gpt-5.2", thread_id);
+        notification.thread_settings.runtime_workspace_roots = Some(roots.clone());
+        let cwd = notification.thread_settings.cwd.clone();
+
+        chat.on_thread_settings_updated(notification);
+
+        assert_eq!(
+            (&chat.config.cwd, &chat.config.workspace_roots),
+            (&cwd, &roots)
+        );
+    }
+}
+
+#[tokio::test]
+async fn legacy_thread_settings_retarget_implicit_workspace_root() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(None).await;
+    let thread_id = ThreadId::new();
+    chat.thread_id = Some(thread_id);
+    chat.config.cwd = test_path_buf("/tmp/original").abs();
+    chat.config.workspace_roots = vec![chat.config.cwd.clone()];
+    let notification = thread_settings_for_test("gpt-5.2", thread_id);
+    let cwd = notification.thread_settings.cwd.clone();
+    let mut serialized = serde_json::to_value(notification).unwrap();
+    serialized["threadSettings"]
+        .as_object_mut()
+        .unwrap()
+        .remove("runtimeWorkspaceRoots");
+
+    chat.on_thread_settings_updated(serde_json::from_value(serialized).unwrap());
+
+    assert_eq!(
+        (&chat.config.cwd, &chat.config.workspace_roots),
+        (&cwd, &vec![cwd.clone()])
+    );
 }
 
 #[tokio::test]

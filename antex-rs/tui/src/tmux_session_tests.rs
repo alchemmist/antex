@@ -1,10 +1,54 @@
 thread_local! {
     pub(crate) static PUBLISHED_THREAD: std::cell::Cell<Option<antex_protocol::ThreadId>> = const { std::cell::Cell::new(None) };
+    pub(crate) static SYNCHRONIZED_CWD: std::cell::RefCell<Option<std::path::PathBuf>> = const { std::cell::RefCell::new(/*value*/ None) };
 }
 
 use super::*;
 use clap::Parser;
 use pretty_assertions::assert_eq;
+
+#[test]
+fn directory_synchronization_updates_process_and_resume_binding() {
+    const CHILD_DIRECTORY: &str = "ANTEX_TMUX_DIRECTORY_TEST_CHILD";
+    let id = ThreadId::from_string("01a0d3e1-d263-75c0-8189-c98bc7266f6c").unwrap();
+    if let Some(directory) = std::env::var_os(CHILD_DIRECTORY) {
+        let directory = std::path::PathBuf::from(directory);
+        synchronize_process_directory(id, &directory, &directory).unwrap();
+        assert_eq!(
+            (std::env::current_dir().unwrap(), PUBLISHED_THREAD.get()),
+            (directory.canonicalize().unwrap(), Some(id))
+        );
+        return;
+    }
+    let root = tempfile::tempdir().unwrap();
+    let worktree = root.path().join("worktree with spaces");
+    std::fs::create_dir(&worktree).unwrap();
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "tmux_session::tests::directory_synchronization_updates_process_and_resume_binding",
+            "--nocapture",
+        ])
+        .env(CHILD_DIRECTORY, &worktree)
+        .current_dir(root.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+}
+
+#[test]
+fn missing_directory_does_not_publish_a_new_binding() {
+    let root = tempfile::tempdir().unwrap();
+    let missing = root.path().join("missing");
+    let cwd = std::env::current_dir().unwrap();
+    let id = ThreadId::from_string("01a0d3e1-d263-75c0-8189-c98bc7266f6c").unwrap();
+    PUBLISHED_THREAD.set(/*val*/ None);
+    assert!(synchronize_process_directory(id, root.path(), &missing).is_err());
+    assert_eq!(
+        (std::env::current_dir().unwrap(), PUBLISHED_THREAD.get()),
+        (cwd, None)
+    );
+}
 
 #[test]
 fn binding_carries_root_identity_and_quoted_option_values() {
@@ -50,6 +94,7 @@ fn binding_carries_root_identity_and_quoted_option_values() {
         pane_id: "%19",
         socket_path: "/tmp/tmux-test/default",
         home: Path::new("/tmp/antex-home"),
+        cwd: Path::new("/workspace with spaces"),
         resume_argv: argv.clone(),
     };
     assert_eq!(
@@ -58,6 +103,7 @@ fn binding_carries_root_identity_and_quoted_option_values() {
             "version": 1, "thread_id": id, "pid": 123,
             "process_started_at": "Mon Sep 28 12:00:00 2026", "pane_id": "%19",
             "socket_path": "/tmp/tmux-test/default", "home": "/tmp/antex-home",
+            "cwd": "/workspace with spaces",
             "resume_argv": argv,
         })
     );

@@ -21652,6 +21652,15 @@
           ],
           "description": "@deprecated Reports the saved setting; `friendly` and `pragmatic` no longer select a style."
         },
+        "runtimeWorkspaceRoots": {
+          "items": {
+            "$ref": "#/definitions/AbsolutePathBuf"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
         "sandboxPolicy": {
           "$ref": "#/definitions/SandboxPolicy"
         },

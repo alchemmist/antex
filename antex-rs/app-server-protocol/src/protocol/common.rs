@@ -4482,6 +4482,7 @@ mod tests {
                 thread_settings: v2::ThreadSettings {
                     disabled_plugin_ids: Vec::new(),
                     cwd: absolute_path("/tmp/repo"),
+                    runtime_workspace_roots: None,
                     approval_policy: v2::AskForApproval::Never,
                     approvals_reviewer: v2::ApprovalsReviewer::User,
                     sandbox_policy: v2::SandboxPolicy::DangerFullAccess,
