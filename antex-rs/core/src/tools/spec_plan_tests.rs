@@ -983,7 +983,7 @@ async fn request_user_input_stays_direct_in_code_mode_only() {
 }
 
 #[tokio::test]
-async fn shell_family_registers_only_unified_exec_tools() {
+async fn shell_family_registers_unified_exec_and_directory_transition_tools() {
     let plan = probe(|turn| {
         set_features(turn, &[Feature::ShellTool]);
         set_feature(turn, Feature::ShellZshFork, /*enabled*/ false);
@@ -993,8 +993,8 @@ async fn shell_family_registers_only_unified_exec_tools() {
     })
     .await;
 
-    plan.assert_visible_contains(&["exec_command", "write_stdin"]);
-    plan.assert_registered_contains(&["exec_command", "write_stdin"]);
+    plan.assert_visible_contains(&["exec_command", "write_stdin", "set_working_directory"]);
+    plan.assert_registered_contains(&["exec_command", "write_stdin", "set_working_directory"]);
     assert!(plan.has_terminal_controls);
     assert!(has_parameter(plan.visible_spec("exec_command"), "shell"));
 }
@@ -1126,8 +1126,16 @@ async fn disabling_shell_tools_disables_command_tools_for_all_environments() {
         );
     })
     .await;
-    remote_environment.assert_visible_lacks(&["exec_command", "write_stdin"]);
-    remote_environment.assert_registered_lacks(&["exec_command", "write_stdin"]);
+    remote_environment.assert_visible_lacks(&[
+        "exec_command",
+        "write_stdin",
+        "set_working_directory",
+    ]);
+    remote_environment.assert_registered_lacks(&[
+        "exec_command",
+        "write_stdin",
+        "set_working_directory",
+    ]);
     assert!(!remote_environment.has_terminal_controls);
 
     let multiple_local_environments = probe(|turn| {
@@ -1138,8 +1146,16 @@ async fn disabling_shell_tools_disables_command_tools_for_all_environments() {
         duplicate_primary_environment(turn);
     })
     .await;
-    multiple_local_environments.assert_visible_lacks(&["exec_command", "write_stdin"]);
-    multiple_local_environments.assert_registered_lacks(&["exec_command", "write_stdin"]);
+    multiple_local_environments.assert_visible_lacks(&[
+        "exec_command",
+        "write_stdin",
+        "set_working_directory",
+    ]);
+    multiple_local_environments.assert_registered_lacks(&[
+        "exec_command",
+        "write_stdin",
+        "set_working_directory",
+    ]);
 }
 
 #[tokio::test]
@@ -1316,6 +1332,7 @@ async fn environment_count_controls_environment_backed_tools() {
     })
     .await;
     no_environment.assert_visible_lacks(&[
+        "set_working_directory",
         "exec_command",
         "write_stdin",
         "apply_patch",
@@ -1323,6 +1340,7 @@ async fn environment_count_controls_environment_backed_tools() {
         "request_permissions",
     ]);
     no_environment.assert_registered_lacks(&[
+        "set_working_directory",
         "exec_command",
         "write_stdin",
         "apply_patch",
@@ -1347,6 +1365,8 @@ async fn environment_count_controls_environment_backed_tools() {
         "view_image",
         "request_permissions",
     ]);
+    multiple_environments.assert_visible_lacks(&["set_working_directory"]);
+    multiple_environments.assert_registered_lacks(&["set_working_directory"]);
     assert!(multiple_environments.has_terminal_controls);
     assert!(has_parameter(
         multiple_environments.visible_spec("exec_command"),

@@ -259,6 +259,7 @@ pub(crate) mod turn;
 pub(crate) mod turn_context;
 mod turn_input;
 mod turn_suspension;
+mod working_directory;
 mod world_state;
 use self::code_mode_warning::unsupported_code_mode_warning;
 #[cfg(test)]
@@ -3778,6 +3779,7 @@ impl Session {
         required_servers: &[String],
         required_plugins: &HashSet<String>,
     ) -> AntexResult<Arc<StepContext>> {
+        let turn_context = turn_context.with_working_directory_update();
         // Capture once before asynchronous planning; all request consumers
         // retain this immutable settings version even if the turn is updated.
         let mut settings = turn_context.current_settings.load_full();

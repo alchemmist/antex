@@ -149,6 +149,8 @@ mod turn_steer;
 mod view_image;
 mod web_search;
 mod windows_sandbox_setup;
+#[path = "working_directory_tests.rs"]
+mod working_directory;
 mod workspace_routing;
 
 mod user_verification;

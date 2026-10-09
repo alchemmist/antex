@@ -26,6 +26,7 @@ use crate::tools::handlers::RequestPluginInstallHandler;
 use crate::tools::handlers::RequestUserInputAsyncHandler;
 use crate::tools::handlers::RequestUserInputHandler;
 use crate::tools::handlers::SendMessageToUserAsyncHandler;
+use crate::tools::handlers::SetWorkingDirectoryHandler;
 use crate::tools::handlers::SleepHandler;
 use crate::tools::handlers::TestSyncHandler;
 use crate::tools::handlers::ToolSearchHandlerCache;
@@ -1050,6 +1051,9 @@ fn add_shell_tools(context: &CoreToolPlanContext<'_>, registry: &mut ToolRegistr
     }
     let exec_permission_approvals_enabled =
         features.enabled(Feature::ExecPermissionApprovals) && !is_guardian;
+    if !is_guardian && context.environments.single_local_environment().is_some() {
+        registry.add(SetWorkingDirectoryHandler);
+    }
     let include_environment_id = matches!(environment_mode, ToolEnvironmentMode::Multiple);
     let options = ExecCommandHandlerOptions {
         allow_login_shell,
