@@ -1950,6 +1950,12 @@ async fn async_hook_finishing_while_idle_waits_for_the_next_turn(
         .await
         .context("timed out waiting for the async hook to finish")?;
 
+    fs::remove_file(
+        test.antex_home_path()
+            .join("async_user_prompt_submit_release"),
+    )
+    .context("gate the next user prompt's async hook")?;
+
     assert!(
         timeout(Duration::from_millis(150), test.antex.next_event())
             .await
