@@ -8,7 +8,7 @@ before reveal:
 "                                                                                "
 " ┃ Ask Antex to do anything                                                     "
 "                                                                                "
-"  gpt-5.6-sol default · /tmp/project                                            "
+"  GPT-5.6-Sol default · /tmp/project                                            "
 running:
 "                                                                                "
 "• Saving session summary                                                        "
@@ -16,10 +16,10 @@ running:
 "                                                                                "
 " ┃ Ask Antex to do anything                                                     "
 "                                                                                "
-"  gpt-5.6-sol default · /tmp/project                                            "
+"  GPT-5.6-Sol default · /tmp/project                                            "
 completed:
 "                                                                                "
 "                                                                                "
 " ┃ Ask Antex to do anything                                                     "
 "                                                                                "
-"  gpt-5.6-sol default · /tmp/project                                            "
+"  GPT-5.6-Sol default · /tmp/project                                            "

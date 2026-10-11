@@ -2,5 +2,6 @@ load("//:defs.bzl", "antex_rust_crate")
 
 antex_rust_crate(
     name = "code-mode-runtime",
+    compile_data = ["src/runtime/settled.js"],
     crate_name = "antex_code_mode_runtime",
 )

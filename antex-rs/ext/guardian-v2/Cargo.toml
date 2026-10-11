@@ -17,6 +17,7 @@ anyhow = { workspace = true }
 antex-analytics = { workspace = true }
 antex-api = { workspace = true }
 antex-config = { workspace = true }
+antex-context-fragments = { workspace = true }
 antex-core = { workspace = true }
 antex-extension-api = { workspace = true }
 antex-features = { workspace = true }
@@ -27,6 +28,8 @@ antex-http-client = { workspace = true }
 antex-login = { workspace = true }
 antex-model-provider = { workspace = true }
 antex-protocol = { workspace = true }
+antex-prompts = { workspace = true }
+antex-websocket-client = { workspace = true }
 dirs = { workspace = true }
 http = { workspace = true }
 serde_json = { workspace = true }
@@ -37,7 +40,11 @@ uuid = { workspace = true }
 
 [dev-dependencies]
 antex-model-provider-info = { workspace = true }
+antex-utils-cargo-bin = { workspace = true }
 core_test_support = { workspace = true }
+insta = { workspace = true }
 pretty_assertions = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+wiremock = { workspace = true }
+zstd = { workspace = true }

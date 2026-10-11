@@ -24,7 +24,7 @@ from _runtime_setup import ensure_runtime_package_installed, pinned_runtime_vers
 RUN_REAL_ANTEX_TESTS = os.environ.get("RUN_REAL_ANTEX_TESTS") == "1"
 pytestmark = pytest.mark.skipif(
     not RUN_REAL_ANTEX_TESTS,
-    reason="set RUN_REAL_CODEX_TESTS=1 to run real Antex integration coverage",
+    reason="set RUN_REAL_ANTEX_TESTS=1 to run real Antex integration coverage",
 )
 
 # 11_cli_mini_app is interactive; we still run it by feeding one prompt, then '/exit'.

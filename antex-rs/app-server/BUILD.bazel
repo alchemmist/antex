@@ -1,4 +1,5 @@
 load("//:defs.bzl", "antex_rust_crate")
+load("//bazel/rules:runtime_package.bzl", "release_binary")
 
 antex_rust_crate(
     name = "app-server",
@@ -28,4 +29,8 @@ antex_rust_crate(
         "@platforms//os:macos": 1,
         "//conditions:default": 0,
     }),
+)
+
+release_binary(
+    binary = ":antex-app-server",
 )

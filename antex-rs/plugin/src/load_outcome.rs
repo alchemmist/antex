@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 
 use antex_utils_absolute_path::AbsolutePathBuf;
+use antex_utils_path_uri::PathUri;
 use antex_utils_plugins::PluginIdentity;
 use antex_utils_plugins::PluginSkillRoot;
 use antex_utils_plugins::SkillDiscoveryMode;
@@ -26,7 +27,7 @@ pub struct LoadedPlugin<M> {
     pub enabled: bool,
     pub skill_roots: Vec<AbsolutePathBuf>,
     pub skill_discovery_mode: SkillDiscoveryMode,
-    pub disabled_skill_paths: HashSet<AbsolutePathBuf>,
+    pub disabled_skill_paths: HashSet<PathUri>,
     pub has_enabled_skills: bool,
     pub mcp_servers: HashMap<String, M>,
     pub apps: Vec<AppDeclaration>,

@@ -9,6 +9,7 @@ async fn subagent_mode_survives_resume_and_persists_off() {
     original.handle_thread_session(session.clone());
     original.dispatch_command(SlashCommand::MultiAgents);
     let settings = original.local_settings.clone();
+    let _home_guard = original.test_antex_home.take();
     drop(original);
 
     let (mut resumed, _rx, mut ops) = make_chatwidget_manual(None).await;
@@ -52,6 +53,7 @@ async fn subagent_mode_enabled_before_thread_start_is_saved() {
     let session = configured_thread_session(ThreadId::new());
     original.handle_thread_session(session.clone());
     let settings = original.local_settings.clone();
+    let _home_guard = original.test_antex_home.take();
     drop(original);
 
     let (mut resumed, _rx, _ops) = make_chatwidget_manual(None).await;

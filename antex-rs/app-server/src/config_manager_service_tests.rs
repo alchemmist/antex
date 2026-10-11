@@ -736,6 +736,8 @@ async fn psp_feature_configures_first_party_routing() -> Result<()> {
     assert_eq!(
         config.http_client_factory(),
         HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault)
+            .with_system_proxy_fallback()
+            .with_network_policy(config.application_network_policy.clone())
             .with_chatgpt_cookies([HeaderValue::from_static("oai-chat-psp=true")])
     );
     assert_eq!(
@@ -915,6 +917,7 @@ async fn write_value_supports_nested_app_paths() -> Result<()> {
             value: serde_json::json!({
                 "app1": {
                     "enabled": false,
+                    "omit_tools_from": ["deferred"],
                 },
             }),
             merge_strategy: MergeStrategy::Replace,
@@ -950,6 +953,9 @@ async fn write_value_supports_nested_app_paths() -> Result<()> {
                 "app1".to_string(),
                 AppConfig {
                     enabled: false,
+                    omit_tools_from: Some(vec![
+                        antex_protocol::config_types::ToolExposureSurface::Deferred
+                    ]),
                     approvals_reviewer: None,
                     destructive_enabled: None,
                     open_world_enabled: None,
@@ -1436,6 +1442,77 @@ url_prefix_from_env = "VENDOR_ENDPOINT"
 }
 
 #[tokio::test]
+async fn thread_refresh_resolves_preserved_layers_before_materialization() -> Result<()> {
+    use antex_core::config::ConfigOverrides;
+    use antex_features::Feature;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    let tmp = tempdir()?;
+    let selected_path = tmp.path().join("work.config.toml");
+    std::fs::write(&selected_path, "log_dir = \"old-logs\"\n")?;
+    let mut loader_overrides = LoaderOverrides::without_managed_config_for_tests();
+    loader_overrides.user_config_path = Some(AbsolutePathBuf::from_absolute_path(&selected_path)?);
+    loader_overrides.user_config_profile = Some("work".parse()?);
+    let service = ConfigManager::new(
+        tmp.path().to_path_buf(),
+        Vec::new(),
+        loader_overrides,
+        /*strict_config*/ true,
+        CloudConfigBundleLoader::default(),
+        Default::default(),
+        Arc::new(antex_config::NoopThreadConfigLoader),
+    );
+    let thread = service
+        .load_for_cwd(
+            Some(HashMap::from([(
+                "model_provider".to_string(),
+                serde_json::json!("openai"),
+            )])),
+            ConfigOverrides::default(),
+            Some(tmp.path().to_path_buf()),
+        )
+        .await?;
+    service
+        .extend_runtime_feature_enablement([
+            ("secret_auth_storage".to_string(), true),
+            ("mcp_oauth_refresh_coordination".to_string(), true),
+        ])
+        .expect("set runtime features");
+    std::fs::write(
+        &selected_path,
+        "model_provider = \"missing-provider\"\nlog_dir = \"new-logs\"\n\
+         [features]\nmcp_oauth_refresh_coordination = false\n",
+    )?;
+    // A throwaway host configuration is invalid; the actual thread's preserved
+    // provider is valid. Refresh must materialize only the final composed layers.
+    service
+        .load_latest_config(Some(tmp.path().to_path_buf()))
+        .await
+        .expect_err("host provider is unavailable");
+    let refreshed = service
+        .load_latest_config_with_session_layers(&thread.config_layer_stack, &thread.cwd)
+        .await?;
+    assert_eq!(refreshed.model_provider_id, "openai");
+    assert_eq!(refreshed.cwd, thread.cwd);
+    assert_eq!(refreshed.log_dir, tmp.path().join("new-logs"));
+    assert!(refreshed.features.enabled(Feature::SecretAuthStorage));
+    assert!(
+        !refreshed
+            .features
+            .enabled(Feature::McpOAuthRefreshCoordination)
+    );
+    std::fs::write(&selected_path, "approval_policy = false\n")?;
+    let error = service
+        .load_latest_config_with_session_layers(&thread.config_layer_stack, &thread.cwd)
+        .await
+        .expect_err("invalid final config is rejected");
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    assert!(error.to_string().contains("work.config.toml"), "{error}");
+    Ok(())
+}
+
+#[tokio::test]
 async fn invalid_user_value_rejected_even_if_overridden_by_managed() {
     let tmp = tempdir().expect("tempdir");
     std::fs::write(tmp.path().join(CONFIG_TOML_FILE), "model = \"user\"").unwrap();
@@ -1692,7 +1769,7 @@ async fn read_materializes_default_allow_login_shell() {
 }
 
 #[tokio::test]
-async fn write_value_allows_unmanaged_sibling_of_exact_requirement() {
+async fn write_value_allows_unmanaged_setting_with_exact_requirement() {
     let tmp = tempdir().expect("tempdir");
     let path = tmp.path().join(CONFIG_TOML_FILE);
     std::fs::write(&path, "").unwrap();
@@ -1703,8 +1780,7 @@ async fn write_value_allows_unmanaged_sibling_of_exact_requirement() {
         LoaderOverrides::without_managed_config_for_tests(),
         CloudConfigBundleFixture::loader_with_enterprise_requirement(
             r#"
-[windows]
-sandbox_private_desktop = false
+allow_login_shell = false
 "#,
         ),
     );
@@ -1718,7 +1794,7 @@ sandbox_private_desktop = false
             expected_version: None,
         })
         .await
-        .expect("unmanaged sibling should remain writable");
+        .expect("unmanaged setting should remain writable");
 
     assert!(
         std::fs::read_to_string(path)
@@ -2681,20 +2757,13 @@ async fn permission_config_reload_merges_session_layers() -> Result<()> {
     use antex_config::ConfigLayerSource;
     use antex_config::ConfigLayerStack;
     let tmp = tempdir()?;
-    let wrapper_dir = tmp.path().join("tmp/arg0/session");
-    std::fs::create_dir_all(&wrapper_dir)?;
-    let wrapper = wrapper_dir.join("codex-execve-wrapper");
-    std::fs::write(&wrapper, "")?;
     let service = ConfigManager::new(
         tmp.path().to_path_buf(),
         Vec::new(),
         LoaderOverrides::without_managed_config_for_tests(),
         /*strict_config*/ false,
         CloudConfigBundleLoader::default(),
-        antex_arg0::Arg0DispatchPaths {
-            main_execve_wrapper_exe: Some(wrapper),
-            ..Default::default()
-        },
+        antex_arg0::Arg0DispatchPaths::default(),
         std::sync::Arc::new(antex_config::NoopThreadConfigLoader),
     );
 
@@ -2738,17 +2807,6 @@ async fn permission_config_reload_merges_session_layers() -> Result<()> {
             .map(|profile| profile.id.as_str())
             .collect::<Vec<_>>(),
         vec!["first", "second"]
-    );
-    let policy = loaded.permissions.file_system_sandbox_policy();
-    assert_eq!(
-        (
-            policy.can_read_local_path_with_cwd(&wrapper_dir, loaded.cwd.as_path()),
-            policy.can_read_local_path_with_cwd(
-                &tmp.path().join("tmp/arg0/other"),
-                loaded.cwd.as_path()
-            ),
-        ),
-        (true, false),
     );
     Ok(())
 }

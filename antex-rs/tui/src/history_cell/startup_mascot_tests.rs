@@ -4,6 +4,83 @@ use pretty_assertions::assert_eq;
 use super::*;
 
 #[test]
+fn retained_animation_ticks_track_frames_and_finish_once() {
+    let (requester, mut requests) = FrameRequester::test_channel();
+    let motion = StartupMascotMotion::new(requester);
+    let first_display = Instant::now() + Duration::from_secs(60);
+    let handed_off = motion.clone();
+    for index in 0..FRAME_SEQUENCE.len() {
+        let now = first_display + FRAME_TICK * u32::try_from(index).unwrap();
+        let tick = handed_off.animation_tick_at(now);
+        assert_eq!(tick, Some(FRAME_SEQUENCE[index] as u64));
+        assert!(
+            requests.try_recv().is_ok(),
+            "cache lookup must request the next frame"
+        );
+        // Reusing a cached frame must still leave an animation wakeup pending.
+        assert_eq!(handed_off.animation_tick_at(now), tick);
+        assert!(requests.try_recv().is_ok());
+        assert_eq!(motion.current_frame_at(now), FRAME_SEQUENCE[index]);
+        assert!(requests.try_recv().is_ok());
+    }
+    let finished = first_display + FRAME_TICK * u32::try_from(FRAME_SEQUENCE.len()).unwrap();
+    for now in [finished, finished + FRAME_TICK] {
+        assert_eq!(handed_off.animation_tick_at(now), None);
+        assert_eq!(motion.current_frame_at(now), MascotFrame::Rest);
+        assert!(requests.try_recv().is_err());
+    }
+}
+
+#[test]
+fn retained_header_ticks_only_when_a_mascot_can_be_displayed() {
+    use crate::history_cell::HistoryCell;
+    use crate::history_cell::SessionHeaderHistoryCell;
+    use antex_config::types::StartupPanelConfig;
+    use antex_config::types::StartupPanelStyle;
+
+    let motion = StartupMascotMotion::new(FrameRequester::test_dummy());
+    // Keep the shared motion on its first frame without wall-clock sleeps.
+    motion.current_frame_at(Instant::now() + Duration::from_secs(60));
+    for (style, skin, expected) in [
+        (
+            StartupPanelStyle::Cockpit,
+            StartupMascotSkin::Ant01,
+            Some(0),
+        ),
+        (StartupPanelStyle::Hacker, StartupMascotSkin::Ant03, Some(0)),
+        (
+            StartupPanelStyle::Minimal,
+            StartupMascotSkin::Ant01,
+            Some(0),
+        ),
+        (StartupPanelStyle::Classic, StartupMascotSkin::Ant01, None),
+        (StartupPanelStyle::Hidden, StartupMascotSkin::Ant01, None),
+        (StartupPanelStyle::Cockpit, StartupMascotSkin::None, None),
+    ] {
+        let header = SessionHeaderHistoryCell::new(
+            "model".into(),
+            /*reasoning_effort*/ None,
+            std::path::PathBuf::from("workspace"),
+            "test",
+        )
+        .with_startup_panel(
+            StartupPanelConfig {
+                style,
+                mascot_skin: skin,
+                ..Default::default()
+            },
+            /*context_window*/ None,
+        )
+        .with_startup_mascot_animation(motion.clone());
+        let source = header.raw_lines();
+        assert_eq!(header.transcript_animation_tick(), expected);
+        assert!(header.has_stable_transcript_height());
+        header.display_lines(/*width*/ 100);
+        assert_eq!(header.raw_lines(), source);
+    }
+}
+
+#[test]
 fn animation_runs_once_and_settles_on_rest_frame() {
     let frames = (0..FRAME_SEQUENCE.len())
         .map(|index| {

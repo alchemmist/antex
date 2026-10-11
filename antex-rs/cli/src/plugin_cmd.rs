@@ -80,7 +80,7 @@ pub enum PluginSubcommand {
 #[derive(Debug, Parser)]
 #[command(
     bin_name = "antex plugin add",
-    after_help = "Examples:\n  codex plugin add sample@debug\n  codex plugin add sample --marketplace debug"
+    after_help = "Examples:\n  antex plugin add sample@debug\n  antex plugin add sample --marketplace debug"
 )]
 pub struct AddPluginArgs {
     /// Plugin selector to install: either PLUGIN@MARKETPLACE or PLUGIN with --marketplace.
@@ -99,7 +99,7 @@ pub struct AddPluginArgs {
 #[derive(Debug, Parser)]
 #[command(
     bin_name = "antex plugin list",
-    after_help = "Examples:\n  codex plugin list\n  codex plugin list --marketplace debug\n  codex plugin list --json\n  codex plugin list --available --json"
+    after_help = "Examples:\n  antex plugin list\n  antex plugin list --marketplace debug\n  antex plugin list --json\n  antex plugin list --available --json"
 )]
 pub struct ListPluginsArgs {
     /// Only list plugins from this marketplace name.
@@ -118,7 +118,7 @@ pub struct ListPluginsArgs {
 #[derive(Debug, Parser)]
 #[command(
     bin_name = "antex plugin remove",
-    after_help = "Examples:\n  codex plugin remove sample@debug\n  codex plugin remove sample --marketplace debug"
+    after_help = "Examples:\n  antex plugin remove sample@debug\n  antex plugin remove sample --marketplace debug"
 )]
 pub struct RemovePluginArgs {
     /// Plugin selector to remove: either PLUGIN@MARKETPLACE or PLUGIN with --marketplace.
@@ -193,7 +193,7 @@ pub async fn run_plugin_add(
         context
             .manager
             .install_plugin(
-                &context.plugins_input,
+                &context.plugins_input.config_layer_stack,
                 PluginInstallRequest {
                     plugin_name: selection.plugin_name,
                     marketplace_path: marketplace.path,

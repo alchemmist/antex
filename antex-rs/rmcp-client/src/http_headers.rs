@@ -17,10 +17,8 @@ use antex_exec_server::HttpRedirectPolicy;
 use antex_exec_server::HttpRequestParams;
 use antex_exec_server::HttpRequestResponse;
 use antex_exec_server::HttpResponseBodyStream;
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 use antex_utils_pty::process_group::kill_process_group;
-#[cfg(target_os = "macos")]
-use antex_utils_pty::process_group::kill_process_group_with_member_fallback as kill_process_group;
 use anyhow::Result;
 use anyhow::anyhow;
 use futures::FutureExt;

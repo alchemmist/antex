@@ -5,6 +5,7 @@ use antex_protocol::config_types::WindowsSandboxLevel;
 use antex_protocol::models::PermissionProfile;
 use antex_protocol::models::PermissionProfileSnapshot;
 use antex_protocol::permissions::NetworkSandboxPolicy;
+use antex_protocol::sandbox::SandboxType;
 use antex_utils_absolute_path::AbsolutePathBuf;
 use antex_utils_path_uri::PathUri;
 use anyhow::Context;
@@ -277,10 +278,7 @@ async fn workspace_roots_allow_file_and_command_writes_in_secondary_root(
                     ),
                     shell_environment_policy: Default::default(),
                     windows_sandbox_level: WindowsSandboxLevel::RestrictedToken,
-                    windows_sandbox_private_desktop: test
-                        .config
-                        .permissions
-                        .windows_sandbox_private_desktop,
+                    windows_sandbox_type: SandboxType::WindowsRestrictedToken,
                     use_legacy_landlock: test.config.features.use_legacy_landlock(),
                     exec_policy: None,
                     mcp_policy: None,
@@ -345,7 +343,7 @@ async fn workspace_roots_allow_file_and_command_writes_in_secondary_root(
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn workspace_roots_allow_patches_but_protect_metadata_directories() -> Result<()> {
     const PATCH_CONTENTS: &str = "workspace root patch access";
-    const PROTECTED_METADATA_DIRECTORIES: [&str; 3] = [".git", ".agents", ".antex"];
+    const PROTECTED_METADATA_DIRECTORIES: [&str; 4] = [".git", ".agents", ".antex", ".aws"];
 
     skip_if_wine_exec!(
         Ok(()),

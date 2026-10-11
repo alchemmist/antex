@@ -1,3 +1,5 @@
+use antex_protocol::protocol::TurnEnvironmentRequest;
+use antex_protocol::protocol::TurnEnvironmentRequests;
 use std::future::Future;
 use std::io::ErrorKind;
 use std::mem::swap;
@@ -23,6 +25,7 @@ use antex_core::resolve_installation_id;
 use antex_core::shell::Shell;
 use antex_core::shell::get_shell_by_model_provided_path;
 use antex_core::thread_store_from_config;
+use antex_core::windows_sandbox::WindowsSandboxLevelExt;
 use antex_exec_server::CreateDirectoryOptions;
 use antex_exec_server::ExecutorFileSystem;
 use antex_exec_server::RemoveOptions;
@@ -33,6 +36,7 @@ use antex_extension_api::empty_extension_registry;
 use antex_features::Feature;
 use antex_home::AntexHomeUserInstructionsProvider;
 use antex_login::AntexAuth;
+use antex_login::AuthManager;
 use antex_model_provider_info::ModelProviderInfo;
 use antex_model_provider_info::built_in_model_providers;
 use antex_models_manager::bundled_models_response;
@@ -41,14 +45,17 @@ use antex_protocol::config_types::CollaborationMode;
 use antex_protocol::config_types::ModeKind;
 use antex_protocol::config_types::ReasoningSummary;
 use antex_protocol::config_types::Settings;
+use antex_protocol::config_types::WindowsSandboxLevel;
 use antex_protocol::mcp::ClientMcpExtensions;
 use antex_protocol::mcp::OPENAI_FORM_EXTENSION_ID;
 use antex_protocol::models::PermissionProfile;
+use antex_protocol::models::PermissionProfileSnapshot;
 use antex_protocol::openai_models::ModelInfo;
 use antex_protocol::openai_models::ModelsResponse;
 use antex_protocol::openai_models::TruncationPolicyConfig;
 use antex_protocol::openai_models::WebSearchToolType;
 use antex_protocol::protocol::AskForApproval;
+use antex_protocol::protocol::EnvironmentConfig;
 use antex_protocol::protocol::EnvironmentConfigState;
 use antex_protocol::protocol::EventMsg;
 use antex_protocol::protocol::RealtimeConversationVersion as RealtimeWsVersion;
@@ -122,12 +129,47 @@ impl UserInstructionsProvider for RecordingUserInstructionsProvider {
     }
 }
 
-pub fn local(cwd: AbsolutePathBuf) -> TurnEnvironmentSelection {
-    TurnEnvironmentSelection {
+/// Builds environment input without attaching any thread's capability roots.
+pub fn local_request(cwd: AbsolutePathBuf) -> TurnEnvironmentRequest {
+    TurnEnvironmentRequest {
         environment_id: antex_exec_server::LOCAL_ENVIRONMENT_ID.to_string(),
         cwd: PathUri::from_abs_path(&cwd),
         workspace_roots: vec![PathUri::from_abs_path(&cwd)],
         config: EnvironmentConfigState::FromThread,
+    }
+}
+
+pub fn local(cwd: AbsolutePathBuf) -> TurnEnvironmentSelection {
+    TurnEnvironmentSelection::new(local_request(cwd), &[])
+}
+
+/// Builds explicit environment configuration with the test thread's permissions and shell settings.
+pub fn environment_config_for_selection(
+    config: &Config,
+    selection: &TurnEnvironmentSelection,
+) -> EnvironmentConfig {
+    let permissions = &config.permissions;
+    let profile = permissions.permission_profile().clone();
+    let permission_profile = match permissions.active_permission_profile() {
+        Some(active) => PermissionProfileSnapshot::active_with_profile_workspace_roots(
+            profile,
+            active,
+            permissions.profile_workspace_roots().to_vec(),
+        ),
+        None => PermissionProfileSnapshot::legacy(profile),
+    };
+    EnvironmentConfig {
+        allow_login_shell: permissions.allow_login_shell,
+        workspace_roots: selection.workspace_roots.clone(),
+        permission_profile,
+        shell_environment_policy: permissions.shell_environment_policy.clone(),
+        windows_sandbox_level: WindowsSandboxLevel::from_config(config),
+        windows_sandbox_type: permissions.windows_sandbox_type,
+        use_legacy_landlock: config.features.use_legacy_landlock(),
+        exec_policy: None,
+        mcp_policy: None,
+        network_policy: None,
+        selected_capability_roots: Vec::new(),
     }
 }
 
@@ -148,6 +190,11 @@ pub fn executor_path_uri(path: impl AsRef<Path>) -> Result<PathUri> {
 
 pub fn local_selections(cwd: AbsolutePathBuf) -> TurnEnvironmentSelections {
     TurnEnvironmentSelections::new(cwd.clone(), vec![local(cwd)])
+}
+
+/// Builds thread-settings input using the local test environment.
+pub fn local_requests(cwd: AbsolutePathBuf) -> TurnEnvironmentRequests {
+    TurnEnvironmentRequests::new(cwd.clone(), vec![local_request(cwd)])
 }
 
 #[derive(Debug)]
@@ -172,6 +219,7 @@ impl TestEnv {
         let cwd = local_cwd_temp_dir.abs();
         let selection = match exec_server_url {
             Some(_) => TurnEnvironmentSelection {
+                selected_capability_roots: Default::default(),
                 environment_id: antex_exec_server::REMOTE_ENVIRONMENT_ID.to_string(),
                 cwd: PathUri::from_abs_path(&cwd),
                 workspace_roots: vec![PathUri::from_abs_path(&cwd)],
@@ -206,6 +254,16 @@ impl TestEnv {
     /// Returns the environment and target-native cwd selected by the test harness.
     pub fn selection(&self) -> &TurnEnvironmentSelection {
         &self.selection
+    }
+
+    /// Requests the fixture's environment without copying a thread's root choices.
+    pub fn request(&self) -> TurnEnvironmentRequest {
+        TurnEnvironmentRequest {
+            environment_id: self.selection.environment_id.clone(),
+            cwd: self.selection.cwd.clone(),
+            workspace_roots: self.selection.workspace_roots.clone(),
+            config: self.selection.config.clone(),
+        }
     }
 
     fn local_cwd_temp_dir(&self) -> Option<Arc<TempDir>> {
@@ -244,6 +302,7 @@ pub async fn test_env() -> Result<TestEnv> {
                 )
                 .await?;
             let selection = TurnEnvironmentSelection {
+                selected_capability_roots: Default::default(),
                 environment_id: antex_exec_server::REMOTE_ENVIRONMENT_ID.to_string(),
                 cwd: cwd_uri.clone(),
                 workspace_roots: vec![cwd_uri.clone()],
@@ -327,9 +386,27 @@ pub fn turn_permission_fields(
     (sandbox_policy, Some(permission_profile))
 }
 
+enum TestAuth {
+    Cached(AntexAuth),
+    Manager(Arc<AuthManager>),
+}
+
+impl TestAuth {
+    fn manager_for_home(&self, home: &Path) -> Arc<AuthManager> {
+        match self {
+            Self::Cached(auth) => antex_core::test_support::auth_manager_from_auth_with_home(
+                auth.clone(),
+                home.to_path_buf(),
+            ),
+            Self::Manager(manager) => manager.clone(),
+        }
+    }
+}
+
 pub struct TestAntexBuilder {
     config_mutators: Vec<Box<ConfigMutator>>,
-    auth: AntexAuth,
+    thread_manager_configurer: Option<Box<dyn FnOnce(ThreadManager) -> ThreadManager + Send>>,
+    auth: TestAuth,
     analytics_events_client: Option<AnalyticsEventsClient>,
     pre_build_hooks: Vec<Box<PreBuildHook>>,
     workspace_setups: Vec<Box<WorkspaceSetup>>,
@@ -354,6 +431,14 @@ impl TestAntexBuilder {
         self
     }
 
+    pub fn with_thread_manager(
+        mut self,
+        configure: impl FnOnce(ThreadManager) -> ThreadManager + Send + 'static,
+    ) -> Self {
+        self.thread_manager_configurer = Some(Box::new(configure));
+        self
+    }
+
     pub fn with_config<T>(mut self, mutator: T) -> Self
     where
         T: FnOnce(&mut Config) + Send + 'static,
@@ -363,7 +448,12 @@ impl TestAntexBuilder {
     }
 
     pub fn with_auth(mut self, auth: AntexAuth) -> Self {
-        self.auth = auth;
+        self.auth = TestAuth::Cached(auth);
+        self
+    }
+
+    pub fn with_auth_manager(mut self, auth_manager: Arc<AuthManager>) -> Self {
+        self.auth = TestAuth::Manager(auth_manager);
         self
     }
 
@@ -392,8 +482,8 @@ impl TestAntexBuilder {
         })
     }
 
-    pub fn with_history_mode(mut self, history_mode: ThreadHistoryMode) -> Self {
-        self.history_mode = Some(history_mode);
+    pub fn with_history_mode(mut self, history_mode: impl Into<Option<ThreadHistoryMode>>) -> Self {
+        self.history_mode = history_mode.into();
         self
     }
 
@@ -649,6 +739,30 @@ impl TestAntexBuilder {
             .await
     }
 
+    /// Restarts without changing the executor platform selected by the test process.
+    pub async fn restart_with_auto_env(
+        &mut self,
+        server: &MockServer,
+        previous: &TestAntex,
+    ) -> Result<TestAntex> {
+        let rollout_path = previous
+            .session_configured
+            .rollout_path
+            .clone()
+            .context("rollout path")?;
+        previous.antex.shutdown_and_wait().await?;
+        let base_url = format!("{}/v1", server.uri());
+        let test_env = test_env().await?;
+        Box::pin(self.build_with_home_and_base_url(
+            base_url,
+            Arc::clone(&previous.home),
+            Some(rollout_path),
+            test_env,
+            /*include_local_environment*/ false,
+        ))
+        .await
+    }
+
     async fn build_with_home_and_base_url(
         &mut self,
         base_url: String,
@@ -671,7 +785,7 @@ impl TestAntexBuilder {
         );
         #[cfg(not(target_os = "linux"))]
         let antex_linux_sandbox_exe = None;
-        let local_runtime_paths = antex_exec_server::ExecServerRuntimePaths::new(
+        let local_runtime_paths = antex_exec_server::ExecServerRuntimeOptions::new(
             std::env::current_exe()?,
             antex_linux_sandbox_exe,
         )?;
@@ -715,7 +829,6 @@ impl TestAntexBuilder {
         mut test_env: TestEnv,
         environment_manager: Arc<antex_exec_server::EnvironmentManager>,
     ) -> anyhow::Result<TestAntex> {
-        let auth = self.auth.clone();
         let state_db = antex_core::init_state_db(&config).await;
         let thread_store = self
             .thread_store
@@ -728,10 +841,7 @@ impl TestAntexBuilder {
                     config.codex_home.clone(),
                 ))
             });
-        let auth_manager = antex_core::test_support::auth_manager_from_auth_with_home(
-            auth.clone(),
-            config.codex_home.to_path_buf(),
-        );
+        let auth_manager = self.auth.manager_for_home(config.codex_home.as_path());
         let models_manager = self
             .models_manager
             .clone()
@@ -742,7 +852,12 @@ impl TestAntexBuilder {
             .or_else(|| antex_utils_cargo_bin::cargo_bin("antex-code-mode-host").ok());
         let thread_manager = Arc::new_cyclic(|manager| {
             let mut extensions = self.extensions.to_builder();
-            antex_guardian_v2::install_reviewer(&mut extensions, manager.clone());
+            antex_core::install_agent_message_board(&mut extensions, manager.clone());
+            if config.features.enabled(Feature::GuardianV2) {
+                antex_guardian_v2::install(&mut extensions, auth_manager.clone(), manager.clone());
+            } else {
+                antex_guardian_v2::install_reviewer(&mut extensions, manager.clone());
+            }
             let thread_manager = ThreadManager::new(
                 &config,
                 auth_manager.clone(),
@@ -760,6 +875,10 @@ impl TestAntexBuilder {
                 /*attestation_provider*/ None,
                 /*external_time_provider*/ self.external_time_provider.clone(),
             );
+            let thread_manager = match self.thread_manager_configurer.take() {
+                Some(configure) => configure(thread_manager),
+                None => thread_manager,
+            };
             if config.features.enabled(Feature::CodeModeHost)
                 && let Some(code_mode_host_program) = code_mode_host_program
             {
@@ -782,12 +901,9 @@ impl TestAntexBuilder {
 
         let new_conversation = match (resume_from, user_shell_override) {
             (Some(path), Some(user_shell_override)) => {
-                let auth_manager = antex_core::test_support::auth_manager_from_auth_with_home(
-                    auth,
-                    config.codex_home.to_path_buf(),
-                );
+                let auth_manager = self.auth.manager_for_home(config.codex_home.as_path());
                 Box::pin(
-                    antex_core::test_support::resume_thread_from_rollout_with_user_shell_override(
+                    antex_core::test_support::resume_legacy_thread_from_rollout_with_user_shell_override(
                         thread_manager.as_ref(),
                         config.clone(),
                         path,
@@ -799,11 +915,8 @@ impl TestAntexBuilder {
                 .await?
             }
             (Some(path), None) => {
-                let auth_manager = antex_core::test_support::auth_manager_from_auth_with_home(
-                    auth,
-                    config.codex_home.to_path_buf(),
-                );
-                Box::pin(thread_manager.resume_thread_from_rollout(
+                let auth_manager = self.auth.manager_for_home(config.codex_home.as_path());
+                Box::pin(thread_manager.resume_legacy_thread_from_rollout(
                     config.clone(),
                     path,
                     auth_manager,
@@ -824,7 +937,7 @@ impl TestAntexBuilder {
                 .await?
             }
             (None, None) => {
-                let environments = if test_env.selection().cwd.infer_path_convention()
+                let environment_requests = if test_env.selection().cwd.infer_path_convention()
                     == Some(PathConvention::Windows)
                     && PathUri::from_abs_path(&config.cwd) != test_env.selection().cwd
                 {
@@ -832,15 +945,15 @@ impl TestAntexBuilder {
                     let mut selection = test_env.selection().clone();
                     selection.cwd = cwd.clone();
                     selection.workspace_roots = vec![cwd];
-                    test_env.selection = selection.clone();
-                    Some(vec![selection])
+                    test_env.selection = selection;
+                    Some(vec![test_env.request()])
                 } else {
                     None
                 };
                 Box::pin(thread_manager.start_thread(StartThreadOptions {
                     history_mode: self.history_mode,
                     client_mcp_extensions: client_mcp_extensions(),
-                    environments,
+                    environments: environment_requests,
                     ..StartThreadOptions::new(config.clone())
                 }))
                 .await?
@@ -957,6 +1070,22 @@ pub struct TestAntex {
 }
 
 impl TestAntex {
+    /// Starts another test thread with the fixture's current environments and configuration.
+    /// Keeping request construction here lets ordinary tests ignore runtime selection fields.
+    pub async fn start_thread_options(&self) -> StartThreadOptions {
+        StartThreadOptions {
+            environments: Some(
+                self.antex
+                    .environment_selections()
+                    .await
+                    .into_iter()
+                    .map(TurnEnvironmentSelection::into_request)
+                    .collect(),
+            ),
+            ..StartThreadOptions::new(self.config.clone())
+        }
+    }
+
     pub fn cwd_path(&self) -> &Path {
         self.cwd.path()
     }
@@ -1130,7 +1259,8 @@ impl TestAntex {
                     text_elements: Vec::new(),
                 }])
                 .with_thread_settings(ThreadSettingsOverrides {
-                    environments: turn_environment_selections,
+                    environments: turn_environment_selections
+                        .map(TurnEnvironmentSelections::into_requests),
                     approval_policy: Some(approval_policy),
                     sandbox_policy: Some(sandbox_policy),
                     permission_profile,
@@ -1391,6 +1521,7 @@ fn function_call_output<'a>(bodies: &'a [Value], call_id: &str) -> &'a Value {
 
 pub fn test_antex() -> TestAntexBuilder {
     TestAntexBuilder {
+        thread_manager_configurer: None,
         config_mutators: vec![Box::new(|config| {
             config
                 .features
@@ -1402,7 +1533,7 @@ pub fn test_antex() -> TestAntexBuilder {
                 .disable(Feature::ShellSnapshot)
                 .expect("test config should allow ShellSnapshot override");
         })],
-        auth: AntexAuth::from_api_key("dummy"),
+        auth: TestAuth::Cached(AntexAuth::from_api_key("dummy")),
         analytics_events_client: None,
         pre_build_hooks: vec![],
         workspace_setups: vec![],
@@ -1415,11 +1546,37 @@ pub fn test_antex() -> TestAntexBuilder {
         supports_openai_form_elicitation: false,
         external_time_provider: None,
         code_mode_host_program: None,
-        history_mode: None,
+        // These fixtures exercise legacy-only resume/fork helpers; store-default tests opt out.
+        history_mode: Some(ThreadHistoryMode::Legacy),
         models_manager: None,
         thread_store: None,
         image_store: antex_core::passthrough_image_store(),
     }
+}
+
+pub fn run_test_with_large_stack<F, Fut>(name: &str, test: F) -> Result<()>
+where
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: Future<Output = Result<()>> + Send + 'static,
+{
+    const WORKER_THREADS: usize = 2;
+    const TEST_STACK_SIZE_BYTES: usize = 8 * 1024 * 1024;
+
+    let handle = std::thread::Builder::new()
+        .name(name.to_string())
+        .stack_size(TEST_STACK_SIZE_BYTES)
+        .spawn(move || -> Result<()> {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(WORKER_THREADS)
+                .thread_stack_size(TEST_STACK_SIZE_BYTES)
+                .enable_all()
+                .build()?;
+            runtime.block_on(Box::pin(test()))
+        })?;
+
+    handle
+        .join()
+        .map_err(|_| anyhow!("{name} thread panicked"))?
 }
 
 #[cfg(test)]

@@ -1,3 +1,4 @@
+use std::sync::LazyLock;
 use std::time::Instant;
 
 use crate::facts::AntexCompactionEvent;
@@ -212,6 +213,7 @@ pub(crate) struct SkillInvocationEventParams {
     pub(crate) remote_plugin_id: Option<String>,
     pub(crate) thread_id: Option<String>,
     pub(crate) turn_id: Option<String>,
+    pub(crate) voice_session_id: Option<String>,
     pub(crate) invoke_type: Option<InvocationType>,
     pub(crate) model_slug: Option<String>,
 }
@@ -313,6 +315,7 @@ pub enum GuardianReviewTerminalStatus {
 #[derive(Clone, Copy, Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GuardianReviewFailureReason {
+    StaleAuthorization,
     Timeout,
     Cancelled,
     PromptBuildError,
@@ -398,6 +401,7 @@ pub enum GuardianReviewedAction {
 
 #[derive(Clone, Serialize)]
 pub struct GuardianReviewEventParams {
+    pub guardian_context_mode: Option<&'static str>,
     pub thread_id: String,
     pub turn_id: String,
     pub review_id: String,
@@ -477,6 +481,7 @@ impl GuardianReviewTrackContext {
         completed_at_ms: u64,
     ) -> GuardianReviewEventParams {
         GuardianReviewEventParams {
+            guardian_context_mode: result.guardian_context_mode,
             thread_id: self.thread_id.clone(),
             turn_id: self.turn_id.clone(),
             review_id: self.review_id.clone(),
@@ -529,6 +534,7 @@ impl GuardianReviewTrackContext {
 
 #[derive(Debug)]
 pub struct GuardianReviewAnalyticsResult {
+    pub guardian_context_mode: Option<&'static str>,
     pub decision: GuardianReviewDecision,
     pub terminal_status: GuardianReviewTerminalStatus,
     pub failure_reason: Option<GuardianReviewFailureReason>,
@@ -554,6 +560,7 @@ pub struct GuardianReviewAnalyticsResult {
 impl GuardianReviewAnalyticsResult {
     pub fn without_session() -> Self {
         Self {
+            guardian_context_mode: None,
             decision: GuardianReviewDecision::Denied,
             terminal_status: GuardianReviewTerminalStatus::FailedClosed,
             failure_reason: None,
@@ -792,6 +799,7 @@ pub(crate) enum WebSearchActionKind {
 
 #[derive(Serialize)]
 pub(crate) struct AntexCommandExecutionEventParams {
+    pub(crate) sandbox_backend: Option<String>,
     pub(crate) model_slug: Option<String>,
     pub(crate) reasoning_effort: Option<String>,
     #[serde(flatten)]
@@ -861,6 +869,7 @@ pub(crate) struct AntexMcpToolCallEventParams {
     pub(crate) mcp_error_present: bool,
     pub(crate) plugin_id: Option<String>,
     pub(crate) connector_id: Option<String>,
+    pub(crate) voice_session_id: Option<String>,
     pub(crate) elicitation_type: Option<ElicitationType>,
 }
 
@@ -974,6 +983,7 @@ pub(crate) struct AntexAppMentionedEventRequest {
 pub(crate) struct CodexAppUsedMetadata {
     #[serde(flatten)]
     pub(crate) app: AntexAppMetadata,
+    pub(crate) voice_session_id: Option<String>,
     pub(crate) elicitation_type: Option<ElicitationType>,
 }
 
@@ -1018,10 +1028,12 @@ pub(crate) struct AntexCompactionEventParams {
     pub(crate) phase: CompactionPhase,
     pub(crate) strategy: CompactionStrategy,
     pub(crate) status: CompactionStatus,
+    pub(crate) voice_session_id: Option<String>,
     #[serde(rename = "codex_error_kind")]
     pub(crate) antex_error_kind: Option<AntexErrKind>,
     #[serde(rename = "codex_error_http_status_code")]
     pub(crate) antex_error_http_status_code: Option<u16>,
+    pub(crate) usage_limit_window_minutes: Option<u16>,
     pub(crate) active_context_tokens_before: i64,
     pub(crate) active_context_tokens_after: i64,
     pub(crate) retained_image_count: Option<usize>,
@@ -1068,6 +1080,9 @@ pub(crate) struct AntexTurnEventParams {
     pub(crate) thread_id: String,
     pub(crate) session_id: String,
     pub(crate) turn_id: String,
+    /// First received active plugin inventory. Null is unknown; [] is observed empty.
+    pub(crate) active_plugin_ids_at_turn_start: Option<Vec<String>>,
+    pub(crate) voice_session_id: Option<String>,
     pub(crate) root_turn_id: Option<String>,
     pub(crate) turn_trigger: Option<String>,
     #[serde(rename = "codex_turn_source")]
@@ -1091,6 +1106,7 @@ pub(crate) struct AntexTurnEventParams {
     pub(crate) approval_policy: String,
     pub(crate) approvals_reviewer: String,
     pub(crate) guardian_v2_enabled: bool,
+    pub(crate) multi_agent_version: antex_protocol::protocol::MultiAgentVersion,
     pub(crate) sandbox_network_access: bool,
     pub(crate) collaboration_mode: Option<&'static str>,
     pub(crate) personality: Option<String>,
@@ -1107,6 +1123,8 @@ pub(crate) struct AntexTurnEventParams {
     pub(crate) antex_error_kind: Option<AntexErrKind>,
     #[serde(rename = "codex_error_http_status_code")]
     pub(crate) antex_error_http_status_code: Option<u16>,
+    /// The server-selected window responsible for a usage limit, when known.
+    pub(crate) usage_limit_window_minutes: Option<u16>,
     pub(crate) steer_count: Option<usize>,
     pub(crate) total_tool_call_count: Option<usize>,
     pub(crate) shell_command_count: Option<usize>,
@@ -1130,6 +1148,7 @@ pub(crate) struct AntexTurnEventParams {
     pub(crate) after_last_sampling_ms: u64,
     pub(crate) sampling_request_count: u32,
     pub(crate) sampling_retry_count: u32,
+    pub(crate) tools_change_count: u32,
     pub(crate) duration_ms: Option<u64>,
     pub(crate) started_at: Option<u64>,
     pub(crate) completed_at: Option<u64>,
@@ -1384,8 +1403,10 @@ pub(crate) fn antex_compaction_event_params(
         phase: input.phase,
         strategy: input.strategy,
         status: input.status,
+        voice_session_id: None,
         antex_error_kind: input.antex_error_kind,
         antex_error_http_status_code: input.antex_error_http_status_code,
+        usage_limit_window_minutes: input.usage_limit_window_minutes,
         active_context_tokens_before: input.active_context_tokens_before,
         active_context_tokens_after: input.active_context_tokens_after,
         retained_image_count: input.retained_image_count,
@@ -1496,7 +1517,9 @@ fn analytics_hook_source(source: HookSource) -> &'static str {
 }
 
 pub(crate) fn current_runtime_metadata() -> AntexRuntimeMetadata {
-    let os_info = os_info::get();
+    // Runtime metadata is stable; avoid launching OS discovery subprocesses per event.
+    static OS_INFO: LazyLock<os_info::Info> = LazyLock::new(os_info::get);
+    let os_info = &*OS_INFO;
     AntexRuntimeMetadata {
         antex_rs_version: env!("CARGO_PKG_VERSION").to_string(),
         runtime_os: std::env::consts::OS.to_string(),
@@ -1523,7 +1546,7 @@ pub(crate) fn subagent_thread_started_event_request(
         ephemeral: input.ephemeral,
         is_worktree: None,
         thread_source: input.thread_source,
-        initialization_mode: ThreadInitializationMode::New,
+        initialization_mode: input.initialization_mode,
         subagent_source: Some(subagent_source_name(&input.subagent_source)),
         parent_thread_id: input.parent_thread_id,
         forked_from_thread_id: input.forked_from_thread_id,

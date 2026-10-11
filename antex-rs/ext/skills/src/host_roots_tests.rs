@@ -234,7 +234,7 @@ fn expected_skill(path: AbsolutePathBuf, name: &str, scope: SkillScope) -> Skill
         interface: None,
         dependencies: None,
         policy: None,
-        path_to_skills_md: path,
+        path_to_skills_md: PathUri::from_abs_path(&path),
         scope,
         plugin_id: None,
         remote_plugin_id: None,
@@ -406,13 +406,56 @@ async fn repo_ancestry_without_project_marker_does_not_walk_parents() {
     fs::create_dir_all(outer.join(".agents/skills")).expect("create outer skills");
     fs::create_dir_all(cwd.join(".agents/skills")).expect("create cwd skills");
 
-    let roots = repo_agents_skill_roots(Some(Arc::clone(&LOCAL_FS)), &stack(Vec::new()), &cwd)
+    // The host's temp directory can itself be inside a repository. Use an absent,
+    // fixture-unique marker rather than assuming no ancestor of TempDir has .git.
+    let marker = format!(
+        ".missing-project-marker-{}",
+        temp_dir.path().file_name().unwrap().to_string_lossy()
+    );
+    let config_stack = stack(vec![ConfigLayerEntry::new(
+        ConfigLayerSource::SessionFlags,
+        toml::toml! { project_root_markers = [marker] }.into(),
+    )]);
+    let roots = repo_agents_skill_roots(Some(Arc::clone(&LOCAL_FS)), &config_stack, &cwd)
         .await
         .into_iter()
         .map(|root| root.path)
         .collect::<Vec<_>>();
 
     assert_eq!(roots, vec![cwd.join(".agents/skills")]);
+}
+
+#[tokio::test]
+async fn repo_ancestry_respects_custom_and_disabled_project_markers() {
+    let temp_dir = TempDir::new().expect("temp dir");
+    let outer = absolute(temp_dir.path().join("outer"));
+    let project = outer.join("project");
+    let cwd = project.join("nested");
+    for directory in [&outer, &project, &cwd] {
+        fs::create_dir_all(directory.join(".agents/skills")).expect("create skills");
+    }
+    fs::write(outer.join(".git"), "gitdir: fake\n").expect("write outer git marker");
+    fs::write(project.join(".project-root"), "").expect("write custom marker");
+
+    for (markers, expected) in [
+        (
+            vec![".project-root"],
+            vec![project.join(".agents/skills"), cwd.join(".agents/skills")],
+        ),
+        (Vec::new(), vec![cwd.join(".agents/skills")]),
+    ] {
+        let config_stack = stack(vec![ConfigLayerEntry::new(
+            ConfigLayerSource::SessionFlags,
+            toml::toml! { project_root_markers = markers }.into(),
+        )]);
+        let roots = repo_agents_skill_roots(Some(Arc::clone(&LOCAL_FS)), &config_stack, &cwd)
+            .await
+            .into_iter()
+            .map(|root| root.path)
+            .collect::<Vec<_>>();
+
+        assert_eq!(roots, expected);
+    }
 }
 
 #[tokio::test]

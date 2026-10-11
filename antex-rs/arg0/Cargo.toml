@@ -20,9 +20,9 @@ antex-exec-server = { workspace = true }
 antex-install-context = { workspace = true }
 antex-linux-sandbox = { workspace = true }
 antex-sandboxing = { workspace = true }
-antex-shell-escalation = { workspace = true }
 antex-utils-absolute-path = { workspace = true }
 antex-utils-home-dir = { workspace = true }
+antex-utils-pty = { workspace = true }
 dotenvy = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
@@ -32,4 +32,5 @@ antex-windows-sandbox = { workspace = true }
 pathdiff = { workspace = true }
 
 [dev-dependencies]
+antex-utils-cargo-bin = { workspace = true }
 pretty_assertions = { workspace = true }

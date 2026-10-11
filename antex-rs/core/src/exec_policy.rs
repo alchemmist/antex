@@ -764,8 +764,8 @@ fn dangerous_command_match_for_heuristics(
 }
 
 /// If a command is not matched by any execpolicy rule, derive a [`Decision`].
-#[cfg(any(test, unix))]
-pub(crate) fn render_decision_for_unmatched_command(
+#[cfg(test)]
+fn render_decision_for_unmatched_command(
     command: &[String],
     context: UnmatchedCommandContext<'_>,
 ) -> Decision {
@@ -877,6 +877,7 @@ pub(crate) fn default_policy_path(codex_home: &Path) -> PathBuf {
     codex_home.join(RULES_DIR_NAME).join(DEFAULT_POLICY_FILE)
 }
 
+#[cfg(test)]
 fn commands_for_exec_policy(command: &[String]) -> ExecPolicyCommands {
     commands_for_exec_policy_for_platform(command, DangerousCommandPlatform::host())
 }
@@ -912,7 +913,9 @@ fn commands_for_exec_policy_for_platform(
 }
 
 pub(crate) fn command_contains_force_push(command: &[String]) -> bool {
-    commands_for_exec_policy(command)
+    // Approval routing runs on the app host, which may differ from the executor OS.
+    // The Windows parser also accepts POSIX wrappers and plain argv.
+    commands_for_exec_policy_for_platform(command, DangerousCommandPlatform::Windows)
         .commands
         .iter()
         .any(|command| is_force_push(command))
@@ -922,10 +925,8 @@ fn is_force_push(command: &[String]) -> bool {
     let Some(program) = command.first() else {
         return false;
     };
-    if Path::new(program)
-        .file_name()
-        .is_none_or(|program| program != "git")
-    {
+    let program = program.rsplit(['/', '\\']).next().unwrap_or(program);
+    if !program.eq_ignore_ascii_case("git") && !program.eq_ignore_ascii_case("git.exe") {
         return false;
     }
     let Some(push_index) = command[1..]

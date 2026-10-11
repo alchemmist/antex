@@ -99,7 +99,7 @@ impl ChatWidget {
     }
 
     fn prompt_stash_path(&self, thread_id: ThreadId) -> PathBuf {
-        self.config
+        self.local_settings
             .codex_home
             .join("prompt-stashes")
             .join(format!("{thread_id}.json"))

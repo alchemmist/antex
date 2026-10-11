@@ -7,6 +7,62 @@ use crossterm::event::KeyCode;
 use pretty_assertions::assert_eq;
 
 #[tokio::test]
+async fn daemon_version_notice_preserves_manual_update_guidance() {
+    let mut app = make_test_app().await;
+    app.app_server_target = AppServerTarget::LocalDaemon {
+        allow_embedded_fallback: true,
+        endpoint: crate::RemoteAppServerEndpoint::UnixSocket {
+            socket_path: AbsolutePathBuf::relative_to_current_dir("codex.sock").unwrap(),
+        },
+    };
+    let view = app.agents_overview_view(Vec::new(), /*selected_thread_id*/ None);
+    app.chat_widget.show_bottom_pane_view(Box::new(view));
+    let mut notices = Vec::new();
+    for (client, server, comparison) in [
+        ("0.155.0-alpha.23", "0.155.0-alpha.22", "older than"),
+        ("0.155.0-alpha.23", "0.156.0", "different from"),
+        ("0.0.0", "0.156.0", "different from"),
+    ] {
+        app.local_settings.tui.show_server_version_notice = true;
+        assert_eq!(
+            app.initialize_server_version_notice(client, Some(server)),
+            Some(format!(
+                "A background Antex service is running v{server}, {comparison} your Antex CLI v{client}."
+            ))
+        );
+        let overview = render_bottom_popup(&app.chat_widget, /*width*/ 100);
+        notices.push(
+            overview
+                .lines()
+                .find(|line| line.contains("Service v"))
+                .unwrap()
+                .trim()
+                .to_string(),
+        );
+        assert_eq!(app.pending_update_action, None);
+
+        app.local_settings.tui.show_server_version_notice = false;
+        assert_eq!(
+            app.initialize_server_version_notice(client, Some(server)),
+            None
+        );
+        assert_eq!(
+            app.agents_overview
+                .view_state
+                .lock()
+                .unwrap()
+                .server_version_notice,
+            None
+        );
+    }
+    insta::assert_snapshot!(notices.join("\n"), @"
+    Service v0.155.0-alpha.22 < Antex CLI v0.155.0-alpha.23 · /daemon
+    Service v0.156.0 ≠ Antex CLI v0.155.0-alpha.23 · /daemon
+    Service v0.156.0 ≠ Antex CLI v0.0.0 · /daemon
+    ");
+}
+
+#[tokio::test]
 async fn daemon_menu_is_read_only_and_confirmation_can_cancel_or_handoff() {
     let mut app = make_test_app().await;
     let (chat, _, mut rx, _) = make_chatwidget_manual_with_sender().await;
@@ -18,6 +74,7 @@ async fn daemon_menu_is_read_only_and_confirmation_can_cancel_or_handoff() {
     app.daemon_cli_executable =
         Some(AbsolutePathBuf::from_absolute_path(package.path().join("bin/antex")).unwrap());
     app.app_server_target = AppServerTarget::LocalDaemon {
+        allow_embedded_fallback: true,
         endpoint: crate::RemoteAppServerEndpoint::UnixSocket {
             socket_path: AbsolutePathBuf::relative_to_current_dir("codex.sock").unwrap(),
         },
@@ -25,13 +82,20 @@ async fn daemon_menu_is_read_only_and_confirmation_can_cancel_or_handoff() {
     app.chat_widget.remote_connection = Some(RemoteConnectionStatus {
         address: "local".into(),
         version: "v0.153.0".into(),
+        is_local_daemon: true,
     });
     app.initialize_server_version_notice("0.154.0", Some("0.153.0"));
     let view = app.agents_overview_view(Vec::new(), /*selected_thread_id*/ None);
     app.chat_widget.show_bottom_pane_view(Box::new(view));
     let overview = render_bottom_popup(&app.chat_widget, /*width*/ 80);
-    insta::assert_snapshot!(overview.lines().next().unwrap().trim(), @"Service v0.153.0 < Antex CLI v0.154.0 · /daemon");
+    insta::assert_snapshot!(overview.lines().find(|line| line.contains("Service v")).unwrap().trim(), @"Service v0.153.0 < Antex CLI v0.154.0 · /daemon");
     let executable = app.daemon_cli_executable.clone();
+    let cli_version = antex_install_context::InstallContext::current()
+        .package_manifest()
+        .map_or_else(
+            || ANTEX_CLI_VERSION.to_string(),
+            |manifest| manifest.version.to_string(),
+        );
     for (width, source, snapshot) in [
         (
             80,
@@ -64,10 +128,17 @@ async fn daemon_menu_is_read_only_and_confirmation_can_cancel_or_handoff() {
             .unwrap(),
         );
         app.confirm_daemon_update(source);
+        let confirmation = render_bottom_popup(&app.chat_widget, width);
+        assert!(confirmation.contains("Update daemon and exit Antex?"));
+        assert!(confirmation.contains("Antex exits to update in this terminal."));
+        if source == DaemonUpdateSource::ThisCli {
+            assert!(confirmation.contains(&format!("Use this CLI package v{cli_version} from")));
+        }
         insta::assert_snapshot!(
             snapshot,
-            render_bottom_popup(&app.chat_widget, width)
+            confirmation
                 .replace(r"C:\cli-build\bin\antex", "/x/cli-build/bin/antex")
+                .replace(&format!("CLI package v{cli_version}"), "CLI package v0.0.0")
         );
         // The default choice cancels without emitting an update or exiting.
         app.chat_widget.handle_key_event(KeyCode::Enter.into());
@@ -156,6 +227,7 @@ async fn unavailable_daemon_menu_offers_guidance_without_update_actions() {
     app.chat_widget.remote_connection = Some(RemoteConnectionStatus {
         address: "ws://example.test:1234".into(),
         version: "v0.153.0".into(),
+        is_local_daemon: false,
     });
     app.open_daemon_menu();
     insta::assert_snapshot!(

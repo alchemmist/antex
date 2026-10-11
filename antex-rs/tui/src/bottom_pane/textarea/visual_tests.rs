@@ -48,6 +48,18 @@ fn character_visual_mode_moves_deletes_yanks_and_changes() {
 }
 
 #[test]
+fn toggling_vim_clears_visual_selection_and_unconsumed_yank() {
+    let mut textarea = visual_textarea("alpha beta", /*cursor*/ 0);
+    keys(&mut textarea, "veyv");
+    assert!(textarea.is_vim_visual_mode());
+    textarea.set_vim_enabled(false);
+    assert!(!textarea.is_vim_visual_mode());
+    assert_eq!(textarea.take_system_clipboard_yank(), None);
+    textarea.set_vim_enabled(true);
+    assert!(textarea.is_vim_normal_mode());
+}
+
+#[test]
 fn line_visual_mode_operates_on_complete_lines() {
     let mut textarea = visual_textarea("one\ntwo\nthree", /*cursor*/ 0);
     textarea.input(KeyEvent::new(KeyCode::Char('V'), KeyModifiers::SHIFT));

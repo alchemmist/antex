@@ -13,7 +13,7 @@ use antex_connectors::ConnectorDirectoryCacheKey;
 use antex_connectors::apps_config_from_layer_stack;
 use antex_connectors::connector_runtime_context_key;
 use antex_exec_server::EnvironmentManager;
-use antex_exec_server::ExecServerRuntimePaths;
+use antex_exec_server::ExecServerRuntimeOptions;
 use antex_tools::DiscoverableTool;
 use tokio_util::sync::CancellationToken;
 use tracing::instrument;
@@ -165,7 +165,7 @@ pub async fn list_accessible_connectors_from_mcp_tools_with_options_and_status(
     // TODO: Wire callers that already own an EnvironmentManager into
     // list_accessible_connectors_from_mcp_tools_with_environment_manager instead
     // of constructing a temporary manager here.
-    let local_runtime_paths = ExecServerRuntimePaths::from_optional_paths(
+    let local_runtime_paths = ExecServerRuntimeOptions::from_optional_paths(
         config.antex_self_exe.clone(),
         config.antex_linux_sandbox_exe.clone(),
     )?;

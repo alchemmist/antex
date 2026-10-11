@@ -19,7 +19,6 @@ use schemars::schema::Schema;
 use schemars::schema::SchemaObject;
 use serde::Deserialize;
 use serde::Serialize;
-#[cfg(test)]
 use serde_json::Value as JsonValue;
 
 // Macro to declare a camelCased API v2 enum mirroring a core enum which
@@ -79,9 +78,11 @@ pub enum CodexErrorInfo {
     SessionBudgetExceeded,
     UsageLimitExceeded,
     RateLimitExceeded,
+    FlexUnavailable,
     ServerOverloaded,
     CyberPolicy,
     MisalignmentPolicyViolation,
+    TooManyDenials,
     HttpConnectionFailed {
         #[serde(rename = "httpStatusCode")]
         #[ts(rename = "httpStatusCode")]
@@ -117,7 +118,32 @@ pub enum CodexErrorInfo {
         #[ts(rename = "turnKind")]
         turn_kind: NonSteerableTurnKind,
     },
+    #[serde(
+        untagged,
+        serialize_with = "serialize_other_codex_error_info",
+        deserialize_with = "deserialize_other_codex_error_info"
+    )]
+    #[ts(type = "\"other\" | string | { [key: string]: unknown }")]
     Other,
+}
+
+fn serialize_other_codex_error_info<S>(serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.serialize_str("other")
+}
+
+fn deserialize_other_codex_error_info<'de, D>(deserializer: D) -> Result<(), D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    match JsonValue::deserialize(deserializer)? {
+        JsonValue::String(_) | JsonValue::Object(_) => Ok(()),
+        _ => Err(serde::de::Error::custom(
+            "expected an error string or object",
+        )),
+    }
 }
 
 impl From<CoreAntexErrorInfo> for CodexErrorInfo {
@@ -127,11 +153,14 @@ impl From<CoreAntexErrorInfo> for CodexErrorInfo {
             CoreAntexErrorInfo::SessionBudgetExceeded => CodexErrorInfo::SessionBudgetExceeded,
             CoreAntexErrorInfo::UsageLimitExceeded => CodexErrorInfo::UsageLimitExceeded,
             CoreAntexErrorInfo::RateLimitExceeded => CodexErrorInfo::RateLimitExceeded,
+            CoreAntexErrorInfo::FlexUnavailable => CodexErrorInfo::FlexUnavailable,
             CoreAntexErrorInfo::ServerOverloaded => CodexErrorInfo::ServerOverloaded,
             CoreAntexErrorInfo::CyberPolicy => CodexErrorInfo::CyberPolicy,
+            CoreAntexErrorInfo::BioPolicy => CodexErrorInfo::Other,
             CoreAntexErrorInfo::MisalignmentPolicyViolation => {
                 CodexErrorInfo::MisalignmentPolicyViolation
             }
+            CoreAntexErrorInfo::TooManyDenials => CodexErrorInfo::TooManyDenials,
             CoreAntexErrorInfo::HttpConnectionFailed { http_status_code } => {
                 CodexErrorInfo::HttpConnectionFailed { http_status_code }
             }
@@ -141,6 +170,7 @@ impl From<CoreAntexErrorInfo> for CodexErrorInfo {
             CoreAntexErrorInfo::InternalServerError => CodexErrorInfo::InternalServerError,
             CoreAntexErrorInfo::Unauthorized => CodexErrorInfo::Unauthorized,
             CoreAntexErrorInfo::BadRequest => CodexErrorInfo::BadRequest,
+            CoreAntexErrorInfo::InvalidPrompt => CodexErrorInfo::Other,
             CoreAntexErrorInfo::ThreadRollbackFailed => CodexErrorInfo::ThreadRollbackFailed,
             CoreAntexErrorInfo::SandboxError => CodexErrorInfo::SandboxError,
             CoreAntexErrorInfo::ResponseStreamDisconnected { http_status_code } => {

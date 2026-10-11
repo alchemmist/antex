@@ -21,7 +21,7 @@ use core_test_support::streaming_sse::StreamingSseChunk;
 use core_test_support::streaming_sse::start_streaming_sse_server;
 use core_test_support::submit_thread_settings;
 use core_test_support::test_antex::TestAntex;
-use core_test_support::test_antex::local_selections;
+use core_test_support::test_antex::local_requests;
 use core_test_support::test_antex::test_antex;
 use core_test_support::wait_for_event;
 use pretty_assertions::assert_eq;
@@ -35,7 +35,7 @@ use tokio::sync::oneshot;
 use tokio::time::timeout;
 
 const INITIAL_MODEL: &str = "gpt-5.4";
-const COMMITTED_MODEL: &str = "gpt-5.2";
+pub(super) const COMMITTED_MODEL: &str = "gpt-5.2";
 const TIMEOUT: Duration = Duration::from_secs(10);
 
 fn assert_checkpoints(test: &TestAntex, expected: &[ThreadSettingsSnapshot]) -> Result<()> {
@@ -86,7 +86,7 @@ async fn initial_plugin_ids_use_turn_context_without_extra_settings_checkpoints(
         .antex
         .start_turn_if_idle(TurnInputRequest::user_input(Vec::new()))
         .await?;
-    let StartIfIdleSubmission::Started { turn_id } = submission else {
+    let StartIfIdleSubmission::Started { turn_id, .. } = submission else {
         panic!("expected an accepted first turn, got {submission:?}");
     };
     wait_for_event(
@@ -138,8 +138,8 @@ async fn initial_plugin_ids_use_turn_context_without_extra_settings_checkpoints(
     Ok(())
 }
 
-struct PauseAfterCommit {
-    gate: Mutex<Option<(oneshot::Sender<()>, mpsc::Receiver<()>)>>,
+pub(super) struct PauseAfterCommit {
+    pub(super) gate: Mutex<Option<(oneshot::Sender<()>, mpsc::Receiver<()>)>>,
 }
 
 impl ConfigContributor<Config> for PauseAfterCommit {
@@ -220,13 +220,18 @@ async fn settings_notifications_keep_their_commit_across_postcommit_work(
                             .with_thread_settings(thread_settings),
                         )
                         .await?;
-                    let TurnInputSubmission::Started { turn_id } = result else {
+                    let TurnInputSubmission::Started { turn_id, .. } = result else {
                         panic!("expected a new turn, got {result:?}");
                     };
                     Ok(turn_id)
                 }
                 SettingsOperation::Standalone => {
-                    antex.submit(Op::ThreadSettings { thread_settings }).await
+                    antex
+                        .submit(Op::ThreadSettings {
+                            thread_settings,
+                            reply: None,
+                        })
+                        .await
                 }
             }
         }
@@ -329,7 +334,7 @@ async fn compaction_checkpoints_settings_changed_during_its_model_request() -> R
     submit_thread_settings(
         &test.antex,
         ThreadSettingsOverrides {
-            environments: Some(local_selections(updated_cwd_path.clone())),
+            environments: Some(local_requests(updated_cwd_path.clone())),
             model: Some(COMMITTED_MODEL.to_string()),
             disabled_plugin_ids: Some(vec!["slack@openai".to_string()]),
             ..Default::default()

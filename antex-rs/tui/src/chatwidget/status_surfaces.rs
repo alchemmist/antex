@@ -13,6 +13,7 @@ use crate::model_catalog::LUNA_RESERVE_MODEL;
 use crate::status::format_credit_micros;
 use crate::status::format_estimated_usd_micros;
 use crate::status::format_tokens_compact;
+use crate::terminal_program_status::ProgramStatus;
 use antex_app_server_protocol::AskForApproval;
 use antex_config::ConfigLayerSource;
 use antex_config::os_host_name;
@@ -250,6 +251,9 @@ impl ChatWidget {
     /// Animated titles record their next refresh for the foreground loop, independently
     /// of full TUI redraws.
     fn refresh_terminal_title_from_selections(&mut self, selections: &StatusSurfaceSelections) {
+        if self.app_event_tx.voice_only.load(Ordering::Relaxed) {
+            return;
+        }
         self.last_terminal_title_requires_action =
             self.terminal_title_shows_action_required_with_selections(selections);
         let now = Instant::now();
@@ -318,6 +322,22 @@ impl ChatWidget {
         self.bottom_pane.terminal_title_requires_action()
     }
 
+    pub(super) fn desired_program_status(&self) -> ProgramStatus {
+        if self.terminal_title_requires_action() {
+            ProgramStatus::Blocked
+        } else if self.bottom_pane.is_task_running() || !self.unified_exec_processes.is_empty() {
+            ProgramStatus::Working
+        } else {
+            ProgramStatus::Idle
+        }
+    }
+
+    pub(super) fn iterm_session_detail(&self, status: ProgramStatus) -> Option<&str> {
+        (status == ProgramStatus::Working && self.bottom_pane.is_task_running())
+            .then_some(self.status_state.current_status.header.as_str())
+            .filter(|detail| *detail != "Working")
+    }
+
     pub(super) fn terminal_title_shows_action_required(&self) -> bool {
         self.terminal_title_requires_action() && self.terminal_title_uses_activity()
     }
@@ -368,7 +388,7 @@ impl ChatWidget {
     }
 
     fn action_required_terminal_title_prefix_at(&self, now: Instant) -> &'static str {
-        if !self.local_settings.tui.animations {
+        if !(self.local_settings.tui.animations && self.local_settings.tui.effects.title) {
             return TERMINAL_TITLE_ACTION_REQUIRED_PREFIX;
         }
 
@@ -396,6 +416,7 @@ impl ChatWidget {
         selections: &StatusSurfaceSelections,
     ) -> Option<Duration> {
         if self.local_settings.tui.animations
+            && self.local_settings.tui.effects.progress
             && self.status_state.thread_title_generation_pending
             && (selections.status_line_items.iter().any(|item| {
                 matches!(
@@ -416,6 +437,7 @@ impl ChatWidget {
             return Some(TERMINAL_TITLE_SPINNER_INTERVAL);
         }
         if self.local_settings.tui.animations
+            && self.local_settings.tui.effects.title
             && self.terminal_title_shows_action_required_with_selections(selections)
         {
             return Some(TERMINAL_TITLE_ACTION_REQUIRED_INTERVAL);
@@ -815,6 +837,13 @@ impl ChatWidget {
                 .then_some("⚡".to_string())
                 .filter(|_| self.current_service_tier() == Some(ServiceTier::Fast.request_value())),
             StatusLineItem::Subagents => self.subagents_enabled.then(|| "".to_string()),
+            StatusLineItem::Daybreak => Some(
+                if self.daybreak_enabled && !self.side_conversation_active() {
+                    "Daybreak on".to_string()
+                } else {
+                    "Daybreak off".to_string()
+                },
+            ),
             StatusLineItem::RawOutput => self.raw_output_mode().then(|| "raw output".to_string()),
             StatusLineItem::ThreadName => {
                 self.thread_name.as_deref().and_then(normalize_thread_name)
@@ -872,6 +901,7 @@ impl ChatWidget {
             StatusSurfacePreviewItem::SessionId => StatusLineItem::SessionId,
             StatusSurfacePreviewItem::FastMode => StatusLineItem::FastMode,
             StatusSurfacePreviewItem::Subagents => StatusLineItem::Subagents,
+            StatusSurfacePreviewItem::Daybreak => StatusLineItem::Daybreak,
             StatusSurfacePreviewItem::RawOutput => StatusLineItem::RawOutput,
             StatusSurfacePreviewItem::WorkspaceHeadline => StatusLineItem::WorkspaceHeadline,
             StatusSurfacePreviewItem::Model => StatusLineItem::ModelName,
@@ -951,6 +981,9 @@ impl ChatWidget {
             TerminalTitleItem::FastMode => self
                 .status_line_value_for_item(StatusLineItem::FastMode)
                 .map(|value| Self::truncate_terminal_title_part(value, /*max_chars*/ 32)),
+            TerminalTitleItem::Daybreak => {
+                self.status_line_value_for_item(StatusLineItem::Daybreak)
+            }
             TerminalTitleItem::Model => Some(Self::truncate_terminal_title_part(
                 self.model_display_name().to_string(),
                 /*max_chars*/ 32,
@@ -1017,6 +1050,7 @@ impl ChatWidget {
 
     pub(super) fn terminal_title_spinner_text_at(&self, now: Instant) -> Option<String> {
         let spinner = (self.local_settings.tui.animations
+            && self.local_settings.tui.effects.progress
             && self.terminal_title_has_active_progress())
         .then(|| self.terminal_title_spinner_frame_at(now));
         if self.realtime_microphone_is_listening() {
@@ -1058,12 +1092,15 @@ impl ChatWidget {
 
     pub(super) fn should_animate_terminal_title_spinner(&self) -> bool {
         self.local_settings.tui.animations
+            && self.local_settings.tui.effects.progress
             && self.terminal_title_uses_activity()
             && self.terminal_title_has_active_progress()
     }
 
     pub(super) fn should_animate_terminal_title_action_required(&self) -> bool {
-        self.local_settings.tui.animations && self.terminal_title_shows_action_required()
+        self.local_settings.tui.animations
+            && self.local_settings.tui.effects.title
+            && self.terminal_title_shows_action_required()
     }
 
     fn should_animate_terminal_title_spinner_with_selections(
@@ -1071,6 +1108,7 @@ impl ChatWidget {
         selections: &StatusSurfaceSelections,
     ) -> bool {
         self.local_settings.tui.animations
+            && self.local_settings.tui.effects.progress
             && selections
                 .terminal_title_items
                 .contains(&TerminalTitleItem::Spinner)

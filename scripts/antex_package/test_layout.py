@@ -3,6 +3,8 @@
 from pathlib import Path
 import hashlib
 import json
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -15,9 +17,79 @@ from antex_package.layout import validate_package_dir
 from antex_package.targets import PACKAGE_VARIANTS
 from antex_package.targets import PackageInputs
 from antex_package.targets import TARGET_SPECS
+from antex_package.targets import default_target
 
 
 class PackageLayoutTest(unittest.TestCase):
+    @unittest.skipIf(sys.platform == "win32", "MSVC symbols are separate PDB files")
+    def test_strip_policy_preserves_inputs_and_runs_packaged_executables(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "input-executable"
+            # System executables may already be stripped. Compile with debug
+            # information so a no-op strip cannot pass this regression test.
+            subprocess.run(
+                ["cc", "-g", "-O0", "-x", "c", "-", "-o", str(source)],
+                input=r"""#include <stdio.h>
+int main(void) {
+    fputs("package-ok", stdout);
+    return 0;
+}
+""",
+                text=True,
+                check=True,
+                capture_output=True,
+            )
+            original = source.read_bytes()
+            target = default_target()
+            for mode in ("auto", "all", "none"):
+                with self.subTest(mode=mode):
+                    package = root / mode
+                    command = [
+                        sys.executable,
+                        str(
+                            Path(__file__).resolve().parents[1]
+                            / "build_antex_package.py"
+                        ),
+                        "--target",
+                        target,
+                        "--cargo-profile",
+                        "release",
+                        "--package-dir",
+                        str(package),
+                        "--strip",
+                        mode,
+                    ]
+                    flags = [
+                        "--entrypoint-bin",
+                        "--code-mode-host-bin",
+                        "--rg-bin",
+                    ]
+                    if "linux" in target:
+                        flags.append("--bwrap-bin")
+                    for flag in flags:
+                        command.extend((flag, str(source)))
+                    if mode != "all":
+                        # Preserved prebuilt inputs must not even need a strip tool.
+                        command.extend(("--strip-tool", str(root / "absent-strip")))
+                    subprocess.run(command, check=True, capture_output=True)
+                    for name in ("antex", "antex-code-mode-host"):
+                        executable = package / "bin" / name
+                        self.assertEqual(
+                            subprocess.check_output([str(executable)]),
+                            b"package-ok",
+                        )
+                        if mode != "all":
+                            self.assertEqual(executable.read_bytes(), original)
+                        else:
+                            self.assertLess(executable.stat().st_size, len(original))
+                    self.assertEqual(source.read_bytes(), original)
+                    self.assertEqual((package / "antex-path/rg").read_bytes(), original)
+                    if "linux" in target:
+                        self.assertEqual(
+                            (package / "antex-resources/bwrap").read_bytes(), original
+                        )
+
     def test_winget_preserves_signed_files_and_voice_hashes(self) -> None:
         for target in ("x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc"):
             with self.subTest(target=target), tempfile.TemporaryDirectory() as temp:
@@ -90,9 +162,7 @@ class PackageLayoutTest(unittest.TestCase):
                         package_dir = root / "package"
                         package_dir.mkdir()
                         rg_bin = touch_executable(root / "signed-rg")
-                        zsh_bin = touch_executable(root / "signed-zsh")
                         rg_bin.write_bytes(b"signed ripgrep binary")
-                        zsh_bin.write_bytes(b"signed zsh binary")
                         variant = PACKAGE_VARIANTS[variant_name]
                         spec = TARGET_SPECS[target]
                         inputs = PackageInputs(
@@ -103,31 +173,20 @@ class PackageLayoutTest(unittest.TestCase):
                                 root / "antex-code-mode-host"
                             ),
                             rg_bin=rg_bin,
-                            zsh_bin=zsh_bin,
                             bwrap_bin=None,
                             antex_command_runner_bin=None,
                             antex_windows_sandbox_setup_bin=None,
                         )
 
                         build_package_dir(package_dir, "1.2.3", variant, spec, inputs)
-                        validate_package_dir(
-                            package_dir, variant, spec, include_zsh=True
-                        )
+                        validate_package_dir(package_dir, variant, spec)
 
                         self.assertEqual(
                             {
                                 "rg": (package_dir / "antex-path" / "rg").read_bytes(),
-                                "zsh": (
-                                    package_dir
-                                    / "antex-resources"
-                                    / "zsh"
-                                    / "bin"
-                                    / "zsh"
-                                ).read_bytes(),
                             },
                             {
                                 "rg": b"signed ripgrep binary",
-                                "zsh": b"signed zsh binary",
                             },
                         )
 
@@ -140,7 +199,6 @@ class PackageLayoutTest(unittest.TestCase):
                 entrypoint_bin=touch_executable(root / "antex-app-server"),
                 code_mode_host_bin=touch_executable(root / "antex-code-mode-host"),
                 rg_bin=touch_executable(root / "rg"),
-                zsh_bin=None,
                 bwrap_bin=touch_executable(root / "bwrap"),
                 antex_command_runner_bin=None,
                 antex_windows_sandbox_setup_bin=None,
@@ -157,7 +215,6 @@ class PackageLayoutTest(unittest.TestCase):
                 package_dir,
                 PACKAGE_VARIANTS["antex-app-server"],
                 TARGET_SPECS["x86_64-unknown-linux-musl"],
-                include_zsh=False,
             )
 
             self.assertTrue((package_dir / "bin" / "antex-code-mode-host").is_file())

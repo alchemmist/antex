@@ -1,3 +1,4 @@
+use crate::session::turn_context::TurnContext;
 use antex_analytics::CompactionImplementation;
 use antex_analytics::CompactionReason;
 use antex_otel::SessionTelemetry;
@@ -5,18 +6,29 @@ use antex_protocol::error::CodexErr;
 use antex_protocol::error::CodexErrorDetails;
 use tracing::warn;
 
-/// Retries failures that may be model-specific and succeed with a different model.
-pub(crate) fn should_retry_with_current_model(error: &CodexErr) -> bool {
-    matches!(
+/// Returns whether a failed compaction attempt should use the current model.
+pub(crate) fn should_retry_with_current_model(
+    error: &CodexErr,
+    previous: &TurnContext,
+    current: &TurnContext,
+) -> bool {
+    if matches!(
         error.details(),
-        CodexErrorDetails::InvalidRequest(_)
-            | CodexErrorDetails::UnexpectedStatus(_)
-            | CodexErrorDetails::ContextWindowExceeded
-            | CodexErrorDetails::UsageLimitReached(_)
-            | CodexErrorDetails::ServerOverloaded
-            | CodexErrorDetails::InternalServerError
-            | CodexErrorDetails::RetryLimit(_)
-    )
+        CodexErrorDetails::TurnAborted
+            | CodexErrorDetails::Interrupted
+            | CodexErrorDetails::SessionBudgetExceeded
+    ) || (previous.model_info().slug == current.model_info().slug
+        && previous.cyber_access_program == current.cyber_access_program)
+    {
+        return false;
+    }
+
+    current.provider.info().is_openai()
+        && current
+            .auth_manager
+            .as_deref()
+            .and_then(antex_login::AuthManager::auth_cached)
+            .is_some_and(|auth| auth.uses_antex_backend() || auth.is_api_key_auth())
 }
 
 pub(crate) fn record_model_fallback(

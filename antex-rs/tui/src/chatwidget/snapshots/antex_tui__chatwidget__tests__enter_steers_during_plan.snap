@@ -1,11 +1,12 @@
 ---
 source: tui/src/chatwidget/tests/review_mode.rs
+assertion_line: 503
 expression: "render_bottom_popup(&chat, width)"
 ---
 • Proposed Plan
 
 
-  - Step 1
+  • Step 1
 
 • Messages to be submitted after next tool call (press esc to interrupt and send
   immediately)
@@ -13,4 +14,4 @@ expression: "render_bottom_popup(&chat, width)"
 
  ┃ Ask Antex to do anything
 
-  gpt-5.6-sol medium · /tmp/project                                  Plan mode
+  GPT-5.6-Sol medium · /tmp/project                                  Plan mode

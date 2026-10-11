@@ -1,0 +1,8 @@
+---
+source: tui/src/chatwidget/tests/slash_commands.rs
+assertion_line: 3942
+expression: "render_bottom_popup(&chat, 80)"
+---
+ ┃ Ask Antex to do anything
+
+  Copied selection to clipboard

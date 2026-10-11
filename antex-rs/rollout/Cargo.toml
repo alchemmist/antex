@@ -13,6 +13,7 @@ path = "src/lib.rs"
 workspace = true
 
 [dependencies]
+antex-utils-process = { workspace = true }
 anyhow = { workspace = true }
 chrono = { workspace = true, features = ["serde"] }
 antex-extension-items = { workspace = true }
@@ -23,7 +24,10 @@ antex-otel = { workspace = true }
 antex-protocol = { workspace = true }
 antex-state = { workspace = true }
 antex-utils-absolute-path = { workspace = true }
+antex-utils-output-truncation = { workspace = true }
 antex-utils-path = { workspace = true }
+antex-utils-string = { workspace = true }
+memchr = { workspace = true }
 regex = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }

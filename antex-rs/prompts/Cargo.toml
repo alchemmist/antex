@@ -14,12 +14,15 @@ workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
+antex-collaboration-mode-templates = { workspace = true }
 antex-context-fragments = { workspace = true }
-antex-git-utils = { workspace = true }
 antex-execpolicy = { workspace = true }
+antex-git-utils = { workspace = true }
+antex-guardian-context = { workspace = true }
 antex-protocol = { workspace = true }
 antex-utils-absolute-path = { workspace = true }
 antex-utils-template = { workspace = true }
+tracing = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }

@@ -24,7 +24,6 @@ def install_package(source, destination, target):
         "bin/antex",
         "bin/antex-code-mode-host",
         "antex-path/rg",
-        "antex-resources/zsh/bin/zsh",
         "antex-resources/voice/bin/antex-voice-host",
     ]
     if target.endswith("linux-gnu"):

@@ -7,7 +7,6 @@ use crate::guardian::GuardianNetworkAccessTrigger;
 use crate::guardian::GuardianReviewContext;
 use crate::guardian::GuardianReviewOptions;
 use crate::guardian::decide_approval;
-use crate::guardian::guardian_timeout_message;
 use crate::guardian::new_guardian_review_id;
 use crate::guardian::spawn_approval_decision;
 use crate::hook_runtime::run_permission_request_hooks;
@@ -25,10 +24,9 @@ use antex_analytics::GuardianApprovalRequestSource;
 use antex_config::types::AppToolApproval;
 use antex_hooks::PermissionRequestDecision;
 use antex_otel::ToolDecisionSource;
+use antex_prompts::ResolvedModelMessages;
 use antex_protocol::approvals::ExecApprovalKind;
 use antex_protocol::approvals::ExecPolicyAmendment;
-#[cfg(unix)]
-use antex_protocol::approvals::GuardianCommandSource;
 use antex_protocol::approvals::NetworkApprovalContext;
 use antex_protocol::approvals::NetworkApprovalProtocol;
 use antex_protocol::config_types::ApprovalsReviewer;
@@ -90,18 +88,6 @@ pub(crate) enum ApprovalAction {
         sandbox_permissions: SandboxPermissions,
         additional_permissions: Option<AdditionalPermissionProfile>,
     },
-    #[cfg(unix)]
-    Execve {
-        id: String,
-        approval_id: String,
-        environment_id: String,
-        source: GuardianCommandSource,
-        program: AbsolutePathBuf,
-        argv: Vec<String>,
-        command: Vec<String>,
-        cwd: AbsolutePathBuf,
-        additional_permissions: Option<AdditionalPermissionProfile>,
-    },
     ApplyPatch {
         id: String,
         environment_id: String,
@@ -150,6 +136,7 @@ pub(crate) enum ApprovalAction {
     },
     RequestPermissions {
         id: String,
+        environment_id: String,
         turn_id: String,
         reason: Option<String>,
         permissions: RequestPermissionProfile,
@@ -168,8 +155,6 @@ impl ApprovalAction {
         match self {
             Self::ExecCommand { command, .. } => command_contains_force_push(command),
             Self::WriteStdin { .. } => false,
-            #[cfg(unix)]
-            Self::Execve { command, .. } => command_contains_force_push(command),
             Self::ApplyPatch { .. }
             | Self::McpToolCall { .. }
             | Self::NetworkAccess { .. }
@@ -208,11 +193,6 @@ impl ApprovalAction {
                     "additional_permissions": additional_permissions,
                 }),
             },
-            #[cfg(unix)]
-            Self::Execve { command, .. } => PermissionRequestPayload::bash(
-                antex_shell_command::parse_command::shlex_join(command),
-                /*description*/ None,
-            ),
             Self::ApplyPatch { patch, .. } => PermissionRequestPayload {
                 tool_name: HookToolName::apply_patch(),
                 tool_input: serde_json::json!({ "command": patch }),
@@ -268,8 +248,6 @@ impl ApprovalAction {
                 sandbox_permissions: *sandbox_permissions,
                 additional_permissions: additional_permissions.clone(),
             })],
-            #[cfg(unix)]
-            Self::Execve { .. } => Vec::new(),
             Self::McpToolCall { .. }
             | Self::NetworkAccess { .. }
             | Self::RequestPermissions { .. }
@@ -344,31 +322,16 @@ impl ApprovalAction {
                 sandbox_permissions,
                 additional_permissions,
             },
-            #[cfg(unix)]
-            Self::Execve {
-                id,
-                source,
-                program,
-                argv,
-                cwd,
-                additional_permissions,
-                ..
-            } => crate::guardian::GuardianApprovalRequest::Execve {
-                id,
-                source,
-                program: program.to_string_lossy().into_owned(),
-                argv,
-                cwd,
-                additional_permissions,
-            },
             Self::ApplyPatch {
                 id,
+                environment_id,
                 cwd,
                 files,
                 patch,
                 ..
             } => crate::guardian::GuardianApprovalRequest::ApplyPatch {
                 id,
+                environment_id,
                 cwd,
                 files,
                 patch,
@@ -402,6 +365,7 @@ impl ApprovalAction {
             Self::NetworkAccess {
                 id,
                 turn_id,
+                environment_id,
                 target,
                 host,
                 protocol,
@@ -411,6 +375,7 @@ impl ApprovalAction {
             } => crate::guardian::GuardianApprovalRequest::NetworkAccess {
                 id,
                 turn_id,
+                environment_id,
                 target,
                 host,
                 protocol,
@@ -419,11 +384,13 @@ impl ApprovalAction {
             },
             Self::RequestPermissions {
                 id,
+                environment_id,
                 turn_id,
                 reason,
                 permissions,
             } => crate::guardian::GuardianApprovalRequest::RequestPermissions {
                 id,
+                environment_id,
                 turn_id,
                 reason,
                 permissions,
@@ -468,9 +435,12 @@ impl ApprovalResolution {
                 Err(ToolError::Rejected(rejection.to_string()))
             }
             ReviewDecision::Denied { rejection } => Err(ToolError::Rejected(rejection)),
-            ReviewDecision::TimedOut => {
-                Err(ToolError::Rejected(guardian_timeout_message(model_info)))
-            }
+            ReviewDecision::TimedOut => Err(ToolError::Rejected(
+                ResolvedModelMessages::from_model(model_info)
+                    .auto_review()
+                    .timeout_instructions
+                    .to_string(),
+            )),
             ReviewDecision::Abort => Err(ToolError::Antex(CodexErr::TurnAborted)),
             decision => Ok(decision),
         }
@@ -497,8 +467,6 @@ impl Session {
         let is_mcp_tool_call = matches!(&action, ApprovalAction::McpToolCall { .. });
         let is_network_approval = matches!(&action, ApprovalAction::NetworkAccess { .. });
         let permission_request_run_id = match &action {
-            #[cfg(unix)]
-            ApprovalAction::Execve { approval_id, .. } => approval_id.clone(),
             ApprovalAction::NetworkAccess { hook_run_id, .. } => hook_run_id.clone(),
             _ if ctx.retry_reason.is_some() => format!("{}:retry", ctx.call_id),
             _ => ctx.call_id.clone(),
@@ -788,41 +756,6 @@ impl Session {
                     /*proposed_execpolicy_amendment*/ None,
                     additional_permissions.clone(),
                     Some(vec![ReviewDecision::Approved, ReviewDecision::Abort]),
-                    /*plugin_attribution_override*/ None,
-                )
-                .await
-            }
-            #[cfg(unix)]
-            ApprovalAction::Execve {
-                approval_id,
-                environment_id,
-                command,
-                cwd,
-                additional_permissions,
-                ..
-            } => {
-                let available_decisions = if action.requires_force_push_confirmation() {
-                    vec![
-                        ReviewDecision::Approved,
-                        ReviewDecision::denied("force push declined by user"),
-                    ]
-                } else {
-                    vec![ReviewDecision::Approved, ReviewDecision::Abort]
-                };
-                self.request_command_approval(
-                    ctx.review_context.turn(),
-                    ExecApprovalKind::Command,
-                    ctx.review_context.model_context(),
-                    ctx.call_id.clone(),
-                    Some(approval_id.clone()),
-                    Some(environment_id.clone()),
-                    command.clone(),
-                    cwd.clone().into(),
-                    /*reason*/ None,
-                    /*network_approval_context*/ None,
-                    /*proposed_execpolicy_amendment*/ None,
-                    additional_permissions.clone(),
-                    Some(available_decisions),
                     /*plugin_attribution_override*/ None,
                 )
                 .await

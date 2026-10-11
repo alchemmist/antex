@@ -81,6 +81,16 @@ impl StartupMascotMotion {
         self.current_frame_at(Instant::now())
     }
 
+    /// A per-frame cache key for retained history, including its final transition to rest.
+    /// Querying the key also schedules the next frame when a cached layout is reused.
+    pub(super) fn transcript_animation_tick(&self) -> Option<u64> {
+        self.animation_tick_at(Instant::now())
+    }
+
+    fn animation_tick_at(&self, now: Instant) -> Option<u64> {
+        self.animation_frame_at(now).map(|frame| frame as u64)
+    }
+
     pub(crate) fn is_finished(&self) -> bool {
         self.started_at
             .get()
@@ -88,14 +98,14 @@ impl StartupMascotMotion {
     }
 
     fn current_frame_at(&self, now: Instant) -> MascotFrame {
+        self.animation_frame_at(now).unwrap_or(MascotFrame::Rest)
+    }
+
+    fn animation_frame_at(&self, now: Instant) -> Option<MascotFrame> {
         let started = self.started_at.get_or_init(|| now);
-        let Some((frame, next_frame_in)) =
-            frame_at_elapsed(now.saturating_duration_since(*started))
-        else {
-            return MascotFrame::Rest;
-        };
+        let (frame, next_frame_in) = frame_at_elapsed(now.saturating_duration_since(*started))?;
         self.request_frame.schedule_frame_in(next_frame_in);
-        frame
+        Some(frame)
     }
 }
 

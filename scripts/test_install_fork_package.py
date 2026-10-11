@@ -3,7 +3,9 @@ import importlib.util
 import json
 import os
 import platform
+import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -29,7 +31,6 @@ class PackageInstallationTests(unittest.TestCase):
             "bin/antex",
             "bin/antex-code-mode-host",
             "antex-path/rg",
-            "antex-resources/zsh/bin/zsh",
             "antex-resources/bwrap",
             "antex-resources/voice/bin/antex-voice-host",
             "antex-resources/voice/lib/libgstreamer-1.0.so.0",
@@ -82,6 +83,74 @@ class PackageInstallationTests(unittest.TestCase):
             (self.destination / "antex-code-mode-host").resolve(),
             second / "bin/antex-code-mode-host",
         )
+
+    def test_installs_current_canonical_package_layout(self):
+        repository = Path(__file__).resolve().parent.parent
+        package = self.root / "canonical-package"
+        subprocess.run(
+            [
+                sys.executable,
+                str(repository / "scripts/build_antex_package.py"),
+                "--target",
+                self.target,
+                "--package-dir",
+                str(package),
+                "--package-version",
+                "0.1.4",
+                "--strip",
+                "none",
+                "--entrypoint-bin",
+                str(self.source / "bin/antex"),
+                "--code-mode-host-bin",
+                str(self.source / "bin/antex-code-mode-host"),
+                "--rg-bin",
+                str(self.source / "antex-path/rg"),
+                "--bwrap-bin",
+                str(self.source / "antex-resources/bwrap"),
+            ],
+            env=os.environ | {"ANTEX_REPO_ROOT": str(repository)},
+            check=True,
+        )
+        shutil.copytree(
+            self.source / "antex-resources/voice",
+            package / "antex-resources/voice",
+        )
+        MODULE.install_package(package, self.destination, self.target)
+        installed = (self.destination / "antex").resolve().parent.parent
+        self.assertEqual(
+            {name: (installed / name).read_bytes() for name in self.files},
+            {name: (package / name).read_bytes() for name in self.files},
+        )
+
+    def test_preserves_optional_resources_from_legacy_packages(self):
+        legacy_shell = self.source / "antex-resources/zsh/bin/zsh"
+        legacy_shell.parent.mkdir(parents=True)
+        legacy_shell.write_bytes(b"legacy bundled shell")
+        legacy_shell.chmod(0o755)
+        MODULE.install_package(self.source, self.destination, self.target)
+        installed = (self.destination / "antex").resolve().parent.parent
+        self.assertEqual(
+            (installed / "antex-resources/zsh/bin/zsh").read_bytes(),
+            legacy_shell.read_bytes(),
+        )
+
+    def test_requires_every_current_executable_before_changing_installation(self):
+        MODULE.install_package(self.source, self.destination, self.target)
+        installed = (self.destination / "antex").resolve()
+        for name in self.files[:-1]:
+            with self.subTest(executable=name):
+                executable = self.source / name
+                content = executable.read_bytes()
+                executable.unlink()
+                try:
+                    with self.assertRaisesRegex(ValueError, "missing executable"):
+                        MODULE.install_package(
+                            self.source, self.destination, self.target
+                        )
+                    self.assertEqual((self.destination / "antex").resolve(), installed)
+                finally:
+                    executable.write_bytes(content)
+                    executable.chmod(0o755)
 
     def test_rejects_damaged_runtime_before_changing_installation(self):
         MODULE.install_package(self.source, self.destination, self.target)

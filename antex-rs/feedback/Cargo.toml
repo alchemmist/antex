@@ -14,11 +14,15 @@ antex-http-client = { workspace = true }
 antex-login = { workspace = true }
 antex-protocol = { workspace = true }
 antex-rollout = { workspace = true }
+antex-state = { workspace = true }
 flate2 = { workspace = true }
 http = { workspace = true }
 httpdate = { workspace = true }
 mime_guess = { workspace = true }
-sentry = { version = "0.46" }
+sentry = { version = "0.46", default-features = false }
+serde_json = { workspace = true }
+tar = { workspace = true }
+tempfile = { workspace = true }
 tokio = { workspace = true, features = ["time"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

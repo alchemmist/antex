@@ -15,6 +15,7 @@ workspace = true
 [dependencies]
 base64 = { workspace = true }
 antex-file-system = { workspace = true }
+antex-install-context = { workspace = true }
 antex-network-proxy = { workspace = true }
 antex-protocol = { workspace = true }
 antex-shell-command = { workspace = true }

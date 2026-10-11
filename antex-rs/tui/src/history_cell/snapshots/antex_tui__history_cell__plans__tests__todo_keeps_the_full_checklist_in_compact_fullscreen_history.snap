@@ -1,0 +1,13 @@
+---
+source: tui/src/history_cell/plans_tests.rs
+assertion_line: 16
+expression: "ratatui::text::Text::from(visible_lines(lines))"
+---
+• Todos · 1/6 completed
+  └ Current stage: 2/6 — Stage 2
+    ✔ Stage 1
+    □ Stage 2
+    □ Stage 3
+    □ Stage 4
+    □ Stage 5
+    □ Stage 6

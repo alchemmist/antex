@@ -1,7 +1,7 @@
 use antex_core::context::ContextualUserFragment;
 use antex_core::context::InternalContextSource;
 use antex_core::context::InternalModelContextFragment;
-use antex_core::context::without_update_plan_instructions;
+use antex_prompts::without_update_plan_instructions;
 use antex_protocol::models::ResponseItem;
 use antex_protocol::protocol::ThreadGoal;
 use antex_utils_template::Template;

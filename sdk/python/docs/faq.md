@@ -42,7 +42,7 @@ If your app is not already async, stay with `Antex`.
 Use `ExternalMessage` for messages from other agents, tools, or applications:
 
 ```python
-from openai_codex import ExternalMessage
+from antex_sdk import ExternalMessage
 
 result = thread.run(ExternalMessage(
     tool_name="notifications",

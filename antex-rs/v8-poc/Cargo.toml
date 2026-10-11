@@ -10,6 +10,8 @@ path = "src/lib.rs"
 doctest = false
 
 [features]
+# Match code-mode-runtime and the non-MSVC Bazel target under workspace feature unification.
+default = ["sandbox"]
 sandbox = ["v8/v8_enable_sandbox"]
 
 [lints]

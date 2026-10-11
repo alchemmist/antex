@@ -14,8 +14,8 @@ workspace = true
 
 [dependencies]
 antex-network-proxy = { workspace = true }
-antex-otel = { workspace = true }
 antex-protocol = { workspace = true }
+antex-utils-redacted-string = { workspace = true }
 schemars = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 toml = { workspace = true }

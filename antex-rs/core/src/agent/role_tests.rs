@@ -2,6 +2,9 @@ use super::*;
 use crate::config::ConfigBuilder;
 use crate::plugins::plugins_manager_for_config;
 use crate::skills_load_input_from_config;
+use antex_config::CloudConfigBundleBindingStatus;
+use antex_config::CloudConfigBundlePolicy;
+use antex_config::CloudConfigBundleSnapshot;
 use antex_config::test_support::CloudConfigBundleFixture;
 use antex_login::test_support::auth_manager_from_optional_auth;
 use antex_protocol::config_types::ServiceTier;
@@ -186,7 +189,6 @@ async fn apply_role_preserves_unspecified_keys() {
     )])
     .await;
     config.antex_linux_sandbox_exe = Some(PathBuf::from("/tmp/antex-linux-sandbox"));
-    config.main_execve_wrapper_exe = Some(PathBuf::from("/tmp/antex-execve-wrapper"));
     let role_path = write_role_config(
         &home,
         "instructions-only.toml",
@@ -222,10 +224,6 @@ async fn apply_role_preserves_unspecified_keys() {
     assert_eq!(
         config.antex_linux_sandbox_exe,
         Some(PathBuf::from("/tmp/antex-linux-sandbox"))
-    );
-    assert_eq!(
-        config.main_execve_wrapper_exe,
-        Some(PathBuf::from("/tmp/antex-execve-wrapper"))
     );
     assert_eq!(config.base_instructions, base_instructions);
     assert_eq!(config.base_instructions_provenance, provenance);
@@ -432,6 +430,15 @@ writable_roots = ["./sandbox-root"]
 #[tokio::test]
 async fn apply_role_cannot_expand_parent_authority() {
     let (home, mut config) = test_config_with_cli_overrides(Vec::new()).await;
+    let policy = CloudConfigBundlePolicy::default();
+    let mut snapshot = CloudConfigBundleSnapshot {
+        bundle: Ok(None),
+        binding: None,
+    };
+    policy.publish_snapshot(&mut snapshot);
+    config.config_layer_stack = config
+        .config_layer_stack
+        .with_cloud_config_binding(snapshot.binding);
     config.notify = Some(vec!["parent-notifier".to_string()]);
     for feature in [Feature::MemoryTool, Feature::RequestPermissionsTool] {
         config
@@ -480,6 +487,18 @@ command = "attacker-command"
         .await
         .expect("custom role should apply");
 
+    policy.observe_remote_bundle(
+        &CloudConfigBundleFixture::enterprise_config("model = 'managed'").into_bundle(),
+    );
+    assert_eq!(
+        config
+            .config_layer_stack
+            .cloud_config_binding()
+            .expect("role should preserve managed policy binding")
+            .read()
+            .status,
+        CloudConfigBundleBindingStatus::Suspended
+    );
     assert_eq!(
         config.developer_instructions.as_deref(),
         Some("Stay focused")

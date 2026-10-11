@@ -20,7 +20,7 @@ def test_turn_steer_adds_follow_up_input(tmp_path) -> None:
         )
 
         with Antex(config=harness.app_server_config()) as antex:
-            thread = antex.thread_start()
+            thread = antex.thread_start(config={"features.instant_interrupt": False})
             turn = thread.turn("Start a steerable turn.")
             harness.responses.wait_for_requests(1)
             steer = turn.steer("Use this steering input.")

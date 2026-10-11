@@ -1,4 +1,4 @@
-//! Keep named-profile discovery responsive and discard replies after closing or changing scope.
+//! Cache the last server catalog and discard discovery replies after changing scope.
 
 use super::*;
 use crate::permission_discovery::PermissionDiscovery;
@@ -14,20 +14,27 @@ impl ChatWidget {
         }
     }
     pub(crate) fn request_permission_profiles(&mut self) {
-        self.invalidate_permission_discovery();
-        let request_id = uuid::Uuid::new_v4();
-        self.permission_popup_request_id = Some(request_id);
+        self.bottom_pane.dismiss_view_by_id(VIEW_ID);
+        if let Some(discovery) = self.permission_discovery.clone() {
+            self.permission_profiles_menu_opened = true;
+            self.open_permission_profiles_popup(discovery);
+            return;
+        }
         self.bottom_pane.show_selection_view(SelectionViewParams {
             view_id: Some(VIEW_ID),
-            title: Some("Update Model Permissions".to_string()),
+            title: Some("Update Model Permissions".into()),
             items: vec![SelectionItem {
                 name: "Loading permission profiles…".to_string(),
                 is_disabled: true,
                 ..Default::default()
             }],
-            footer_hint: Some(standard_popup_hint_line()),
-            ..Default::default()
+            ..SelectionViewParams::picker()
         });
+        if self.permission_popup_request_id.is_some() {
+            return;
+        }
+        let request_id = uuid::Uuid::new_v4();
+        self.permission_popup_request_id = Some(request_id);
         self.app_event_tx.send(AppEvent::FetchPermissionProfiles {
             request_id,
             thread_cwd: self.thread_id.and(self.current_cwd.clone()),
@@ -52,14 +59,14 @@ impl ChatWidget {
             return;
         }
         self.permission_popup_request_id = None;
+        if let Ok(discovery) = &result {
+            self.permission_discovery = Some(discovery.clone());
+        }
         if !self.bottom_pane.dismiss_active_view_if_id(VIEW_ID) {
             self.bottom_pane.dismiss_view_by_id(VIEW_ID);
             return;
         }
         match result {
-            Ok(discovery) if !discovery.explicit_profile_mode => {
-                self.open_legacy_permissions_popup()
-            }
             Ok(discovery) => {
                 self.permission_profiles_menu_opened = true;
                 self.open_permission_profiles_popup(discovery);
@@ -74,8 +81,7 @@ impl ChatWidget {
                     dismiss_on_select: true,
                     ..Default::default()
                 }],
-                footer_hint: Some(standard_popup_hint_line()),
-                ..Default::default()
+                ..SelectionViewParams::picker()
             }),
         }
     }

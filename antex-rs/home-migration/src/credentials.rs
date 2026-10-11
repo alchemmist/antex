@@ -1,3 +1,4 @@
+use super::credential_keys::gateway_secret_names;
 use super::credential_keys::home_key;
 use super::credential_keys::mcp_keys;
 use super::credential_keys::mcp_secret_name;
@@ -45,6 +46,8 @@ impl KeyringMigration {
             created: Vec::new(),
             committed: false,
         };
+        let secrets = staging.join("secrets");
+        let mut gateway_names = Vec::new();
         for entry in fs::read_dir(source)? {
             let path = entry?.path();
             let name = path
@@ -59,6 +62,13 @@ impl KeyringMigration {
                 .map_err(|_| {
                     anyhow::anyhow!("cannot inspect credential settings in source configuration")
                 })?;
+            if secrets.join("gateway_oauth.age").exists() {
+                gateway_names.extend(gateway_secret_names(
+                    config.as_table(),
+                    source,
+                    destination,
+                )?);
+            }
             let mode = config
                 .get("cli_auth_credentials_store")
                 .and_then(|value| value.as_str())
@@ -94,7 +104,48 @@ impl KeyringMigration {
                 }
             }
         }
-        let secrets = staging.join("secrets");
+        if secrets.join("gateway_oauth.age").exists() {
+            ensure!(
+                !secrets.is_symlink() && !secrets.join("gateway_oauth.age").is_symlink(),
+                "external encrypted gateway credentials require a separate migration"
+            );
+            // Gateway OAuth has its own key and home-bound credential IDs.
+            let passphrase = migration
+                .copy(
+                    "codex",
+                    &[antex_secrets::compute_keyring_account(
+                        source,
+                        LocalSecretsNamespace::GatewayOAuth,
+                    )],
+                    "antex",
+                    antex_secrets::compute_keyring_account(
+                        destination,
+                        LocalSecretsNamespace::GatewayOAuth,
+                    ),
+                )?
+                .context("source encrypted gateway credentials have no readable keyring key")?;
+            let manager = SecretsManager::new_with_keyring_store_and_namespace(
+                staging.to_path_buf(),
+                SecretsBackendKind::Local,
+                Arc::new(MigrationKeyring(Mutex::new(Some(passphrase)))),
+                LocalSecretsNamespace::GatewayOAuth,
+            );
+            for entry in manager.list(/*scope_filter*/ None)? {
+                let (_, destination_name) = gateway_names
+                    .iter()
+                    .find(|(source_name, _)| source_name == &entry.name)
+                    .context("encrypted gateway credential has no matching local provider configuration; restore that configuration before migration")?;
+                let value = manager
+                    .get(&entry.scope, &entry.name)?
+                    .context("encrypted gateway credential disappeared")?;
+                ensure!(
+                    manager.get(&entry.scope, destination_name)?.is_none(),
+                    "conflicting encrypted gateway credentials"
+                );
+                manager.set(&entry.scope, destination_name, &value)?;
+                manager.delete(&entry.scope, &entry.name)?;
+            }
+        }
         if ["local.age", "codex_auth.age", "mcp_oauth.age"]
             .iter()
             .any(|name| secrets.join(name).exists())

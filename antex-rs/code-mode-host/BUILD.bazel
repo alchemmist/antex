@@ -1,6 +1,11 @@
 load("//:defs.bzl", "antex_rust_crate")
+load("//bazel/rules:runtime_package.bzl", "release_binary")
 
 antex_rust_crate(
     name = "code-mode-host",
     crate_name = "antex_code_mode_host",
+)
+
+release_binary(
+    binary = ":antex-code-mode-host",
 )

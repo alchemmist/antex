@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use antex_exec_server::EnvironmentManager;
-use antex_exec_server::ExecServerRuntimePaths;
+use antex_exec_server::ExecServerRuntimeOptions;
 use antex_extension_api::ExtensionRegistry;
 use antex_extension_api::UserInstructionsProvider;
 use antex_login::AuthManager;
@@ -37,7 +37,7 @@ pub async fn build_prompt_input(
             .await
             .map_err(|err| CodexErr::Fatal(err.to_string()))?;
 
-    let local_runtime_paths = ExecServerRuntimePaths::from_optional_paths(
+    let local_runtime_paths = ExecServerRuntimeOptions::from_optional_paths(
         config.antex_self_exe.clone(),
         config.antex_linux_sandbox_exe.clone(),
     )?;
@@ -108,7 +108,13 @@ pub(crate) async fn build_prompt_input_from_session(
         .await
         .for_prompt(&step_context.settings.model_info.input_modalities);
     let base_instructions = sess.get_base_instructions().await;
-    let prompt = build_prompt(prompt_input, step_context.as_ref(), base_instructions);
+    let prompt = build_prompt(
+        prompt_input,
+        step_context.as_ref(),
+        base_instructions,
+        sess.current_window_uses_incremental_tools(&step_context)
+            .await,
+    );
 
     Ok(prompt.input)
 }

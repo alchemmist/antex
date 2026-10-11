@@ -12,7 +12,7 @@ from antex_sdk import Antex
 
 
 def main() -> None:
-    installed_root = Path(distribution("openai-codex").locate_file("")).resolve()
+    installed_root = Path(distribution("antex-sdk").locate_file("")).resolve()
     assert Path(antex_sdk.__file__).resolve().is_relative_to(installed_root), (
         "The smoke test must import the installed SDK, not the source checkout"
     )
@@ -32,7 +32,7 @@ def main() -> None:
             "Check the installed SDK"
         ]
 
-    print(f"Installed SDK passed with CLI runtime {version('openai-codex-cli-bin')}")
+    print(f"Installed SDK passed with CLI runtime {version('antex-cli-bin')}")
 
 
 if __name__ == "__main__":

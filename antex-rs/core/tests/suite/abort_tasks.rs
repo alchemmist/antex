@@ -111,7 +111,7 @@ async fn root_turn_suspension_preserves_unfinished_turn_history() {
         }]))
         .await
         .expect("start root turn");
-    let antex_core::TurnInputSubmission::Started { turn_id } = submitted else {
+    let antex_core::TurnInputSubmission::Started { turn_id, .. } = submitted else {
         panic!("expected a started root turn");
     };
     wait_for_event(&antex, |event| matches!(event, EventMsg::TurnStarted(_))).await;
@@ -191,7 +191,8 @@ async fn root_turn_suspension_preserves_unfinished_turn_history() {
             .await
             .expect("recover the unfinished turn"),
         antex_core::StartIfIdleSubmission::Started {
-            turn_id: turn_id.clone(),
+            root_turn_id: turn_id.clone(),
+            turn_id: turn_id.clone()
         },
     );
     let completed = wait_for_event(&resumed.antex, |event| {

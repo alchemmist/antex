@@ -1,5 +1,6 @@
 ---
 source: tui/src/chatwidget/tests/questions_tests.rs
+assertion_line: 518
 expression: "format!(\"NORMAL\\n{normal}\\n\\nSEARCH\\n{search}\")"
 ---
 NORMAL
@@ -11,7 +12,7 @@ NORMAL
   › 2. alpha beta
        alpha gamma
 
-  enter submit   ctrl + ] skip   ⌥ + ↓ main prompt
+  enter submit   ⌃] skip   ⇧→ main prompt
 
 SEARCH
 • Queued follow-up inputs
@@ -23,4 +24,4 @@ SEARCH
        alpha gamma
        /gamma
 
-  enter submit   ctrl + ] skip   ⌥ + ↓ main prompt
+  enter submit   ⌃] skip   ⇧→ main prompt

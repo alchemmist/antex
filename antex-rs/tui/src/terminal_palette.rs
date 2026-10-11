@@ -3,7 +3,7 @@ use antex_terminal_detection::TerminalName;
 use antex_terminal_detection::terminal_info;
 use ratatui::style::Color;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum StdoutColorLevel {
     TrueColor,
     Ansi256,

@@ -14,7 +14,7 @@ use wiremock::matchers::header;
 use wiremock::matchers::method;
 use wiremock::matchers::path;
 
-pub(super) fn sign_in(home: &std::path::Path, account: &str, user: &str, plan: &str) {
+pub(in crate::analytics) fn sign_in(home: &std::path::Path, account: &str, user: &str, plan: &str) {
     let claims = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
         json!({
             "exp": 4102444800_i64, "email": "analytics@example.test",
@@ -45,14 +45,23 @@ pub(in crate::analytics) async fn live(
     plan: &str,
 ) -> (tempfile::TempDir, Live) {
     let home = tempfile::tempdir().unwrap();
-    let mut config = ConfigBuilder::default()
+    // Embedded bootstrap reloads these settings from disk. Build Live from the same
+    // persisted inputs so neither client can fall back to the production backend.
+    std::fs::write(
+        home.path().join("config.toml"),
+        toml::to_string(&json!({
+            "chatgpt_base_url": format!("{}/backend-api", server.uri()),
+            "cli_auth_credentials_store": "file",
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let config = ConfigBuilder::default()
         .codex_home(home.path().to_path_buf())
         .loader_overrides(LoaderOverrides::without_managed_config_for_tests())
         .build()
         .await
         .unwrap();
-    config.chatgpt_base_url = format!("{}/backend-api", server.uri());
-    config.cli_auth_credentials_store_mode = antex_login::AuthCredentialsStoreMode::File;
     sign_in(home.path(), "account-a", "user-a", plan);
     Mock::given(method("GET"))
         .and(path("/backend-api/wham/accounts/check"))
@@ -774,10 +783,41 @@ pub(in crate::analytics) async fn connected_view(
     crate::analytics::AnalyticsView,
 ) {
     let (home, live) = live(server, plan).await;
+    // Eligible workspace plans discover policy during embedded bootstrap. An explicit
+    // empty bundle keeps discovery enabled; an unmatched 404 would retry and fall back.
+    Mock::given(method("GET"))
+        .and(path("/backend-api/wham/config/bundle"))
+        .and(header("chatgpt-account-id", "account-a"))
+        .respond_with(ResponseTemplate::new(/*s*/ 200).set_body_json(json!({
+            "config_toml": null,
+            "requirements_toml": null,
+        })))
+        .mount(server)
+        .await;
     let config = Arc::clone(&live.config);
+    let bootstrap_start = server.received_requests().await.unwrap().len();
     let app_server = crate::start_embedded_app_server_for_picker(&config)
         .await
         .unwrap();
+    // Processor creation and connection initialization each probe workspace routing.
+    // This Analytics-only response has no routing metadata, so neither probe caches
+    // a route. Observe both before the dashboard adds its own accounts/check call.
+    tokio::time::timeout(std::time::Duration::from_secs(/*secs*/ 10), async {
+        loop {
+            let requests = server.received_requests().await.unwrap();
+            let checks = requests[bootstrap_start..]
+                .iter()
+                .filter(|request| request.url.path() == "/backend-api/wham/accounts/check")
+                .count();
+            assert!(checks <= 2, "unexpected bootstrap account checks: {checks}");
+            if checks == 2 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(/*millis*/ 5)).await;
+        }
+    })
+    .await
+    .expect("both embedded workspace-routing probes must reach the mock backend");
     let mut view =
         crate::analytics::AnalyticsView::new(crate::keymap::RuntimeKeymap::defaults().list);
     view.open(

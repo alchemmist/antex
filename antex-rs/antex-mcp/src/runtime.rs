@@ -5,6 +5,8 @@
 //! [`crate::rmcp_client`] and connection-set behavior lives in
 //! [`crate::connection_manager`].
 
+mod status;
+
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -12,6 +14,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::Weak;
 use std::sync::atomic::AtomicBool;
+use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
@@ -32,6 +35,7 @@ use antex_protocol::mcp::McpResourceOriginCheckpoint;
 use antex_protocol::models::PermissionProfile;
 use antex_protocol::protocol::Event;
 use antex_protocol::protocol::EventMsg;
+use antex_protocol::protocol::TurnEnvironmentSelection;
 use antex_rmcp_client::ElicitationResponse;
 use antex_rmcp_client::with_http_headers_helper;
 use antex_utils_path_uri::PathUri;
@@ -47,6 +51,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::McpConfig;
 use crate::binding::McpBinding;
+use crate::binding::PreparedMcpCall;
 use crate::client_tool_catalog::CodexAppsToolSnapshot;
 use crate::connection_manager::BindingCatalogRevision;
 use crate::connection_manager::McpConnectionSet;
@@ -55,6 +60,7 @@ use crate::elicitation::ElicitationRequestRouter;
 use crate::elicitation::ElicitationReviewerHandle;
 use crate::event_stream::McpEventStreamOpener;
 use crate::mcp::CODEX_APPS_MCP_SERVER_NAME;
+use crate::resource_client::McpResourceServerCacheKey;
 use crate::resource_origin::ResourceOrigins;
 use crate::server::EffectiveMcpServer;
 use crate::tool_catalog_cache::McpToolCatalogCache;
@@ -69,7 +75,7 @@ pub enum McpStartupPolicy {
     LazyWhenCached,
 }
 
-/// Everything needed to materialize one exact MCP configuration.
+/// Configuration and owning-thread state needed to materialize an MCP runtime.
 pub struct McpRuntimeInput {
     pub startup_policy: McpStartupPolicy,
     pub config: Arc<McpConfig>,
@@ -77,6 +83,7 @@ pub struct McpRuntimeInput {
     pub ready_selected_capability_roots: Vec<SelectedCapabilityRoot>,
     pub mcp_servers: HashMap<String, EffectiveMcpServer>,
     pub submit_id: String,
+    /// Unbounded sources receive abandonment notifications; bounded sources retain request-only behavior.
     pub tx_event: Option<Sender<Event>>,
     pub startup_cancellation_token: CancellationToken,
     pub runtime_context: McpRuntimeContext,
@@ -98,6 +105,7 @@ pub struct McpRuntime {
     current: ArcSwap<PublishedMcpRuntime>,
     event_stream_cancellation: Mutex<EventStreamCancellation>,
     reconnect_pending: AtomicBool,
+    resource_cache_generation: AtomicU64,
     elicitation_router: ElicitationRequestRouter,
     resource_origins: Mutex<ResourceOrigins>,
 }
@@ -113,9 +121,11 @@ struct PublishedMcpRuntime {
     config: Option<Arc<McpConfig>>,
     auth: Option<AntexAuth>,
     auth_token: Option<String>,
+    auth_generation: Arc<()>,
     plugins_available: bool,
     ready_selected_capability_roots: Vec<SelectedCapabilityRoot>,
-    selected_environments: HashMap<String, Arc<Environment>>,
+    environment_selections: Arc<[TurnEnvironmentSelection]>,
+    ready_environments: HashMap<String, Arc<Environment>>,
     cached_binding: Mutex<Option<CachedMcpBinding>>,
 }
 
@@ -136,6 +146,23 @@ fn ensure_host_owned_apps_registration(
         anyhow::bail!("MCP server '{server}' is not registered by the hosted runtime");
     }
     Ok(())
+}
+
+impl PublishedMcpRuntime {
+    // Shared by dirty detection and cache-key publication so their auth rules agree.
+    fn auth_matches(&self, auth: Option<&AntexAuth>) -> bool {
+        match (self.auth.as_ref(), auth) {
+            (Some(previous), Some(latest)) => {
+                previous == latest
+                    && previous.get_account_id() == latest.get_account_id()
+                    && previous.get_chatgpt_user_id() == latest.get_chatgpt_user_id()
+                    && previous.is_fedramp_account() == latest.is_fedramp_account()
+                    && self.auth_token == latest.get_token().ok()
+            }
+            (None, None) => true,
+            (Some(_), None) | (None, Some(_)) => false,
+        }
+    }
 }
 
 struct CachedMcpBinding {
@@ -204,9 +231,11 @@ impl McpRuntime {
                 config: None,
                 auth: None,
                 auth_token: None,
+                auth_generation: Arc::new(()),
                 plugins_available: false,
                 ready_selected_capability_roots: Vec::new(),
-                selected_environments: HashMap::new(),
+                environment_selections: Arc::default(),
+                ready_environments: HashMap::new(),
                 cached_binding: Mutex::new(None),
             }),
             event_stream_cancellation: Mutex::new(EventStreamCancellation {
@@ -215,6 +244,7 @@ impl McpRuntime {
                 retained_subscription_cancellation: None,
             }),
             reconnect_pending: AtomicBool::new(false),
+            resource_cache_generation: AtomicU64::new(0),
             elicitation_router: ElicitationRequestRouter::default(),
             resource_origins: Mutex::default(),
         }
@@ -305,9 +335,16 @@ impl McpRuntime {
         let config = Arc::clone(&input.config);
         let auth = input.auth.clone();
         let auth_token = auth.as_ref().and_then(|auth| auth.get_token().ok());
+        let current = self.current.load_full();
+        let auth_generation = if current.auth_matches(auth.as_ref()) {
+            Arc::clone(&current.auth_generation)
+        } else {
+            Arc::new(())
+        };
         let plugins_available = input.plugins_available;
         let ready_selected_capability_roots = input.ready_selected_capability_roots.clone();
-        let selected_environments = input.runtime_context.selected_environments.clone();
+        let environment_selections = Arc::clone(&input.runtime_context.environment_selections);
+        let ready_environments = input.runtime_context.ready_environments.clone();
         let connections = Arc::new(
             McpConnectionSet::new(
                 previous,
@@ -335,9 +372,11 @@ impl McpRuntime {
             config: Some(config),
             auth,
             auth_token,
+            auth_generation,
             plugins_available,
             ready_selected_capability_roots,
-            selected_environments,
+            environment_selections,
+            ready_environments,
             cached_binding: Mutex::new(None),
         }));
         let _ = publish.send(true);
@@ -357,6 +396,18 @@ impl McpRuntime {
         self.reconnect_pending.store(true, Ordering::Release);
     }
 
+    /// Invalidates resource catalogs and contents even when connections can be reused.
+    pub fn invalidate_resource_caches(&self) {
+        self.resource_cache_generation
+            .fetch_add(1, Ordering::AcqRel);
+    }
+
+    pub(crate) fn resource_cache_key(&self, server: &str) -> Option<McpResourceServerCacheKey> {
+        let generation = self.resource_cache_generation.load(Ordering::Acquire);
+        self.latest_connections()
+            .resource_cache_key(server, generation)
+    }
+
     /// Captures the latest published configuration and live client handles.
     pub async fn current_binding(&self) -> Option<Arc<McpBinding>> {
         self.current_binding_with_requirements(&[], &HashSet::new())
@@ -370,12 +421,13 @@ impl McpRuntime {
         required_servers: &[String],
         required_plugins: &HashSet<String>,
     ) -> Option<Arc<McpBinding>> {
-        Self::binding_from_published_runtime(
-            self.current.load_full(),
+        let current = self.current.load_full();
+        current.connections.record_startup_readiness(
+            "model_binding",
             required_servers,
             required_plugins,
-        )
-        .await
+        );
+        Self::binding_from_published_runtime(current, required_servers, required_plugins).await
     }
 
     async fn binding_from_published_runtime(
@@ -440,17 +492,18 @@ impl McpRuntime {
 
     /// Returns whether the published snapshot still belongs to the current credentials.
     pub fn current_auth_matches(&self, auth: Option<&AntexAuth>) -> bool {
+        self.current.load().auth_matches(auth)
+    }
+
+    pub(crate) fn auth_cache_key_for_server(
+        &self,
+        server: &str,
+    ) -> crate::McpResourceClientAuthKey {
         let current = self.current.load();
-        match (current.auth.as_ref(), auth) {
-            (Some(previous), Some(latest)) => {
-                previous == latest
-                    && previous.get_account_id() == latest.get_account_id()
-                    && previous.get_chatgpt_user_id() == latest.get_chatgpt_user_id()
-                    && previous.is_fedramp_account() == latest.is_fedramp_account()
-                    && current.auth_token == latest.get_token().ok()
-            }
-            (None, None) => true,
-            (Some(_), None) | (None, Some(_)) => false,
+        crate::McpResourceClientAuthKey {
+            generation: Arc::clone(&current.auth_generation),
+            server: server.to_string(),
+            available: current.connections.contains_server(server),
         }
     }
 
@@ -486,6 +539,16 @@ impl McpRuntime {
             .await;
     }
 
+    /// Prepares one advertised tool against this publication's current client and policy.
+    /// Its model-visible name stays fixed while execution metadata comes from the live catalog.
+    pub async fn prepare_call(&self, advertised_tool: &ToolInfo) -> Option<PreparedMcpCall> {
+        let current = self.current.load_full();
+        current
+            .connections
+            .prepare_call_for_tool(Arc::clone(current.config.as_ref()?), advertised_tool)
+            .await
+    }
+
     /// Captures the current runtime after its selected server has finished startup.
     pub async fn current_binding_for_call(&self, server: &str) -> Option<Arc<McpBinding>> {
         let current = self.current.load_full();
@@ -510,17 +573,19 @@ impl McpRuntime {
         self.current.load().ready_selected_capability_roots.clone()
     }
 
-    /// Whether this publication uses the currently ready environment handles.
+    /// Whether this publication uses the same selections and currently ready environment handles.
     pub fn current_environments_match(
         &self,
-        environments: &HashMap<String, Arc<Environment>>,
+        selections: &[TurnEnvironmentSelection],
+        ready_environments: &HashMap<String, Arc<Environment>>,
     ) -> bool {
         let current = self.current.load();
         current.config.is_some()
-            && current.selected_environments.len() == environments.len()
-            && environments.iter().all(|(id, environment)| {
+            && current.environment_selections.as_ref() == selections
+            && current.ready_environments.len() == ready_environments.len()
+            && ready_environments.iter().all(|(id, environment)| {
                 current
-                    .selected_environments
+                    .ready_environments
                     .get(id)
                     .is_some_and(|published| Arc::ptr_eq(published, environment))
             })
@@ -714,29 +779,59 @@ impl McpRuntime {
     }
 
     pub async fn shutdown(&self) {
+        self.elicitation_router.close().await;
         self.latest_connections().shutdown().await;
     }
 }
 
+/// Opaque sandbox state forwarded unchanged to `codex sandbox --sandbox-state-json`.
+/// Servers advertise `codex/sandbox-state-meta` to receive it on tool calls.
+///
+/// `codexExecutable` is the one field servers may interpret: invoke that absolute
+/// path with `sandbox --sandbox-state-json <the original JSON object> -- <command>`.
+/// Do not deserialize and reconstruct the opaque state in a consumer: doing so
+/// can discard future policy fields. The state describes the issuing call, so a
+/// long-lived subprocess must retain its launch state and must not be reused for
+/// a different policy without an explicit lifecycle decision.
+///
+/// MCP probes the host's existing re-exec binary once to verify this contract.
+/// Standalone binaries without the capability omit it; HTTP and remote-executor
+/// servers receive no host-local path even when the host has a full CLI.
+/// Older clients omit the field and older CLI consumers ignore it when decoding.
+/// Servers that require it must fail closed or require an explicit operator
+/// opt-out, never silently search PATH or execute an unsandboxed command.
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SandboxState {
+    /// Absolute path to a full Antex CLI on the MCP server's host, supporting
+    /// `sandbox --sandbox-state-json`. Consumers may read this field to launch
+    /// the CLI, but must forward the entire state unchanged.
+    ///
+    /// Absent for older clients, embeddings without a full CLI, and transports
+    /// or remote environments where a usable server-host executable is unknown.
+    /// Also omitted when the OS path cannot be represented as a JSON string.
+    /// Absence does not authorize an unsandboxed fallback or a PATH lookup.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_executable: Option<PathBuf>,
     pub permission_profile: PermissionProfile,
     #[serde(rename = "codexLinuxSandboxExe")]
     pub antex_linux_sandbox_exe: Option<PathBuf>,
     pub sandbox_cwd: PathUri,
     #[serde(default)]
     pub use_legacy_landlock: bool,
+    #[serde(default)]
+    pub use_mxc: bool,
 }
 
 /// Runtime context used when resolving per-server MCP environments.
 ///
 /// `McpConfig` describes what servers exist. This value carries the canonical
-/// environment registry plus the host-local cwd used by local MCP processes.
+/// environment registry, captured thread selections, and the host-local cwd used by MCP processes.
 #[derive(Clone)]
 pub struct McpRuntimeContext {
     environment_manager: Arc<EnvironmentManager>,
-    selected_environments: HashMap<String, Arc<Environment>>,
+    environment_selections: Arc<[TurnEnvironmentSelection]>,
+    ready_environments: HashMap<String, Arc<Environment>>,
     local_process_cwd: PathBuf,
     local_http_client: Arc<dyn HttpClient>,
 }
@@ -780,18 +875,21 @@ impl McpRuntimeContext {
         );
         Self {
             environment_manager,
-            selected_environments: HashMap::new(),
+            environment_selections: Arc::default(),
+            ready_environments: HashMap::new(),
             local_process_cwd,
             local_http_client,
         }
     }
 
-    /// Pins the concrete environment handles captured for this thread or model step.
+    /// Pins all captured selections and the concrete handles for environments already ready.
     pub fn with_selected_environments(
         mut self,
-        selected_environments: HashMap<String, Arc<Environment>>,
+        environment_selections: Arc<[TurnEnvironmentSelection]>,
+        ready_environments: HashMap<String, Arc<Environment>>,
     ) -> Self {
-        self.selected_environments = selected_environments;
+        self.environment_selections = environment_selections;
+        self.ready_environments = ready_environments;
         self
     }
 
@@ -812,7 +910,7 @@ impl McpRuntimeContext {
         // HTTP is the one current exception: it can use the ambient HTTP client
         // even when no local Environment is configured.
         if let Some(environment) = self
-            .selected_environments
+            .ready_environments
             .get(&config.environment_id)
             .cloned()
             .or_else(|| {
@@ -895,7 +993,9 @@ mod tests {
             environment_id: environment_id.to_string(),
             enabled: true,
             required: false,
+            startup_readiness: Default::default(),
             supports_parallel_tool_calls: false,
+            tool_input_schema_max_bytes: None,
             omit_tools_from: None,
             disabled_reason: None,
             startup_timeout_sec: None,
@@ -954,9 +1054,11 @@ mod tests {
             config: Some(Arc::new(config)),
             auth: None,
             auth_token: None,
+            auth_generation: Arc::new(()),
             plugins_available: false,
             ready_selected_capability_roots: Vec::new(),
-            selected_environments: HashMap::new(),
+            environment_selections: Arc::default(),
+            ready_environments: HashMap::new(),
             cached_binding: Mutex::new(None),
         });
         let before = McpRuntime::binding_from_published_runtime(
@@ -1026,9 +1128,11 @@ mod tests {
             ))),
             auth: None,
             auth_token: None,
+            auth_generation: Arc::new(()),
             plugins_available: false,
             ready_selected_capability_roots: Vec::new(),
-            selected_environments: HashMap::new(),
+            environment_selections: Arc::default(),
+            ready_environments: HashMap::new(),
             cached_binding: Mutex::new(None),
         });
         let first = McpRuntime::binding_from_published_runtime(
@@ -1084,10 +1188,12 @@ mod tests {
         )
         .expect("current directory should convert to a URI");
         let sandbox_state = SandboxState {
+            codex_executable: None,
             permission_profile: PermissionProfile::workspace_write(),
             antex_linux_sandbox_exe: None,
             sandbox_cwd,
             use_legacy_landlock: false,
+            use_mxc: false,
         };
 
         let serialized = serde_json::to_value(&sandbox_state).expect("serialize sandbox state");
@@ -1126,10 +1232,20 @@ mod tests {
         );
 
         let deserialized: SandboxState =
-            serde_json::from_value(serialized).expect("deserialize sandbox state");
+            serde_json::from_value(serialized.clone()).expect("deserialize legacy sandbox state");
+        assert_eq!(deserialized, sandbox_state);
+
+        let executable = std::env::current_exe().expect("absolute executable path");
+        let mut extended = serialized;
+        extended["codexExecutable"] = serde_json::json!(executable);
+        extended["futureField"] = serde_json::json!({"preservedByOpaqueConsumers": true});
+        let deserialized: SandboxState = serde_json::from_value(extended).expect("extended state");
         assert_eq!(
-            deserialized.permission_profile,
-            sandbox_state.permission_profile
+            deserialized,
+            SandboxState {
+                codex_executable: Some(executable),
+                ..sandbox_state
+            }
         );
     }
 

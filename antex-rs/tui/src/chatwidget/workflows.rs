@@ -204,7 +204,7 @@ impl ChatWidget {
                 tx.send(AppEvent::WorkflowFieldAnswered(answer));
             }),
         );
-        self.bottom_pane.show_view(Box::new(view));
+        self.bottom_pane.show_text_prompt(view);
     }
 
     pub(crate) fn handle_workflow_update(&mut self, update: &WorkflowUpdate) {

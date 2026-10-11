@@ -18,7 +18,7 @@ use antex_exec_server::EnvironmentReadyInfo;
 use antex_exec_server::ExecParams;
 use antex_exec_server::ExecResponse;
 use antex_exec_server::ExecServerError;
-use antex_exec_server::ExecServerRuntimePaths;
+use antex_exec_server::ExecServerRuntimeOptions;
 use antex_exec_server::FsReadFileParams;
 use antex_exec_server::NoiseChannelPublicKey;
 use antex_exec_server::NoiseRendezvousConnectBundle;
@@ -162,7 +162,7 @@ async fn failed_noise_environment_recovers_and_reconnects_after_ready_report() -
         .await;
 
     let (antex_exe, antex_linux_sandbox_exe) = common::current_test_binary_helper_paths()?;
-    let runtime_paths = ExecServerRuntimePaths::new(antex_exe, antex_linux_sandbox_exe)?;
+    let runtime_paths = ExecServerRuntimeOptions::new(antex_exe, antex_linux_sandbox_exe)?;
     let http_client_factory = HttpClientFactory::new(OutboundProxyPolicy::RespectSystemProxy);
     let config = RemoteEnvironmentConfig::new(
         registry.uri(),
@@ -361,7 +361,7 @@ async fn next_connection_state(
 async fn remote_environment_routes_encrypted_exec_server_rpc() -> Result<()> {
     let relay = RelayTest::new().await?;
     let (antex_exe, antex_linux_sandbox_exe) = common::current_test_binary_helper_paths()?;
-    let runtime_paths = ExecServerRuntimePaths::new(antex_exe, antex_linux_sandbox_exe)?;
+    let runtime_paths = ExecServerRuntimeOptions::new(antex_exe, antex_linux_sandbox_exe)?;
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
     let remote_environment = AbortOnDropHandle::new(tokio::spawn(
         antex_exec_server::run_remote_environment_until_shutdown(

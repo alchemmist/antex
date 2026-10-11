@@ -10,6 +10,7 @@ use super::OauthLoginFlow;
 use crate::McpOAuthClientRegistration;
 use crate::StreamableHttpRedirectMode;
 use crate::save_oauth_tokens;
+use antex_config::McpServerOAuthConfig;
 use antex_config::types::AuthKeyringBackendKind;
 use antex_config::types::OAuthCredentialsStoreMode;
 use antex_exec_server::HttpClient;
@@ -35,7 +36,7 @@ pub async fn perform_oauth_login_with_callback_input<F>(
     http_headers: Option<HashMap<String, String>>,
     env_http_headers: Option<HashMap<String, String>>,
     scopes: &[String],
-    oauth_client_id: Option<&str>,
+    oauth_config: Option<&McpServerOAuthConfig>,
     client_registration: McpOAuthClientRegistration,
     oauth_resource: Option<&str>,
     callback_port: Option<u16>,
@@ -59,7 +60,7 @@ where
             redirect_mode: StreamableHttpRedirectMode::Legacy,
         },
         scopes,
-        oauth_client_id,
+        oauth_config,
         OAuthLoginPurpose::Mcp,
         client_registration,
         oauth_resource,

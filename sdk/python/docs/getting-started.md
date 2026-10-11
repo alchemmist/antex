@@ -164,8 +164,24 @@ uv sync --group dev
 source .venv/bin/activate
 ```
 
+The source-tree `antex-cli-bin` dependency is a package template without native
+binaries. For the mock app-server integration tests, point `ANTEX_EXEC_PATH` at
+an Antex CLI built from this checkout. From the repository root:
+
+```bash
+ANTEX_EXEC_PATH="$(pwd)/antex-rs/target/debug/antex" \
+  uv run --frozen --project sdk/python --group test pytest sdk/python/tests
+```
+
+Use the actual build output path if a different target directory or profile is
+configured. The test harness also discovers `antex-rs/target/debug/antex`
+automatically. `ANTEX_EXEC_PATH` is a test-harness override; applications should
+pass `AntexConfig(antex_bin="/absolute/path/to/antex")` instead. Installing the
+external `openai-codex-cli-bin` package does not stage the Antex runtime or supply
+the current checkout's protocol features.
+
 ## Next Stops
 
-- [API reference](https://github.com/openai/codex/blob/main/sdk/python/docs/api-reference.md)
-- [FAQ](https://github.com/openai/codex/blob/main/sdk/python/docs/faq.md)
-- [Runnable examples](https://github.com/openai/codex/blob/main/sdk/python/examples/README.md)
+- [API reference](https://github.com/alchemmist/antex/blob/main/sdk/python/docs/api-reference.md)
+- [FAQ](https://github.com/alchemmist/antex/blob/main/sdk/python/docs/faq.md)
+- [Runnable examples](https://github.com/alchemmist/antex/blob/main/sdk/python/examples/README.md)

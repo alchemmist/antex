@@ -27,8 +27,10 @@ antex-model-provider = { workspace = true }
 antex-otel = { workspace = true }
 antex-protocol = { workspace = true }
 antex-rmcp-client = { workspace = true }
+antex-utils-absolute-path = { workspace = true }
 antex-utils-path-uri = { workspace = true }
 antex-utils-plugins = { workspace = true }
+antex-utils-process = { workspace = true }
 futures = { workspace = true }
 lru = { workspace = true }
 regex-lite = { workspace = true }
@@ -46,6 +48,7 @@ url = { workspace = true }
 assert_matches = { workspace = true }
 antex-exec-server-test-support = { workspace = true }
 antex-plugin = { workspace = true }
+antex-utils-cargo-bin = { workspace = true }
 insta = { workspace = true }
 pretty_assertions = { workspace = true }
 rmcp = { workspace = true, default-features = false, features = ["base64", "macros", "schemars", "server"] }

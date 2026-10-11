@@ -5,14 +5,13 @@ expression: "states.join(\"\\n\\n\")"
 ---
 connecting:
  voice ◌ connecting                                                 /voice stop
-   mic ▁▁▁▁▁▁  antex ▁▁▁▁▁▁
 
  ┃ Ask Antex to do anything
 
   status line stays visible
 
 listening:
- voice ● listening                                  ctrl+x mute     /voice stop
+ voice ● listening                                      f9 mute     /voice stop
    mic ▁▁▁▁▁▁  antex ▁▁▁▁▁▁
 
  ┃ Ask Antex to do anything
@@ -20,7 +19,7 @@ listening:
   status line stays visible
 
 speaking:
- voice ● speaking                                   ctrl+x mute     /voice stop
+ voice ● speaking                                       f9 mute     /voice stop
    mic ▁▁▇▇▇▇  antex ▁▁████
 
  ┃ Ask Antex to do anything
@@ -28,7 +27,7 @@ speaking:
   status line stays visible
 
 muted:
- voice ◌ muted                                      ctrl+x unmute   /voice stop
+ voice ◌ muted                                          f9 unmute   /voice stop
    mic ▁▁▁▁▁▁  antex ▁▁▇▇▇▇
 
  ┃ Ask Antex to do anything
@@ -36,7 +35,7 @@ muted:
   status line stays visible
 
 transcript:
- voice ● speaking                                   ctrl+x mute     /voice stop
+ voice ● speaking                                       f9 mute     /voice stop
    mic ▁▁▄▄▄▄  antex ▁▁▄▄▄▄
 
  ┃ Ask Antex to do anything
@@ -44,7 +43,7 @@ transcript:
   status line stays visible
 
 interrupted:
- voice ● heard                                      ctrl+x mute     /voice stop
+ voice ● heard                                          f9 mute     /voice stop
    mic ▁▁▄▄▄▄  antex ▁▁▄▄▄▄
 
  ┃ Ask Antex to do anything

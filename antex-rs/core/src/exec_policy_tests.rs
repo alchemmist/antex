@@ -1460,6 +1460,22 @@ async fn mixed_rule_and_sandbox_prompt_prioritizes_rule_for_rejection_decision()
     ));
 }
 
+#[test]
+fn force_push_detection_uses_executor_command_syntax() {
+    for command in [
+        vec_str(&["git", "push", "--force-with-lease", "origin", "topic"]),
+        vec_str(&["/usr/bin/git", "push", "+HEAD:topic"]),
+        vec_str(&["C:\\Program Files\\Git\\cmd\\git.exe", "push", "-f"]),
+        vec_str(&["pwsh", "-Command", "git push --force origin topic"]),
+        vec_str(&["bash", "-lc", "git status && git push -f origin topic"]),
+    ] {
+        assert!(command_contains_force_push(&command), "{command:?}");
+    }
+    assert!(!command_contains_force_push(&vec_str(&[
+        "git", "push", "origin", "topic"
+    ])));
+}
+
 #[tokio::test]
 async fn force_push_requires_confirmation_when_approvals_are_disabled() {
     for command in [

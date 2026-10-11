@@ -22,6 +22,7 @@ use antex_protocol::protocol::TurnStartedEvent;
 use antex_rollout::RolloutItem;
 use antex_rollout::RolloutLine;
 use chrono::DateTime;
+use std::borrow::Cow;
 use std::collections::HashSet;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
@@ -278,10 +279,7 @@ impl LegacyRolloutCanonicalizer {
                     }
                 } else {
                     let item = RolloutItem::EventMsg(event);
-                    if antex_rollout::is_persisted_rollout_item(&item, ThreadHistoryMode::Paginated)
-                    {
-                        self.write_item(writer, &timestamp, item).await?;
-                    }
+                    self.write_item(writer, &timestamp, item).await?;
                 }
             }
             item @ RolloutItem::InterAgentCommunication(_) => {
@@ -347,6 +345,7 @@ impl LegacyRolloutCanonicalizer {
             writer,
             timestamp,
             RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_attribution: None,
                 turn_id,
                 root_turn_id: None,
                 trace_id: None,
@@ -376,6 +375,7 @@ impl LegacyRolloutCanonicalizer {
             writer,
             timestamp,
             RolloutItem::EventMsg(EventMsg::TurnComplete(TurnCompleteEvent {
+                root_turn_id: None,
                 turn_id,
                 last_agent_message: None,
                 error: None,
@@ -466,6 +466,12 @@ impl LegacyRolloutCanonicalizer {
         timestamp: &str,
         item: RolloutItem,
     ) -> ThreadStoreResult<()> {
+        let item = match antex_rollout::persisted_rollout_item(&item, ThreadHistoryMode::Paginated)
+        {
+            Some(Cow::Borrowed(_)) => item,
+            Some(Cow::Owned(item)) => item,
+            None => return Ok(()),
+        };
         let mut bytes = serde_json::to_vec(&RolloutLine {
             timestamp: timestamp.to_string(),
             ordinal: Some(self.next_ordinal),

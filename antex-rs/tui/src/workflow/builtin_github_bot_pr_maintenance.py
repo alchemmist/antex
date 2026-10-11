@@ -501,7 +501,8 @@ def run(ctx):
             raise RuntimeError("saved report repository is missing from the inventory")
         ctx.progress(f"Retrying saved failures: {result['repository']}")
         if any("number" not in entry for entry in result["failed"]) and not any(
-            result.get(category) for category in ("merged", "fixed", "skipped", "needs_user")
+            result.get(category)
+            for category in ("merged", "fixed", "skipped", "needs_user")
         ):
             try:
                 reply = ctx.agent(
@@ -514,7 +515,9 @@ def run(ctx):
                     else "inherit",
                 )
                 if not agent_succeeded(reply):
-                    raise RuntimeError(reply.get("error") or "repository recovery failed")
+                    raise RuntimeError(
+                        reply.get("error") or "repository recovery failed"
+                    )
                 results[index] = parse_repository_report(
                     ctx, reply.get("message", ""), repository, model
                 )

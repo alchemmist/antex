@@ -37,6 +37,7 @@ antex-utils-home-dir = { workspace = true }
 
 [dev-dependencies]
 anyhow = { workspace = true }
+antex-utils-cargo-bin = { workspace = true }
 pretty_assertions = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt", "time"] }

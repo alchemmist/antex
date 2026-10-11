@@ -1,0 +1,28 @@
+---
+source: tui/src/chatwidget/rendering_tests.rs
+assertion_line: 437
+expression: "crate::chatwidget::tests::normalize_snapshot_paths(frames)"
+---
+default:
+ ▀▄       ▄▀
+  ▄▀█████▀▄    ╭─ Local loading header ─────╮
+▄█▀▀█████▀▀█▄  │  loading                   │
+▀▀▄▄▀▀▀▀▀▄▄▀▀  │  /tmp/project              │
+  ██  ▄  ██    ╰────────────────────────────╯
+   ▀▀▀ ▀▀▀
+---
+ultrafast:
+ ▀▄       ▄▀
+  ▄▀█████▀▄    ╭─ Local loading header ─────╮
+▄█▀▀█████▀▀█▄  │  loading · ultra fast      │
+▀▀▄▄▀▀▀▀▀▄▄▀▀  │  /tmp/project              │
+  ██  ▄  ██    ╰────────────────────────────╯
+   ▀▀▀ ▀▀▀
+---
+flex:
+ ▀▄       ▄▀
+  ▄▀█████▀▄    ╭─ Local loading header ─────╮
+▄█▀▀█████▀▀█▄  │  loading · flex            │
+▀▀▄▄▀▀▀▀▀▄▄▀▀  │  /tmp/project              │
+  ██  ▄  ██    ╰────────────────────────────╯
+   ▀▀▀ ▀▀▀

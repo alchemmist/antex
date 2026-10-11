@@ -79,7 +79,7 @@ impl ChatWidget {
         };
         let short_id = thread_id.to_string().chars().take(8).collect::<String>();
         let path = self
-            .config
+            .local_settings
             .codex_home
             .join("system-prompts")
             .join(format!("system-prompt-{short_id}.md"));
@@ -221,7 +221,9 @@ fn summarize_items(items: &[ResponseItem]) -> ContextCounts {
 
 fn message_label(content: &[ContentItem]) -> Option<String> {
     let text = content.iter().find_map(|item| match item {
-        ContentItem::InputText { text } | ContentItem::OutputText { text } => Some(text.as_str()),
+        ContentItem::InputText { text } | ContentItem::OutputText { text, .. } => {
+            Some(text.as_str())
+        }
         _ => None,
     })?;
     let line = text.lines().find(|line| !line.trim().is_empty())?.trim();

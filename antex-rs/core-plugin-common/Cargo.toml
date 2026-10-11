@@ -1,0 +1,20 @@
+[package]
+name = "antex-core-plugin-common"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "antex_core_plugin_common"
+path = "src/lib.rs"
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+antex-utils-absolute-path = { workspace = true }
+semver = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+thiserror = { workspace = true }

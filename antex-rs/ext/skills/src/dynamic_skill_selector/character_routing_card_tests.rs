@@ -5,6 +5,7 @@ use antex_skills::SkillInterface;
 use antex_skills::SkillMetadata;
 use antex_skills::SkillToolDependency;
 use antex_utils_absolute_path::AbsolutePathBuf;
+use antex_utils_path_uri::PathUri;
 use pretty_assertions::assert_eq;
 
 use crate::catalog::SkillAuthority;
@@ -34,7 +35,7 @@ fn host_interface_metadata_makes_unlisted_workflow_discoverable() {
         }),
         dependencies: None,
         policy: None,
-        path_to_skills_md: path,
+        path_to_skills_md: PathUri::from_abs_path(&path),
         scope: SkillScope::User,
         plugin_id: None,
         remote_plugin_id: None,

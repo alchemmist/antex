@@ -1,12 +1,9 @@
 ---
 source: tui/src/history_cell/tests.rs
-assertion_line: 1905
+assertion_line: 1981
 expression: rendered
 ---
-╭───────────────────────────────────────╮
-│ >_ Antex (vtest)                      │
-│                                       │
-│ model:       gpt-5   /model to change │
-│ directory:   /tmp/project             │
-│ permissions: YOLO mode                │
-╰───────────────────────────────────────╯
+
+  >_ Antex (vtest)
+     /tmp/project
+  permissions: YOLO mode

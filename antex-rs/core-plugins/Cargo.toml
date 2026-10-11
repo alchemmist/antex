@@ -13,11 +13,13 @@ path = "src/lib.rs"
 workspace = true
 
 [dependencies]
+antex-utils-process = { workspace = true }
 anyhow = { workspace = true }
 antex-analytics = { workspace = true }
 antex-app-server-protocol = { workspace = true }
 antex-config = { workspace = true }
 antex-connectors = { workspace = true }
+antex-core-plugin-common = { workspace = true }
 antex-exec-server = { workspace = true }
 antex-git-utils = { workspace = true }
 antex-hooks = { workspace = true }
@@ -41,7 +43,6 @@ flate2 = { workspace = true }
 futures = { workspace = true }
 http = { workspace = true }
 regex = { workspace = true }
-semver = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 serde_with = { workspace = true }
@@ -59,6 +60,7 @@ zip = { workspace = true }
 
 [dev-dependencies]
 antex-exec-server-test-support = { workspace = true }
+antex-utils-cargo-bin = { workspace = true }
 libc = { workspace = true }
 pretty_assertions = { workspace = true }
 tempfile = { workspace = true }

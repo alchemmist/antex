@@ -4,8 +4,8 @@ use std::time::Duration;
 use std::time::Instant;
 use std::time::SystemTime;
 
+use antex_http_client::RequestBuilder;
 use antex_http_client::RouteAwareClientPool;
-use antex_http_client::RouteAwareRequestBuilder;
 use anyhow::Context;
 use anyhow::Result;
 use bytes::Bytes;
@@ -34,7 +34,7 @@ pub(super) fn envelope_request(
     dsn: &Dsn,
     body: Bytes,
     timeout: Duration,
-) -> RouteAwareRequestBuilder {
+) -> RequestBuilder {
     let sentry_options = ClientOptions::default();
     let sentry_auth = dsn.to_auth(Some(sentry_options.user_agent.as_ref()));
     let request = client_pool

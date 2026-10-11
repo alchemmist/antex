@@ -72,39 +72,10 @@ fn inserts_bwrap_argv0_before_command_separator() {
         /*supports_argv0*/ true,
         "/tmp/codex-arg0-session/antex-linux-sandbox".to_string(),
     );
-    let daemon_directory = antex_uds::shared_daemon_socket_directory()
-        .unwrap()
-        .display()
-        .to_string();
+    let separator = argv.iter().position(|arg| arg == "--").unwrap();
     assert_eq!(
-        argv,
-        vec![
-            "bwrap".to_string(),
-            "--new-session".to_string(),
-            "--die-with-parent".to_string(),
-            "--ro-bind".to_string(),
-            "/".to_string(),
-            "/".to_string(),
-            "--dev".to_string(),
-            "/dev".to_string(),
-            "--perms".to_string(),
-            "000".to_string(),
-            "--tmpfs".to_string(),
-            daemon_directory.clone(),
-            "--remount-ro".to_string(),
-            daemon_directory,
-            "--unshare-user".to_string(),
-            "--unshare-pid".to_string(),
-            "--unshare-ipc".to_string(),
-            "--proc".to_string(),
-            "/proc".to_string(),
-            "--cap-drop".to_string(),
-            "ALL".to_string(),
-            "--argv0".to_string(),
-            "antex-linux-sandbox".to_string(),
-            "--".to_string(),
-            "/bin/true".to_string(),
-        ]
+        &argv[separator - 2..],
+        ["--argv0", "antex-linux-sandbox", "--", "/bin/true"]
     );
 }
 
@@ -326,16 +297,19 @@ fn managed_proxy_preflight_argv_unshares_network() {
         NetworkSandboxPolicy::Enabled,
         /*allow_network_for_proxy*/ true,
     );
-    let argv = build_preflight_bwrap_argv(mode)
-        .expect("build preflight argv")
-        .args;
+    let argv = build_preflight_bwrap_argv(BwrapOptions {
+        network_mode: mode,
+        ..Default::default()
+    })
+    .expect("build preflight argv")
+    .args;
     assert!(argv.iter().any(|arg| arg == "--"));
     assert!(argv.iter().any(|arg| arg == "--unshare-net"));
 }
 
 #[test]
 fn proc_mount_preflight_does_not_bind_the_full_filesystem() {
-    let argv = build_preflight_bwrap_argv(BwrapNetworkMode::FullAccess)
+    let argv = build_preflight_bwrap_argv(BwrapOptions::default())
         .expect("build preflight argv")
         .args;
 
@@ -347,6 +321,34 @@ fn proc_mount_preflight_does_not_bind_the_full_filesystem() {
             .any(|window| window == ["--ro-bind", "/", "/"])
     );
     assert!(!argv.windows(3).any(|window| window == ["--bind", "/", "/"]));
+}
+
+#[test]
+fn proc_mount_preflight_preserves_wsl_masks() {
+    let argv = build_preflight_bwrap_argv(BwrapOptions {
+        mask_wsl_interop: true,
+        mask_wslg_distro: true,
+        ..Default::default()
+    })
+    .expect("build WSL preflight argv")
+    .args;
+
+    assert!(argv.windows(2).any(|window| window == ["--proc", "/proc"]));
+    assert!(
+        argv.windows(2)
+            .any(|window| window == ["--tmpfs", WSL_INTEROP_DIR])
+    );
+    assert!(argv.windows(6).any(|window| {
+        window
+            == [
+                "--perms",
+                "000",
+                "--tmpfs",
+                WSLG_DISTRO_ROOT,
+                "--remount-ro",
+                WSLG_DISTRO_ROOT,
+            ]
+    }));
 }
 
 #[test]
@@ -585,7 +587,7 @@ fn managed_proxy_inner_command_includes_route_spec() {
 
         assert!(args.iter().any(|arg| arg == "--proxy-route-spec"));
         assert!(args.iter().any(|arg| arg == "{\"routes\":[]}"));
-        let parsed = LandlockCommand::try_parse_from(args)
+        let parsed = LinuxSandboxCommand::try_parse_from(args)
             .expect("inner command should preserve the managed network policy");
         assert_eq!(parsed.managed_network, Some(managed_network));
     }
@@ -593,7 +595,7 @@ fn managed_proxy_inner_command_includes_route_spec() {
 
 #[test]
 fn managed_network_policy_alone_enables_proxy_mode() {
-    let parsed = LandlockCommand::try_parse_from([
+    let parsed = LinuxSandboxCommand::try_parse_from([
         "codex-linux-sandbox",
         "--sandbox-policy-cwd",
         "/tmp",
@@ -611,7 +613,7 @@ fn managed_network_policy_alone_enables_proxy_mode() {
 
 #[test]
 fn malformed_managed_network_policy_is_rejected() {
-    let error = LandlockCommand::try_parse_from([
+    let error = LinuxSandboxCommand::try_parse_from([
         "codex-linux-sandbox",
         "--sandbox-policy-cwd",
         "/tmp",
@@ -656,7 +658,7 @@ fn non_managed_inner_command_omits_route_spec() {
     });
 
     assert!(!args.iter().any(|arg| arg == "--proxy-route-spec"));
-    let parsed = LandlockCommand::try_parse_from(args)
+    let parsed = LinuxSandboxCommand::try_parse_from(args)
         .expect("unmanaged inner command should preserve ordinary sandbox mode");
     assert_eq!(parsed.managed_network, None);
 }

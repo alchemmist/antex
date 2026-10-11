@@ -3,7 +3,6 @@
 use antex_app_server::AppServerCodeModeHostArgs;
 use antex_app_server::AppServerRuntimeOptions;
 use antex_app_server::AppServerTransport;
-use antex_app_server::AppServerWebsocketAuthArgs;
 #[cfg(debug_assertions)]
 use antex_app_server::PluginStartupTasks;
 use antex_app_server::run_main_with_transport_options;
@@ -12,6 +11,7 @@ use antex_arg0::arg0_dispatch_or_else;
 use antex_config::LoaderOverrides;
 use antex_protocol::protocol::SessionSource;
 use antex_utils_cli::CliConfigOverrides;
+use antex_websocket_auth::WebsocketAuthArgs;
 use clap::Parser;
 use std::path::PathBuf;
 
@@ -58,7 +58,7 @@ struct AppServerArgs {
     session_source: SessionSource,
 
     #[command(flatten)]
-    auth: AppServerWebsocketAuthArgs,
+    auth: WebsocketAuthArgs,
 
     /// Fail if config.toml contains unknown configuration fields.
     #[arg(long = "strict-config", default_value_t = false)]

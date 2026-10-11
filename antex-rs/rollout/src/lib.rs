@@ -27,6 +27,7 @@ pub mod state_db;
 mod writer_lock;
 
 pub use antex_history::CompactedItem;
+pub use antex_history::CompactionResumeMetadata;
 pub use antex_history::InitialHistory;
 pub use antex_history::ResponseItemEnvelope;
 pub use antex_history::ResumedHistory;
@@ -35,6 +36,7 @@ pub use antex_history::RetainedContextEvent;
 pub use antex_history::RetainedInputSource;
 pub use antex_history::RolloutItem;
 pub use antex_history::RolloutLine;
+pub use antex_history::resume_multi_agent_version;
 pub(crate) use antex_protocol::protocol;
 
 /// Decodes a persisted rollout record without Serde's flattened-envelope buffering.
@@ -93,6 +95,7 @@ pub static INTERACTIVE_SESSION_SOURCES: LazyLock<Vec<SessionSource>> = LazyLock:
 });
 
 pub use antex_protocol::protocol::SessionMeta;
+pub use compression::RolloutCompressionTrigger;
 pub use compression::RolloutLineReader;
 pub use compression::existing_rollout_path;
 pub use compression::open_rollout_line_reader;
@@ -140,8 +143,10 @@ pub use model_context::ModelContextScanProgress;
 pub use persistence_metrics::RolloutPersistenceBatchMeasurement;
 pub use persistence_metrics::RolloutPersistenceTelemetry;
 pub use persistence_metrics::measure_and_filter_rollout_items;
-pub use policy::is_persisted_rollout_item;
+pub use policy::into_persisted_rollout_items;
+pub use policy::persisted_rollout_item;
 pub use policy::persisted_rollout_items;
+pub use policy::should_persist_response_item;
 pub use policy::should_persist_response_item_for_memories;
 pub use recorder::RolloutRecorder;
 pub use recorder::RolloutRecorderParams;

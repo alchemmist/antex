@@ -20,6 +20,8 @@ antex_rust_crate(
     ],
     extra_binaries = [
         "//antex-rs/bwrap:bwrap",
+        "//antex-rs/windows-sandbox-rs:codex-command-runner",
+        "//antex-rs/windows-sandbox-rs:antex-windows-sandbox-setup",
     ],
     integration_compile_data_extra = [
         "src/proto/codex.exec_server.relay.v1.rs",
@@ -40,7 +42,7 @@ exec_server_compat_test(
 
 exec_server_compat_test(
     name = "exec-server-stable-release-test",
-    release = "@codex_release_0.153.1_linux_x86_64",
+    release = "@codex_release_0.162.1_linux_x86_64",
 )
 
 exec_server_compat_test(

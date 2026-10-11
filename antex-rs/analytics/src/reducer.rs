@@ -157,7 +157,7 @@ use antex_app_server_protocol::TurnSteerResponse;
 use antex_app_server_protocol::UserInput;
 use antex_app_server_protocol::WebSearchAction;
 use antex_git_utils::SanitizedGitUrl;
-use antex_git_utils::collect_git_info;
+use antex_git_utils::get_git_origin_url;
 use antex_git_utils::get_git_repo_root;
 use antex_login::default_client::originator;
 use antex_protocol::config_types::ModeKind;
@@ -172,6 +172,7 @@ use antex_protocol::protocol::ThreadSource;
 use antex_protocol::protocol::TokenUsage;
 use antex_protocol::request_permissions::PermissionGrantScope as CorePermissionGrantScope;
 use antex_protocol::request_permissions::RequestPermissionsResponse as CoreRequestPermissionsResponse;
+use antex_utils_path_uri::PathUri;
 use sha1::Digest;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -179,6 +180,7 @@ use std::collections::VecDeque;
 use std::path::Path;
 use std::path::PathBuf;
 const MAX_TOOL_RESPONSE_ENTRIES: usize = 256;
+const MAX_RECENT_VOICE_SESSION_WINDOWS: usize = 16;
 
 pub(crate) const MAX_PLUGIN_MEASUREMENTS_PER_BATCH: usize = 100;
 const MAX_PLUGIN_MEASUREMENT_DIMENSIONS: usize = 8;
@@ -227,6 +229,17 @@ struct ThreadAnalyticsState {
     connection_id: Option<u64>,
     metadata: Option<ThreadMetadataState>,
     originator: Option<String>,
+    active_voice_session: Option<VoiceSessionWindow>,
+    recent_voice_sessions: VecDeque<VoiceSessionWindow>,
+    active_turn_id: Option<String>,
+    pending_voice_handoffs: VecDeque<Option<String>>,
+}
+
+#[derive(Clone)]
+struct VoiceSessionWindow {
+    session_id: Option<String>,
+    started_at: u64,
+    closed_at: Option<u64>,
 }
 
 impl ThreadAnalyticsState {
@@ -239,6 +252,25 @@ impl ThreadAnalyticsState {
             app_server_client.product_client_id.clone_from(originator);
         }
         app_server_client
+    }
+
+    fn active_voice_session_id(&self) -> Option<String> {
+        self.active_voice_session
+            .as_ref()
+            .and_then(|session| session.session_id.clone())
+    }
+
+    fn voice_session_id_at(&self, timestamp: u64) -> Option<String> {
+        self.active_voice_session
+            .iter()
+            .chain(self.recent_voice_sessions.iter().rev())
+            .find(|session| {
+                session.started_at <= timestamp
+                    && session
+                        .closed_at
+                        .is_none_or(|closed_at| timestamp <= closed_at)
+            })
+            .and_then(|session| session.session_id.clone())
     }
 }
 
@@ -428,6 +460,7 @@ struct CompletedTurnState {
 struct TurnState {
     connection_id: Option<u64>,
     thread_id: Option<String>,
+    voice_session_id: Option<String>,
     num_input_images: Option<usize>,
     image_preparations: Vec<ImagePreparationMetadata>,
     resolved_config: Option<TurnResolvedConfigFact>,
@@ -608,6 +641,35 @@ impl AnalyticsReducer {
                 request_id,
             } => {
                 self.ingest_server_request_aborted(completed_at_ms, request_id, out);
+            }
+            AnalyticsFact::RealtimeHandoffRequested { thread_id } => {
+                let thread = self.threads.entry(thread_id).or_default();
+                // ThreadRealtimeStarted already attributes an active turn; only a new turn
+                // needs the handoff queued after the realtime session closes.
+                if thread.active_turn_id.is_none() {
+                    thread
+                        .pending_voice_handoffs
+                        .push_back(thread.active_voice_session_id());
+                }
+            }
+            AnalyticsFact::RealtimeSessionStarted {
+                thread_id,
+                realtime_session_id,
+                started_at,
+            } => {
+                self.start_voice_session(thread_id, realtime_session_id, started_at);
+            }
+            AnalyticsFact::RealtimeSessionUpdated {
+                thread_id,
+                realtime_session_id,
+            } => {
+                self.set_active_voice_session_id(thread_id, Some(realtime_session_id));
+            }
+            AnalyticsFact::RealtimeSessionClosed {
+                thread_id,
+                closed_at,
+            } => {
+                self.close_voice_session(&thread_id, closed_at);
             }
             AnalyticsFact::Custom(input) => match input {
                 CustomAnalyticsFact::ArtifactOperation(input) => {
@@ -1141,6 +1203,14 @@ impl AnalyticsReducer {
         }
     }
 
+    pub(crate) fn flush_thread(&mut self, thread_id: &str, out: &mut Vec<TrackEventRequest>) {
+        for ((pending_thread_id, _), state) in &mut self.tool_response_states {
+            if pending_thread_id == thread_id {
+                out.extend(state.pending_tool_events.drain(..));
+            }
+        }
+    }
+
     fn ingest_initialize(
         &mut self,
         connection_id: u64,
@@ -1179,15 +1249,17 @@ impl AnalyticsReducer {
         thread_state
             .originator
             .get_or_insert_with(|| input.product_client_id.clone());
-        thread_state
-            .metadata
-            .get_or_insert_with(|| ThreadMetadataState {
+        if thread_state.metadata.is_none()
+            || matches!(input.initialization_mode, ThreadInitializationMode::Resumed)
+        {
+            thread_state.metadata = Some(ThreadMetadataState {
                 session_id: input.session_id.clone(),
                 thread_source: input.thread_source.clone(),
-                initialization_mode: ThreadInitializationMode::New,
+                initialization_mode: input.initialization_mode,
                 subagent_source: Some(subagent_source_name(&input.subagent_source)),
                 parent_thread_id,
             });
+        }
         if thread_state.connection_id.is_none() {
             thread_state.connection_id = parent_connection_id;
         }
@@ -1256,7 +1328,7 @@ impl AnalyticsReducer {
 
     async fn ingest_turn_resolved_config(
         &mut self,
-        input: TurnResolvedConfigFact,
+        mut input: TurnResolvedConfigFact,
         out: &mut Vec<TrackEventRequest>,
     ) {
         let turn_id = input.turn_id.clone();
@@ -1265,6 +1337,12 @@ impl AnalyticsReducer {
         let turn_state = self.turns.entry(turn_id.clone()).or_default();
         turn_state.thread_id = Some(thread_id);
         turn_state.num_input_images = Some(num_input_images);
+        // Keep the first received plugin inventory, including unknown or empty,
+        // while the remaining resolved config continues updating.
+        if let Some(initial_config) = &turn_state.resolved_config {
+            input.active_plugin_ids_at_turn_start =
+                initial_config.active_plugin_ids_at_turn_start.clone();
+        }
         turn_state.resolved_config = Some(input);
         self.maybe_emit_turn_event(&turn_id, out).await;
     }
@@ -1326,18 +1404,19 @@ impl AnalyticsReducer {
                         SkillScope::System => "system",
                         SkillScope::Admin => "admin",
                     };
-                    let repo_root = get_git_repo_root(path.as_path());
+                    let repo_root = path
+                        .to_abs_path()
+                        .ok()
+                        .and_then(|path| get_git_repo_root(path.as_path()));
                     let repo_url = if let Some(root) = repo_root.as_ref() {
-                        collect_git_info(root)
-                            .await
-                            .and_then(|info| info.repository_url)
+                        get_git_origin_url(root).await
                     } else {
                         None
                     };
                     let skill_id = skill_id_for_local_skill(
                         repo_url.as_ref().map(SanitizedGitUrl::as_str),
                         repo_root.as_deref(),
-                        path.as_path(),
+                        &path,
                         invocation.skill_name.as_str(),
                     );
                     (skill_id, Some(skill_scope.to_string()))
@@ -1374,6 +1453,10 @@ impl AnalyticsReducer {
                     event_params: SkillInvocationEventParams {
                         thread_id: Some(tracking.thread_id.clone()),
                         turn_id: Some(tracking.turn_id.clone()),
+                        voice_session_id: self
+                            .turns
+                            .get(&tracking.turn_id)
+                            .and_then(|turn| turn.voice_session_id.clone()),
                         invoke_type: Some(invocation.invocation_type),
                         model_slug: Some(tracking.model_slug.clone()),
                         product_client_id: Some(tracking.product_client_id.clone()),
@@ -1405,6 +1488,10 @@ impl AnalyticsReducer {
         } = input;
         let event_params = CodexAppUsedMetadata {
             app: antex_app_metadata(&tracking, app),
+            voice_session_id: self
+                .turns
+                .get(&tracking.turn_id)
+                .and_then(|turn| turn.voice_session_id.clone()),
             elicitation_type,
         };
         out.push(TrackEventRequest::AppUsed(AntexAppUsedEventRequest {
@@ -2009,7 +2096,7 @@ impl AnalyticsReducer {
                 else {
                     return;
                 };
-                if let Some(event) = tool_item_event(ToolItemEventInput {
+                if let Some(mut event) = tool_item_event(ToolItemEventInput {
                     thread_id: &notification.thread_id,
                     turn_id: &notification.turn_id,
                     item: &notification.item,
@@ -2022,6 +2109,12 @@ impl AnalyticsReducer {
                     review_summary: self.item_review_summaries.get(&key),
                     elicitation_type,
                 }) {
+                    if let TrackEventRequest::McpToolCall(mcp) = &mut event {
+                        mcp.event_params.voice_session_id = self
+                            .turns
+                            .get(&notification.turn_id)
+                            .and_then(|turn| turn.voice_session_id.clone());
+                    }
                     let root_turn_id = self
                         .turns
                         .get(&notification.turn_id)
@@ -2072,9 +2165,34 @@ impl AnalyticsReducer {
                 self.code_mode_cells.remove(&notification.thread_id);
                 self.pending_mcp_tool_elicitations
                     .retain(|(key, _)| key.thread_id != notification.thread_id);
+                if let Some(thread) = self.threads.get_mut(&notification.thread_id) {
+                    thread.active_voice_session = None;
+                    thread.recent_voice_sessions.clear();
+                    thread.active_turn_id = None;
+                    thread.pending_voice_handoffs.clear();
+                }
+            }
+            ServerNotification::ThreadRealtimeStarted(notification) => {
+                self.start_voice_session(
+                    notification.thread_id,
+                    notification.realtime_session_id,
+                    now_unix_seconds(),
+                );
+            }
+            ServerNotification::ThreadRealtimeClosed(notification) => {
+                self.close_voice_session(&notification.thread_id, now_unix_seconds());
             }
             ServerNotification::TurnStarted(notification) => {
+                let voice_session_id = {
+                    let thread = self.threads.entry(notification.thread_id).or_default();
+                    thread.active_turn_id = Some(notification.turn.id.clone());
+                    thread
+                        .pending_voice_handoffs
+                        .pop_front()
+                        .unwrap_or_else(|| thread.active_voice_session_id())
+                };
                 let turn_state = self.turns.entry(notification.turn.id).or_default();
+                turn_state.voice_session_id = voice_session_id;
                 turn_state.started_at = notification
                     .turn
                     .started_at
@@ -2086,6 +2204,11 @@ impl AnalyticsReducer {
                 turn_state.latest_diff = Some(notification.diff);
             }
             ServerNotification::TurnCompleted(notification) => {
+                if let Some(thread) = self.threads.get_mut(&notification.thread_id)
+                    && thread.active_turn_id.as_deref() == Some(notification.turn.id.as_str())
+                {
+                    thread.active_turn_id = None;
+                }
                 self.flush_pending_tool_events(&notification.thread_id, &notification.turn.id, out);
                 let turn_state = self.turns.entry(notification.turn.id.clone()).or_default();
                 turn_state.completed = Some(CompletedTurnState {
@@ -2223,20 +2346,85 @@ impl AnalyticsReducer {
         else {
             return;
         };
+        let voice_session_id = thread_state
+            .voice_session_id_at(input.started_at)
+            .or_else(|| {
+                self.turns
+                    .get(&input.turn_id)
+                    .and_then(|turn| turn.voice_session_id.clone())
+            });
+        let mut event_params = antex_compaction_event_params(
+            input,
+            thread_metadata.session_id.clone(),
+            thread_state.app_server_client(connection_state),
+            connection_state.runtime.clone(),
+            thread_metadata.thread_source.clone(),
+            thread_metadata.subagent_source.clone(),
+            thread_metadata.parent_thread_id.clone(),
+        );
+        event_params.voice_session_id = voice_session_id;
         out.push(TrackEventRequest::Compaction(Box::new(
             AntexCompactionEventRequest {
                 event_type: "codex_compaction_event",
-                event_params: antex_compaction_event_params(
-                    input,
-                    thread_metadata.session_id.clone(),
-                    thread_state.app_server_client(connection_state),
-                    connection_state.runtime.clone(),
-                    thread_metadata.thread_source.clone(),
-                    thread_metadata.subagent_source.clone(),
-                    thread_metadata.parent_thread_id.clone(),
-                ),
+                event_params,
             },
         )));
+    }
+
+    fn set_active_voice_session_id(
+        &mut self,
+        thread_id: String,
+        realtime_session_id: Option<String>,
+    ) {
+        let thread = self.threads.entry(thread_id).or_default();
+        let realtime_session_id = realtime_session_id.filter(|id| !id.is_empty());
+        let Some(session) = thread.active_voice_session.as_mut() else {
+            return;
+        };
+        session.session_id.clone_from(&realtime_session_id);
+        if let Some(turn_id) = &thread.active_turn_id {
+            self.turns
+                .entry(turn_id.clone())
+                .or_default()
+                .voice_session_id = realtime_session_id;
+        }
+    }
+
+    fn start_voice_session(
+        &mut self,
+        thread_id: String,
+        realtime_session_id: Option<String>,
+        started_at: u64,
+    ) {
+        self.close_voice_session(&thread_id, started_at);
+        let realtime_session_id = realtime_session_id.filter(|id| !id.is_empty());
+        let thread = self.threads.entry(thread_id).or_default();
+        thread.active_voice_session = Some(VoiceSessionWindow {
+            session_id: realtime_session_id.clone(),
+            started_at,
+            closed_at: None,
+        });
+        if let Some(turn_id) = &thread.active_turn_id {
+            self.turns
+                .entry(turn_id.clone())
+                .or_default()
+                .voice_session_id = realtime_session_id;
+        }
+    }
+
+    fn close_voice_session(&mut self, thread_id: &str, closed_at: u64) {
+        let Some(thread) = self.threads.get_mut(thread_id) else {
+            return;
+        };
+        if let Some(mut session) = thread.active_voice_session.take() {
+            session.closed_at = Some(closed_at);
+            if session.session_id.is_some() {
+                if thread.recent_voice_sessions.len() >= MAX_RECENT_VOICE_SESSION_WINDOWS {
+                    thread.recent_voice_sessions.pop_front();
+                }
+                thread.recent_voice_sessions.push_back(session);
+            }
+        }
     }
 
     fn ingest_goal(&mut self, input: AntexGoalEvent, out: &mut Vec<TrackEventRequest>) {
@@ -2703,6 +2891,7 @@ fn tool_item_event(input: ToolItemEventInput<'_>) -> Option<TrackEventRequest> {
     match item {
         ThreadItem::CommandExecution {
             id,
+            sandbox_type,
             plugin_id,
             script_path,
             source,
@@ -2737,6 +2926,8 @@ fn tool_item_event(input: ToolItemEventInput<'_>) -> Option<TrackEventRequest> {
                 AntexCommandExecutionEventRequest {
                     event_type: "codex_command_execution_event",
                     event_params: AntexCommandExecutionEventParams {
+                        sandbox_backend: sandbox_type
+                            .map(|sandbox| sandbox.as_metric_tag().to_string()),
                         model_slug: model_context.map(|context| context.model_slug.clone()),
                         reasoning_effort: model_context
                             .and_then(|context| context.reasoning_effort.clone()),
@@ -2838,6 +3029,7 @@ fn tool_item_event(input: ToolItemEventInput<'_>) -> Option<TrackEventRequest> {
                         connector_id: app_context
                             .as_ref()
                             .map(|app_context| app_context.connector_id.clone()),
+                        voice_session_id: None,
                         elicitation_type,
                     },
                 },
@@ -3558,6 +3750,7 @@ fn antex_turn_event_params(
         turn_id: _resolved_turn_id,
         thread_id: _resolved_thread_id,
         turn_metadata,
+        active_plugin_ids_at_turn_start,
         num_input_images: _resolved_num_input_images,
         submission_type,
         ephemeral,
@@ -3572,6 +3765,7 @@ fn antex_turn_event_params(
         approval_policy,
         approvals_reviewer,
         guardian_v2_enabled,
+        multi_agent_version,
         sandbox_network_access,
         collaboration_mode,
         personality,
@@ -3587,6 +3781,7 @@ fn antex_turn_event_params(
         after_last_sampling_ms,
         sampling_request_count,
         sampling_retry_count,
+        tools_change_count,
     } = profile;
     let token_usage = turn_state.token_usage.clone();
     let antex_error = turn_state.antex_error.as_ref();
@@ -3594,6 +3789,8 @@ fn antex_turn_event_params(
         thread_id,
         session_id: thread_metadata.session_id.clone(),
         turn_id,
+        active_plugin_ids_at_turn_start,
+        voice_session_id: turn_state.voice_session_id.clone(),
         root_turn_id: turn_metadata.root_turn_id(),
         turn_trigger: turn_metadata.turn_trigger(),
         antex_turn_source: turn_metadata.antex_turn_source(),
@@ -3619,6 +3816,7 @@ fn antex_turn_event_params(
         approval_policy: approval_policy.to_string(),
         approvals_reviewer: approvals_reviewer.to_string(),
         guardian_v2_enabled,
+        multi_agent_version,
         sandbox_network_access,
         collaboration_mode: Some(collaboration_mode_mode(collaboration_mode)),
         personality: personality_mode(personality),
@@ -3632,6 +3830,7 @@ fn antex_turn_event_params(
         turn_error: completed.turn_error,
         antex_error_kind: antex_error.map(|error| error.kind),
         antex_error_http_status_code: antex_error.and_then(|error| error.http_status_code),
+        usage_limit_window_minutes: antex_error.and_then(|error| error.usage_limit_window_minutes),
         steer_count: Some(turn_state.steer_count),
         total_tool_call_count: Some(turn_state.tool_counts.total),
         shell_command_count: Some(turn_state.tool_counts.shell_command),
@@ -3667,6 +3866,7 @@ fn antex_turn_event_params(
         after_last_sampling_ms,
         sampling_request_count,
         sampling_retry_count,
+        tools_change_count,
         duration_ms: completed.duration_ms,
         started_at,
         completed_at: Some(completed.completed_at),
@@ -3746,7 +3946,7 @@ fn rejection_reason_from_error_type(
 pub(crate) fn skill_id_for_local_skill(
     repo_url: Option<&str>,
     repo_root: Option<&Path>,
-    skill_path: &Path,
+    skill_path: &PathUri,
     skill_name: &str,
 ) -> String {
     let path = normalize_path_for_skill_id(repo_url, repo_root, skill_path);
@@ -3768,10 +3968,14 @@ pub(crate) fn skill_id_for_local_skill(
 pub(crate) fn normalize_path_for_skill_id(
     repo_url: Option<&str>,
     repo_root: Option<&Path>,
-    skill_path: &Path,
+    skill_path: &PathUri,
 ) -> String {
+    // Foreign paths have no host repository to inspect; retain their native spelling for telemetry.
+    let Ok(skill_path) = skill_path.to_abs_path() else {
+        return skill_path.inferred_native_path_string().replace('\\', "/");
+    };
     let resolved_path =
-        std::fs::canonicalize(skill_path).unwrap_or_else(|_| skill_path.to_path_buf());
+        std::fs::canonicalize(skill_path.as_path()).unwrap_or_else(|_| skill_path.to_path_buf());
     match (repo_url, repo_root) {
         (Some(_), Some(root)) => {
             let resolved_root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());

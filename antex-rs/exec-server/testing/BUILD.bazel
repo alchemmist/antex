@@ -41,6 +41,7 @@ rust_binary(
     deps = [
         "//antex-rs/exec-server",
         "//antex-rs/http-client",
+        "//antex-rs/utils/pty",
         "@crates//:tokio",
     ],
 )

@@ -1,14 +1,14 @@
 use super::CHANNEL_CAPACITY;
 use super::ConnectionOrigin;
 use super::TransportEvent;
-use super::auth::WebsocketAuthPolicy;
-use super::auth::authorize_upgrade;
-use super::auth::is_unauthenticated_non_loopback_listener;
 use super::forward_incoming_message;
 use super::next_connection_id;
 use super::serialize_outgoing_message;
 use crate::outgoing_message::ConnectionId;
 use crate::outgoing_message::QueuedOutgoingMessage;
+use antex_websocket_auth::WebsocketAuthPolicy;
+use antex_websocket_auth::authorize_upgrade;
+use antex_websocket_auth::is_unauthenticated_non_loopback_listener;
 use axum::Router;
 use axum::body::Body;
 use axum::body::Bytes;

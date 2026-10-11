@@ -1,0 +1,6 @@
+load("//:defs.bzl", "antex_rust_crate")
+
+antex_rust_crate(
+    name = "agent-message-board",
+    crate_name = "antex_agent_message_board_extension",
+)

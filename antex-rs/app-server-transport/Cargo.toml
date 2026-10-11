@@ -13,7 +13,8 @@ doctest = false
 workspace = true
 
 [dependencies]
-anyhow = { workspace = true }
+antex-http-client = { workspace = true }
+antex-websocket-client = { workspace = true }
 axum = { workspace = true, default-features = false, features = [
     "http1",
     "json",
@@ -21,7 +22,6 @@ axum = { workspace = true, default-features = false, features = [
     "ws",
 ] }
 base64 = { workspace = true }
-clap = { workspace = true, features = ["derive"] }
 antex-api = { workspace = true }
 antex-app-server-protocol = { workspace = true }
 antex-core = { workspace = true }
@@ -32,12 +32,10 @@ antex-state = { workspace = true }
 antex-uds = { workspace = true }
 antex-utils-absolute-path = { workspace = true }
 antex-utils-rustls-provider = { workspace = true }
-constant_time_eq = { workspace = true }
+antex-websocket-auth = { workspace = true }
 futures = { workspace = true }
 gethostname = { workspace = true }
-hmac = { workspace = true }
 httpdate = { workspace = true }
-jsonwebtoken = { workspace = true }
 owo-colors = { workspace = true, features = ["supports-colors"] }
 rand = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

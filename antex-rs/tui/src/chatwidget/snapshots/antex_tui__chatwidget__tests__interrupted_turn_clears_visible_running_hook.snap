@@ -10,10 +10,10 @@ before interrupt:
 "                                                                                "
 " ┃ Ask Antex to do anything                                                     "
 "                                                                                "
-"  gpt-5.6-sol default · /tmp/project                                            "
+"  GPT-5.6-Sol default · /tmp/project                                            "
 after interrupt:
 "                                                                                "
 "                                                                                "
 " ┃ Ask Antex to do anything                                                     "
 "                                                                                "
-"  gpt-5.6-sol default · /tmp/project                                            "
+"  GPT-5.6-Sol default · /tmp/project                                            "

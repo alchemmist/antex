@@ -35,6 +35,7 @@ fn failed_turn_does_not_overwrite_output_last_message_file() {
             thread_id: "thread-1".to_string(),
             turn: antex_app_server_protocol::Turn {
                 id: "turn-1".to_string(),
+                root_turn_id: None,
                 items_view: antex_app_server_protocol::TurnItemsView::Full,
                 items: Vec::new(),
                 status: TurnStatus::Failed,

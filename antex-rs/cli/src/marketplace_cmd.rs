@@ -60,7 +60,7 @@ enum MarketplaceSubcommand {
 #[derive(Debug, Parser)]
 #[command(
     bin_name = "antex plugin marketplace add",
-    after_help = "Examples:\n  codex plugin marketplace add ./path/to/marketplace\n  codex plugin marketplace add owner/repo --ref main\n  codex plugin marketplace add https://github.com/owner/repo --sparse plugins/foo"
+    after_help = "Examples:\n  antex plugin marketplace add ./path/to/marketplace\n  antex plugin marketplace add owner/repo --ref main\n  antex plugin marketplace add https://github.com/owner/repo --sparse plugins/foo"
 )]
 struct AddMarketplaceArgs {
     /// Marketplace source: a local path, owner/repo[@ref], HTTPS Git URL, or SSH Git URL.
@@ -95,7 +95,7 @@ struct ListMarketplaceArgs {
 #[derive(Debug, Parser)]
 #[command(
     bin_name = "antex plugin marketplace upgrade",
-    after_help = "Examples:\n  codex plugin marketplace upgrade\n  codex plugin marketplace upgrade debug"
+    after_help = "Examples:\n  antex plugin marketplace upgrade\n  antex plugin marketplace upgrade debug"
 )]
 struct UpgradeMarketplaceArgs {
     /// Optional configured marketplace name to upgrade. Omit to upgrade all Git marketplaces.
@@ -110,7 +110,7 @@ struct UpgradeMarketplaceArgs {
 #[derive(Debug, Parser)]
 #[command(
     bin_name = "antex plugin marketplace remove",
-    after_help = "Example:\n  codex plugin marketplace remove debug"
+    after_help = "Example:\n  antex plugin marketplace remove debug"
 )]
 struct RemoveMarketplaceArgs {
     /// Configured marketplace name to remove.

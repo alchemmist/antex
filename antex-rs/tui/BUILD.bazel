@@ -5,7 +5,6 @@ antex_rust_crate(
     binaries_with_build_commit = ["antex-tui"],
     compile_data = ["//:FORK_VERSION"] + glob([
         "assets/**",
-        "frames/**",
         "src/workflow/*.py",
     ]),
     crate_name = "antex_tui",

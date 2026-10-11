@@ -11,8 +11,6 @@ Usage: build-codex-package-archive.sh \
   [--bwrap-bin <path>] \
   [--code-mode-host-bin <path>] \
   [--rg-bin <path>] \
-  [--zsh-bin <path>] \
-  [--zsh-manifest <path>] \
   [--antex-command-runner-bin <path>] \
   [--antex-windows-sandbox-setup-bin <path>] \
   [--voice-release-dir <path> --release-version <release-version>] \
@@ -63,14 +61,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     --rg-bin)
       resource_args+=(--rg-bin "${2:?--rg-bin requires a value}")
-      shift 2
-      ;;
-    --zsh-bin)
-      resource_args+=(--zsh-bin "${2:?--zsh-bin requires a value}")
-      shift 2
-      ;;
-    --zsh-manifest)
-      resource_args+=(--zsh-manifest "${2:?--zsh-manifest requires a value}")
       shift 2
       ;;
     --antex-command-runner-bin)

@@ -1,0 +1,12 @@
+---
+source: tui/src/app/tests/fresh_sparkle_tests.rs
+assertion_line: 732
+expression: "snapshots.join(\"\\n\\n\")"
+---
+untouched:
+                            ⠈     ⢀     ⠁                 ⠂
+ ┃ Ask Antex to do anything        ⠈      ⠁
+       ⢀            ⠠     ⠄         ⠠          ⢀    ⠠     ⡀
+
+typed then erased:
+ ┃ Ask Antex to do anything

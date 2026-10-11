@@ -1,4 +1,5 @@
 use super::*;
+use antex_protocol::sandbox::SandboxType;
 use antex_utils_path_uri::PathUri;
 #[cfg(target_os = "windows")]
 use anyhow::Context as _;
@@ -18,6 +19,7 @@ impl WindowsSandboxRequestProcessor {
         config: Arc<Config>,
         config_manager: ConfigManager,
     ) -> Self {
+        antex_core::windows_sandbox::log_windows_sandbox_startup(&config);
         Self {
             outgoing,
             config,
@@ -33,6 +35,7 @@ impl WindowsSandboxRequestProcessor {
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
         #[cfg(target_os = "windows")]
         if antex_windows_sandbox::registered_core_requested()
+            && self.config.effective_local_windows_sandbox_type() != SandboxType::WindowsMxc
             && matches!(
                 WindowsSandboxLevel::from_config(&self.config),
                 WindowsSandboxLevel::Elevated
@@ -190,19 +193,33 @@ impl WindowsSandboxRequestProcessor {
                         let service_setup_request = setup_request.clone();
                         let service_setup_start = Instant::now();
                         tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-                            let Ok(permissions) = antex_windows_sandbox::ResolvedWindowsSandboxPermissions::try_from_permission_profile_for_workspace_roots(
+                            if matches!(
                                 &service_setup_request.permission_profile,
-                                &service_setup_request.workspace_roots,
-                            ) else {
-                                anyhow::ensure!(!antex_windows_sandbox::registered_core_requested(),
-                                    "registered Core requires a service-compatible sandbox policy");
-                                // The existing setup path can still succeed for completed
-                                // provisioning without resolving the current profile.
-                                return Ok(());
-                            };
-                            permissions.validate_elevated_filesystem_policy(
-                                &service_setup_request.command_cwd,
-                            )?;
+                                antex_protocol::models::PermissionProfile::Disabled
+                            ) {
+                                // Only registered Core needs service provisioning for full access;
+                                // legacy setup keeps using the shared setup path below.
+                                if !antex_windows_sandbox::registered_core_requested() {
+                                    return Ok(());
+                                }
+                            } else {
+                                let Ok(permissions) = antex_windows_sandbox::ResolvedWindowsSandboxPermissions::try_from_permission_profile_for_workspace_roots(
+                                    &service_setup_request.permission_profile,
+                                    &service_setup_request.workspace_roots,
+                                ) else {
+                                    anyhow::ensure!(!antex_windows_sandbox::registered_core_requested(),
+                                        "registered Core requires a service-compatible sandbox policy");
+                                    // The existing setup path can still succeed for completed
+                                    // provisioning without resolving the current profile.
+                                    return Ok(());
+                                };
+                                permissions.validate_elevated_filesystem_policy(
+                                    &service_setup_request.command_cwd,
+                                )?;
+                            }
+                            if antex_windows_sandbox::registered_core_requested() {
+                                antex_windows_sandbox::start_windows_sandbox_service_for_setup()?;
+                            }
                             // The shared setup path below handles helper fallback and
                             // refreshes workspace ACLs after provisioning.
                             antex_windows_sandbox::provision_windows_sandbox_via_service(
@@ -302,6 +319,12 @@ fn determine_windows_sandbox_readiness(config: &Config) -> WindowsSandboxReadine
     if !cfg!(windows) {
         return WindowsSandboxReadinessResponse {
             status: WindowsSandboxReadiness::NotConfigured,
+        };
+    }
+
+    if config.effective_local_windows_sandbox_type() == SandboxType::WindowsMxc {
+        return WindowsSandboxReadinessResponse {
+            status: WindowsSandboxReadiness::Ready,
         };
     }
 

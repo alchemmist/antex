@@ -1,0 +1,8 @@
+---
+source: tui/src/pager_overlay/highlight_tests.rs
+assertion_line: 89
+expression: content
+---
+ ┃ first prompt
+ ┃ second prompt
+live tail

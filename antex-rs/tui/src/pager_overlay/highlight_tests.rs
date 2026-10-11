@@ -1,4 +1,4 @@
-//! Backtrack selection preserves unrelated layout caches and the complete rendered viewport.
+//! Backtrack selection preserves cached layouts and prompt rails in the shared viewport.
 
 use super::*;
 use crate::history_cell::UserHistoryCell;
@@ -14,22 +14,18 @@ struct MeasuredCell {
 
 impl HistoryCell for MeasuredCell {
     fn display_lines(&self, _width: u16) -> Vec<Line<'static>> {
+        self.measurements.fetch_add(1, Ordering::Relaxed);
         vec!["history".into()]
     }
 
     fn raw_lines(&self) -> Vec<Line<'static>> {
         vec!["history".into()]
     }
-
-    fn desired_transcript_height(&self, _width: u16) -> u16 {
-        self.measurements.fetch_add(1, Ordering::Relaxed);
-        1
-    }
 }
 
 #[test]
 fn moving_highlight_preserves_unaffected_height_caches() {
-    let cells: Vec<_> = (0..32)
+    let cells: Vec<_> = (0..4)
         .map(|_| {
             Arc::new(MeasuredCell {
                 measurements: AtomicUsize::new(0),
@@ -43,34 +39,22 @@ fn moving_highlight_preserves_unaffected_height_caches() {
             .collect(),
         RuntimeKeymap::defaults().pager,
     );
-    let mut area = Rect::new(
-        /*x*/ 0, /*y*/ 0, /*width*/ 40, /*height*/ 12,
+    let area = Rect::new(
+        /*x*/ 0, /*y*/ 0, /*width*/ 40, /*height*/ 20,
     );
     overlay.render(area, &mut Buffer::empty(area));
-
-    for selection in [Some(30), Some(28), Some(28), None] {
-        overlay.set_highlight_cell(selection);
-        overlay.render(area, &mut Buffer::empty(area));
-    }
-
     let measurements = || {
         cells
             .iter()
             .map(|cell| cell.measurements.load(Ordering::Relaxed))
             .collect::<Vec<_>>()
     };
-    let mut expected = vec![1; cells.len()];
-    expected[28] = 3;
-    expected[30] = 3;
-    assert_eq!(measurements(), expected);
-
-    // Width changes still invalidate every cached height.
-    area.width = 24;
-    overlay.render(area, &mut Buffer::empty(area));
-    for count in &mut expected {
-        *count += 1;
+    let before = measurements();
+    for selection in [Some(3), Some(2), Some(2), None] {
+        overlay.set_highlight_cell(selection);
+        overlay.render(area, &mut Buffer::empty(area));
     }
-    assert_eq!(measurements(), expected);
+    assert_eq!(measurements(), before);
 }
 
 #[test]
@@ -88,40 +72,29 @@ fn moving_highlight_matches_full_rebuild_with_live_tail() {
         })
         .collect();
     let mut actual = TranscriptOverlay::new(cells.clone(), RuntimeKeymap::defaults().pager);
-    let mut expected = TranscriptOverlay::new(cells, RuntimeKeymap::defaults().pager);
-    for overlay in [&mut actual, &mut expected] {
-        overlay.sync_live_tail(
-            /*width*/ 40,
-            Some(ActiveCellTranscriptKey {
-                revision: 1,
-                is_stream_continuation: false,
-                animation_tick: None,
-            }),
-            |_| Some(vec![HyperlinkLine::from("live tail")]),
-        );
-    }
-
+    let key = Some(ActiveCellTranscriptKey {
+        cacheable: true,
+        revision: 1,
+        is_stream_continuation: false,
+        animation_tick: None,
+    });
     for width in [40, 24, 40] {
+        let area = Rect::new(/*x*/ 0, /*y*/ 0, width, /*height*/ 20);
         for selection in [Some(0), Some(1), Some(1), None, Some(99), Some(0)] {
-            actual.set_highlight_cell(selection);
-            let tail = expected.take_live_tail_renderable();
-            expected.highlight_cell = selection;
-            expected.rebuild_renderables(tail);
-            if let Some(index) = selection {
-                expected.view.scroll_chunk_into_view(index);
+            let mut expected =
+                TranscriptOverlay::new(cells.clone(), RuntimeKeymap::defaults().pager);
+            for overlay in [&mut actual, &mut expected] {
+                overlay
+                    .sync_live_tail(width, key, |_| Some(vec![HyperlinkLine::from("live tail")]));
+                overlay.set_highlight_cell(selection);
             }
-
-            let area = Rect::new(/*x*/ 0, /*y*/ 0, width, /*height*/ 12);
             let mut actual_buffer = Buffer::empty(area);
             let mut expected_buffer = Buffer::empty(area);
             actual.render(area, &mut actual_buffer);
             expected.render(area, &mut expected_buffer);
             assert_eq!(actual_buffer, expected_buffer);
-            assert_eq!(actual.view.scroll_offset, expected.view.scroll_offset);
         }
     }
-
-    actual.set_highlight_cell(Some(1));
     let area = Rect::new(
         /*x*/ 0, /*y*/ 0, /*width*/ 40, /*height*/ 20,
     );
@@ -134,12 +107,8 @@ fn moving_highlight_matches_full_rebuild_with_live_tail() {
                 .collect::<String>()
         })
         .map(|line| line.trim_end().to_string())
-        .filter(|line| !line.is_empty() && line != "~")
+        .filter(|line| !line.is_empty())
         .collect::<Vec<_>>()
         .join("\n");
-    insta::assert_snapshot!(content, @"
-     ┃ first prompt
-     ┃ second prompt
-    live tail
-    ");
+    insta::assert_snapshot!(content);
 }

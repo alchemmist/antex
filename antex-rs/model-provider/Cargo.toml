@@ -13,6 +13,7 @@ path = "src/lib.rs"
 workspace = true
 
 [dependencies]
+antex-utils-process = { workspace = true }
 chrono = { workspace = true }
 antex-api = { workspace = true }
 antex-agent-identity = { workspace = true }
@@ -20,11 +21,13 @@ antex-aws-auth = { workspace = true }
 antex-http-client = { workspace = true }
 antex-feedback = { workspace = true }
 antex-login = { workspace = true }
+antex-keyring-store = { workspace = true }
 antex-model-provider-info = { workspace = true }
 antex-models-manager = { workspace = true }
 antex-otel = { workspace = true }
 antex-protocol = { workspace = true }
 antex-response-debug-context = { workspace = true }
+antex-secrets = { workspace = true }
 http = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
@@ -35,6 +38,7 @@ url = { workspace = true }
 
 [dev-dependencies]
 base64 = { workspace = true }
+antex-utils-cargo-bin = { workspace = true }
 antex-utils-redacted-string = { workspace = true }
 pretty_assertions = { workspace = true }
 tempfile = { workspace = true }

@@ -105,6 +105,8 @@ fn is_runtime_helper(arguments: &[OsString]) -> bool {
                 | "--antex-run-as-arg0-exec-helper"
                 | "--antex-run-as-apply-patch"
                 | "--run-as-windows-sandbox"
+                | "--codex-run-as-process-setup"
+                | antex_sandboxing::CODEX_WINDOWS_MXC_ARG1
         )
     )
 }
@@ -172,6 +174,10 @@ fn run(command: MigrationCommand) -> anyhow::Result<()> {
     );
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "home_migration_tests.rs"]
+mod tests;
 
 #[cfg(unix)]
 fn ensure_source_clients_stopped() -> anyhow::Result<()> {

@@ -297,7 +297,7 @@ fn windows_store_update(
         serde_json::from_slice(manifest).map_err(|_| "invalid Windows Store update manifest")?;
     if manifest.schema_version == 0
         || manifest.store_product_id != "9PLM9XGG6VKS"
-        || manifest.package_identity != "OpenAI.Antex"
+        || manifest.package_identity != "OpenAI.Codex"
     {
         return Err("Windows Store update manifest does not target the production application");
     }
@@ -645,7 +645,7 @@ mod tests {
             "schemaVersion": 1,
             "buildVersion": "26.803.5235.1",
             "storeProductId": "9PLM9XGG6VKS",
-            "packageIdentity": "OpenAI.Antex",
+            "packageIdentity": "OpenAI.Codex",
         });
         assert_eq!(
             windows_store_update(&serde_json::to_vec(&manifest).unwrap(), "26.803.5235.0"),
@@ -655,6 +655,11 @@ mod tests {
             windows_store_update(&serde_json::to_vec(&manifest).unwrap(), "26.803.5235.1"),
             Ok(None)
         );
+        manifest["packageIdentity"] = "OpenAI.Antex".into();
+        assert!(
+            windows_store_update(&serde_json::to_vec(&manifest).unwrap(), "26.803.5235.0").is_err()
+        );
+        manifest["packageIdentity"] = "OpenAI.Codex".into();
         manifest["storeProductId"] = "other".into();
         assert!(
             windows_store_update(&serde_json::to_vec(&manifest).unwrap(), "26.803.5235.0").is_err()

@@ -22,7 +22,6 @@ The builder creates a canonical Antex package directory:
 │   └── antex-code-mode-host[.exe]
 ├── antex-resources
 │   ├── bwrap                             # Linux only
-│   ├── zsh/bin/zsh                       # supported Unix targets only
 │   ├── antex-command-runner.exe          # Windows only
 │   └── antex-windows-sandbox-setup.exe   # Windows only
 └── antex-path
@@ -64,6 +63,24 @@ binary instead of rebuilding it.
 Release jobs should likewise pass `--code-mode-host-bin` so the package contains
 the signed host executable beside the signed entrypoint.
 
+On Linux and macOS, the builder strips symbols from the **package copies** of
+source-built release-profile entrypoint and code-mode host binaries. Cargo outputs
+retain their symbols for debugging. The default `--strip auto` also preserves
+development/profiling builds and prebuilt inputs
+byte-for-byte, including signatures. Use `--strip all` to also strip prebuilt
+entrypoint/host copies, or `--strip none` to keep symbols in every package copy.
+Strip before production signing; `--strip all` is not appropriate for inputs
+whose release signatures must be preserved. Windows MSVC symbols are separate
+PDB files and are not included in the package.
+
+macOS uses `xcrun strip -S -x`, matching the release pipeline and preserving
+executable ad-hoc signatures. Linux uses `llvm-strip`, a target-prefixed GNU
+strip, or native GNU strip when the host architecture matches. For cross builds,
+install `llvm-strip` or pass `--strip-tool /path/to/target-strip`. Missing tools
+or strip failures fail the build; use `--strip none` to deliberately opt out.
+Third-party resources are copied unchanged. In particular, never strip `bwrap`
+after its integrity digest has been embedded in Antex.
+
 Release jobs that already built package resource binaries should also pass the
 corresponding resource flags: `--bwrap-bin` for Linux packages, and
 `--antex-command-runner-bin` plus `--antex-windows-sandbox-setup-bin` for
@@ -82,11 +99,3 @@ DotSlash manifest at `scripts/antex_package/rg`. Downloaded archives are cached
 under `$TMPDIR/antex-package/<target>-rg` and are reused only after the recorded
 size and SHA-256 digest have been verified. Pass `--rg-bin` to use a local
 ripgrep executable instead.
-
-The patched zsh fork used by `shell_zsh_fork` is fetched from the DotSlash
-manifest at `scripts/antex_package/antex-zsh` when the selected target has a
-matching prebuilt artifact. Downloaded archives are cached under
-`$TMPDIR/antex-package/<target>-zsh` and installed at
-`antex-resources/zsh/bin/zsh`. Pass `--zsh-bin` to package a prebuilt, signed
-executable, or `--zsh-manifest` to use a different DotSlash manifest, such as
-the manifest published with a standalone zsh artifact release.

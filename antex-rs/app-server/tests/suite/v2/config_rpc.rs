@@ -38,6 +38,7 @@ use antex_app_server_protocol::SandboxMode;
 use antex_app_server_protocol::ToolsV2;
 use antex_app_server_protocol::WriteStatus;
 use antex_core::config::set_project_trust_level;
+use antex_protocol::config_types::ToolExposureSurface;
 use antex_protocol::config_types::TrustLevel;
 use antex_protocol::config_types::WebSearchContextSize;
 use antex_protocol::config_types::WebSearchLocation;
@@ -63,6 +64,46 @@ fn write_config(codex_home: &TempDir, contents: &str) -> Result<()> {
         codex_home.path().join("config.toml"),
         contents,
     )?)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn config_requirements_read_exposes_independent_speed_policy() -> Result<()> {
+    for (fast_enabled, ultrafast_enabled) in
+        [(false, false), (false, true), (true, false), (true, true)]
+    {
+        let codex_home = TempDir::new()?;
+        std::fs::write(
+            codex_home.path().join("requirements.toml"),
+            format!(
+                "[features]\nfast_mode = {fast_enabled}\nultrafast_mode = {ultrafast_enabled}\n"
+            ),
+        )?;
+        let mut app_server = TestAppServer::builder()
+            .with_antex_home(codex_home.path())
+            .without_auto_env()
+            .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
+            .await?;
+        let request_id = app_server.send_config_requirements_read_request().await?;
+        let response: ConfigRequirementsReadResponse =
+            timeout(DEFAULT_READ_TIMEOUT, app_server.read_response(request_id)).await??;
+        assert_eq!(
+            (
+                response.supports_independent_speed_modes,
+                response
+                    .requirements
+                    .expect("speed requirements")
+                    .feature_requirements
+            ),
+            (
+                Some(true),
+                Some(std::collections::BTreeMap::from([
+                    ("fast_mode".to_string(), fast_enabled),
+                    ("ultrafast_mode".to_string(), ultrafast_enabled),
+                ]))
+            ),
+        );
+    }
+    Ok(())
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -244,6 +285,9 @@ allow_history_access = false
 disable_auto_review = true
 allow_global_persistent_approval = false
 
+[browser_use.extension]
+request_headers = [{ name = "x-browser-agent", value = "ChatGPT/{{session_id}}" }]
+
 [browser_use.default_origin_policy]
 access = "deny"
 downloads = "allow"
@@ -297,6 +341,12 @@ access = "deny"
     assert_eq!(
         requirements.browser_use,
         Some(BrowserUseRequirements {
+            extension: Some(antex_app_server_protocol::BrowserUseExtensionRequirements {
+                request_headers: Some(vec![antex_app_server_protocol::RequestHeader {
+                    name: "x-browser-agent".to_string(),
+                    value: "ChatGPT/{{session_id}}".to_string(),
+                }]),
+            }),
             allow_webmcp: None,
             allow_history_access: Some(false),
             disable_auto_review: Some(true),
@@ -823,6 +873,7 @@ access = "deny"
     assert_eq!(
         requirements.browser_use,
         Some(BrowserUseRequirements {
+            extension: None,
             allow_webmcp: None,
             allow_history_access: Some(false),
             disable_auto_review: None,
@@ -1021,6 +1072,7 @@ default_tools_approval_mode = "writes"
 
 [apps.app1]
 enabled = false
+omit_tools_from = ["deferred"]
 approvals_reviewer = "user"
 destructive_enabled = false
 default_tools_approval_mode = "prompt"
@@ -1034,6 +1086,9 @@ default_tools_approval_mode = "writes"
 
 [apps.app_without_links]
 enabled = true
+
+[apps.app_with_empty_links]
+omit_tools_from = []
 
 [apps.app_with_empty_links.links]
 "#,
@@ -1084,6 +1139,7 @@ enabled = true
                     "app1".to_string(),
                     AppConfig {
                         enabled: false,
+                        omit_tools_from: Some(vec![ToolExposureSurface::Deferred]),
                         approvals_reviewer: Some(ApprovalsReviewer::User),
                         destructive_enabled: Some(false),
                         open_world_enabled: None,
@@ -1114,6 +1170,7 @@ enabled = true
                     "app_without_links".to_string(),
                     AppConfig {
                         enabled: true,
+                        omit_tools_from: None,
                         approvals_reviewer: None,
                         destructive_enabled: None,
                         open_world_enabled: None,
@@ -1127,6 +1184,7 @@ enabled = true
                     "app_with_empty_links".to_string(),
                     AppConfig {
                         enabled: true,
+                        omit_tools_from: Some(vec![]),
                         approvals_reviewer: None,
                         destructive_enabled: None,
                         open_world_enabled: None,

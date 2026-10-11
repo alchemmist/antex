@@ -1,3 +1,5 @@
+//! Windows sandbox configuration, runtime policy, and lifecycle diagnostics.
+
 use crate::config::Config;
 use crate::config::edit::ConfigEditsBuilder;
 use antex_config::config_toml::ConfigToml;
@@ -9,6 +11,7 @@ use antex_login::default_client::originator;
 use antex_otel::sanitize_metric_tag_value;
 use antex_protocol::config_types::WindowsSandboxLevel;
 use antex_protocol::models::PermissionProfile;
+use antex_protocol::sandbox::effective_windows_sandbox_type;
 use antex_sandboxing::SandboxType;
 use antex_utils_absolute_path::AbsolutePathBuf;
 use std::collections::BTreeMap;
@@ -17,6 +20,79 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::time::Instant;
 
+/// Records local MXC availability and the selected backend at startup.
+pub fn log_windows_sandbox_startup(config: &Config) {
+    #[cfg(windows)]
+    {
+        let sandbox_dir = antex_windows_sandbox::sandbox_dir(config.codex_home.as_path());
+        let _ = std::fs::create_dir_all(&sandbox_dir);
+        let available = antex_sandboxing::windows_mxc_available();
+        antex_windows_sandbox::log_note(
+            &format!("MXC availability: {available}"),
+            Some(&sandbox_dir),
+        );
+        log_windows_sandbox_selection(
+            config.codex_home.as_path(),
+            config.effective_local_windows_sandbox_type(),
+            WindowsSandboxLevel::from_config(config),
+        );
+    }
+    #[cfg(not(windows))]
+    let _ = config;
+}
+
+/// Records the local backend after an accepted selection change.
+pub(crate) fn log_windows_sandbox_change(
+    codex_home: &Path,
+    sandbox_type: SandboxType,
+    sandbox_level: WindowsSandboxLevel,
+) {
+    #[cfg(windows)]
+    {
+        let codex_home = codex_home.to_owned();
+        tokio::task::spawn_blocking(move || {
+            log_windows_sandbox_selection(&codex_home, sandbox_type, sandbox_level);
+        });
+    }
+    #[cfg(not(windows))]
+    let _ = (codex_home, sandbox_type, sandbox_level);
+}
+
+#[cfg(windows)]
+fn log_windows_sandbox_selection(
+    codex_home: &Path,
+    sandbox_type: SandboxType,
+    sandbox_level: WindowsSandboxLevel,
+) {
+    let backend = if sandbox_type == SandboxType::WindowsMxc {
+        "mxc"
+    } else {
+        match sandbox_level {
+            WindowsSandboxLevel::Disabled => "disabled",
+            WindowsSandboxLevel::RestrictedToken => "unelevated",
+            WindowsSandboxLevel::Elevated => "elevated",
+        }
+    };
+    let sandbox_dir = antex_windows_sandbox::sandbox_dir(codex_home);
+    let _ = std::fs::create_dir_all(&sandbox_dir);
+    antex_windows_sandbox::log_note(
+        &format!("Windows sandbox selection: {backend}"),
+        Some(&sandbox_dir),
+    );
+}
+
+/// Selects local binding policy from the sandbox and executor OS.
+pub fn local_binding_policy_for_sandbox(
+    sandbox_type: SandboxType,
+    platform_os: Option<&str>,
+) -> antex_network_proxy::LocalBindingPolicy {
+    if sandbox_type == SandboxType::WindowsMxc && platform_os == Some("windows") {
+        antex_network_proxy::LocalBindingPolicy::RequireTrue
+    } else {
+        antex_network_proxy::LocalBindingPolicy::DefaultFalse
+    }
+}
+
 pub fn managed_proxy_routing_for_windows_sandbox(
     sandbox_type: SandboxType,
 ) -> antex_network_proxy::ManagedProxyRouting {
@@ -24,6 +100,19 @@ pub fn managed_proxy_routing_for_windows_sandbox(
         antex_network_proxy::ManagedProxyRouting::DedicatedListeners
     } else {
         antex_network_proxy::ManagedProxyRouting::SharedIngress
+    }
+}
+
+/// Adapts the selected implementation for legacy checks that only understand setup levels.
+/// Backend selection must continue to use [`SandboxType`] directly.
+pub(crate) fn windows_sandbox_level_for_legacy_checks(
+    sandbox_type: SandboxType,
+    sandbox_level: WindowsSandboxLevel,
+) -> WindowsSandboxLevel {
+    if effective_windows_sandbox_type(sandbox_type, sandbox_level) == SandboxType::WindowsMxc {
+        WindowsSandboxLevel::RestrictedToken
+    } else {
+        sandbox_level
     }
 }
 
@@ -37,6 +126,7 @@ impl WindowsSandboxLevelExt for WindowsSandboxLevel {
         match config.permissions.windows_sandbox_mode {
             Some(WindowsSandboxModeToml::Elevated) => WindowsSandboxLevel::Elevated,
             Some(WindowsSandboxModeToml::Unelevated) => WindowsSandboxLevel::RestrictedToken,
+            Some(WindowsSandboxModeToml::Mxc) => WindowsSandboxLevel::Disabled,
             None => Self::from_features(&config.features),
         }
     }
@@ -58,13 +148,6 @@ pub fn resolve_windows_sandbox_mode(cfg: &ConfigToml) -> Option<WindowsSandboxMo
         .as_ref()
         .and_then(|windows| windows.sandbox)
         .or_else(|| legacy_windows_sandbox_mode(cfg.features.as_ref()))
-}
-
-pub fn resolve_windows_sandbox_private_desktop(cfg: &ConfigToml) -> bool {
-    cfg.windows
-        .as_ref()
-        .and_then(|windows| windows.sandbox_private_desktop)
-        .unwrap_or(true)
 }
 
 pub fn legacy_windows_sandbox_mode(

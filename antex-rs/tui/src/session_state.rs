@@ -8,7 +8,6 @@ use std::path::PathBuf;
 use antex_app_server_protocol::AskForApproval;
 use antex_protocol::ThreadId;
 use antex_protocol::config_types::CollaborationMode;
-use antex_protocol::config_types::Personality;
 use antex_protocol::models::ActivePermissionProfile;
 use antex_protocol::models::PermissionProfile;
 use antex_utils_absolute_path::AbsolutePathBuf;
@@ -28,6 +27,7 @@ pub(crate) struct MessageHistoryMetadata {
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ThreadSessionState {
+    pub(crate) daybreak_enabled: bool,
     pub(crate) windows_sandbox_host: crate::app::WindowsSandboxHost,
     pub(crate) thread_id: ThreadId,
     pub(crate) forked_from_id: Option<ThreadId>,
@@ -52,7 +52,6 @@ pub(crate) struct ThreadSessionState {
     pub(crate) instruction_source_paths: Vec<PathUri>,
     pub(crate) reasoning_effort: Option<antex_protocol::openai_models::ReasoningEffort>,
     pub(crate) collaboration_mode: Option<Box<CollaborationMode>>,
-    pub(crate) personality: Option<Personality>,
     pub(crate) message_history: Option<MessageHistoryMetadata>,
     pub(crate) network_proxy: Option<SessionNetworkProxyRuntime>,
     pub(crate) rollout_path: Option<PathBuf>,

@@ -1,0 +1,11 @@
+---
+source: tui/src/onboarding/bedrock_tests.rs
+assertion_line: 31
+expression: initial
+---
+Using Antex with AWS
+GovCloud
+
+You are using Antex with
+> Acknowledge
+↑/↓ scroll · enter

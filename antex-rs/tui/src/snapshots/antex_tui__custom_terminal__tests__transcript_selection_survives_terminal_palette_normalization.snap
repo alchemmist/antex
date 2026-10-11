@@ -1,0 +1,6 @@
+---
+source: tui/src/custom_terminal.rs
+assertion_line: 1396
+expression: "String::from_utf8(output).expect(\"terminal output\").escape_debug().to_string()"
+---
+\u{1b}[1;1H\u{1b}[7mselected\u{1b}[39m\u{1b}[49m\u{1b}[0m

@@ -149,6 +149,7 @@ typedef enum {
 typedef enum {
   NO_CREATE_DEST = (1 << 0),
   ALLOW_NOTEXIST = (1 << 1),
+  OMIT_DEV_FD = (1 << 2),
 } SetupOpFlag;
 
 typedef struct _SetupOp SetupOp;
@@ -356,6 +357,7 @@ usage (int ecode, FILE *out)
            "    --file-label LABEL           File label for temporary sandbox content\n"
            "    --proc DEST                  Mount new procfs on DEST\n"
            "    --dev DEST                   Mount new dev on DEST\n"
+           "    --dev-no-fd DEST             Mount new dev without the fd symlink\n"
            "    --tmpfs DEST                 Mount new tmpfs on DEST\n"
            "    --mqueue DEST                Mount new mqueue on DEST\n"
            "    --dir DEST                   Create dir at DEST\n"
@@ -1416,7 +1418,9 @@ setup_newroot (bool unshare_pid,
 
           /* /dev/fd and /dev/core - legacy, but both nspawn and docker do these */
           { cleanup_free char *dev_fd = strconcat (dest, "/fd");
-            if (symlink ("/proc/self/fd", dev_fd) < 0)
+            /* A later deny mount needs a real destination, not a procfs alias.
+             * Leave fd absent so that mount can create its own directory. */
+            if (!(op->flags & OMIT_DEV_FD) && symlink ("/proc/self/fd", dev_fd) < 0)
               die_with_error ("Can't create symlink %s", dev_fd);
           }
           { cleanup_free char *dev_core = strconcat (dest, "/core");
@@ -2151,13 +2155,15 @@ parse_args_recurse (int          *argcp,
           argv += 1;
           argc -= 1;
         }
-      else if (strcmp (arg, "--dev") == 0)
+      else if (strcmp (arg, "--dev") == 0 || strcmp (arg, "--dev-no-fd") == 0)
         {
           if (argc < 2)
-            die ("--dev takes an argument");
+            die ("%s takes an argument", arg);
 
           op = setup_op_new (SETUP_MOUNT_DEV);
           op->dest = argv[1];
+          if (strcmp (arg, "--dev-no-fd") == 0)
+            op->flags |= OMIT_DEV_FD;
           opt_needs_devpts = true;
 
           argv += 1;

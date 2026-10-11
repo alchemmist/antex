@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use antex_features::Feature;
 use antex_login::AntexAuth;
+use antex_protocol::protocol::TurnEnvironmentSelection;
 use anyhow::Result;
 use anyhow::anyhow;
 use core_test_support::responses::ev_assistant_message;
@@ -182,10 +183,17 @@ async fn ephemeral_fork_shares_cache_routing_but_keeps_session_identity() -> Res
     config.ephemeral = true;
     let fork = test
         .thread_manager
-        .fork_thread(
+        .fork_legacy_thread(
             ForkSnapshot::TruncateBeforeNthUserMessage(usize::MAX),
             StartThreadOptions {
-                environments: Some(test.antex.environment_selections().await),
+                environments: Some(
+                    test.antex
+                        .environment_selections()
+                        .await
+                        .into_iter()
+                        .map(TurnEnvironmentSelection::into_request)
+                        .collect(),
+                ),
                 ..StartThreadOptions::new(config)
             },
             test.antex.rollout_path().expect("parent rollout"),

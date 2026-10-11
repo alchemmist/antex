@@ -155,7 +155,9 @@ class Tests(unittest.TestCase):
 
     def test_resume_retries_saved_failures_without_reprocessing_successes(self):
         report = self.report()
-        report.update(candidates=2, merged=[1], failed=[{"number": 2, "reason": "timeout"}])
+        report.update(
+            candidates=2, merged=[1], failed=[{"number": 2, "reason": "timeout"}]
+        )
         ctx = Context(report)
         ctx.state.update(next_index=1, results=[report])
         ctx.retry_report = self.report()
@@ -171,7 +173,9 @@ class Tests(unittest.TestCase):
 
     def test_resume_recovery_failure_keeps_checkpoint_and_is_bounded(self):
         report = self.report()
-        report.update(candidates=2, merged=[1], failed=[{"number": 2, "reason": "timeout"}])
+        report.update(
+            candidates=2, merged=[1], failed=[{"number": 2, "reason": "timeout"}]
+        )
         ctx = Context(report)
         ctx.state.update(next_index=1, results=[report])
         ctx.retry_error = "network unavailable"
@@ -220,17 +224,25 @@ class Tests(unittest.TestCase):
             (0, "permission denied", json.dumps(report)),
             (0, "Reconnecting... 3/5", ""),
             (0, "Reconnecting... 3/5", "invalid JSON"),
-            (0, "Reconnecting... 3/5", json.dumps({**report, "failed": [], "merged": [99]})),
+            (
+                0,
+                "Reconnecting... 3/5",
+                json.dumps({**report, "failed": [], "merged": [99]}),
+            ),
         ]:
             with self.subTest(exit_code=exit_code, error=error, message=message):
                 ctx = Context(report)
                 ctx.state.update(next_index=1, results=[report])
-                with patch.object(ctx, "agent", return_value={
-                    "success": False,
-                    "exit_code": exit_code,
-                    "error": error,
-                    "message": message,
-                }):
+                with patch.object(
+                    ctx,
+                    "agent",
+                    return_value={
+                        "success": False,
+                        "exit_code": exit_code,
+                        "error": error,
+                        "message": message,
+                    },
+                ):
                     with self.assertRaises(RuntimeError):
                         MODULE.run(ctx)
                 self.assertEqual(ctx.state["results"][0]["merged"], [])

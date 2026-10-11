@@ -5,7 +5,7 @@
 //! also handles the helper argv modes because exec-server re-execs
 //! `antex_self_exe` for sandboxed filesystem and process requests.
 
-use antex_exec_server::ExecServerRuntimePaths;
+use antex_exec_server::ExecServerRuntimeOptions;
 use antex_http_client::HttpClientFactory;
 use antex_http_client::OutboundProxyPolicy;
 use std::ffi::OsStr;
@@ -13,6 +13,8 @@ use std::ffi::OsStr;
 const ANTEX_LINUX_SANDBOX_EXE_ENV_VAR: &str = "ANTEX_TEST_LINUX_SANDBOX_EXE";
 
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    #[cfg(target_os = "linux")]
+    antex_utils_pty::init_spawn_helper(std::env::args_os());
     let mut args = std::env::args_os();
     let _ = args.next();
     let argv1 = args.next();
@@ -27,7 +29,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let current_exe = std::env::current_exe()?;
     let antex_linux_sandbox_exe =
         std::env::var_os(ANTEX_LINUX_SANDBOX_EXE_ENV_VAR).map(std::path::PathBuf::from);
-    let runtime_paths = ExecServerRuntimePaths::new(current_exe, antex_linux_sandbox_exe)?;
+    let runtime_paths = ExecServerRuntimeOptions::new(current_exe, antex_linux_sandbox_exe)?;
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?

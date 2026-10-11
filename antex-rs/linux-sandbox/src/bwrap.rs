@@ -15,6 +15,7 @@
 //! - bubblewrap used to construct the filesystem view before exec.
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::ffi::OsString;
 use std::fs;
@@ -37,6 +38,8 @@ use antex_protocol::protocol::FileSystemPath;
 use antex_protocol::protocol::FileSystemSandboxPolicy;
 use antex_protocol::protocol::FileSystemSpecialPath;
 use antex_protocol::protocol::WritableRoot;
+use antex_sandboxing::find_executable_in_search_paths;
+use antex_sandboxing::find_pre_sandbox_executable_in_path;
 use antex_utils_absolute_path::AbsolutePathBuf;
 use globset::GlobBuilder;
 use globset::GlobSet;
@@ -58,6 +61,9 @@ const LINUX_PLATFORM_DEFAULT_READ_ROOTS: &[&str] = &[
     "/run/current-system/sw",
 ];
 
+/// External scanner used by deny-glob expansion and its dependency inventory.
+pub const GLOB_SCAN_PROGRAM: &str = "rg";
+
 const MAX_UNREADABLE_GLOB_MATCHES: usize = 8192;
 pub(crate) const WSL_INTEROP_DIR: &str = "/run/WSL";
 pub(crate) const WSLG_DISTRO_ROOT: &str = "/mnt/wslg/distro";
@@ -65,11 +71,10 @@ pub(crate) const WSLG_DISTRO_ROOT: &str = "/mnt/wslg/distro";
 /// Options that control how bubblewrap is invoked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct BwrapOptions {
-    /// Whether to mount a fresh `/proc` inside the sandbox.
-    ///
-    /// This is the secure default, but some restrictive container environments
-    /// deny `--proc /proc`.
+    /// Whether to mount a fresh `/proc`; disabled by `--no-proc` or mount fallback.
     pub mount_proc: bool,
+    /// Explicitly reuse the caller's PID namespace instead of creating one.
+    pub inherit_pid_namespace: bool,
     /// How networking should be configured inside the bubblewrap sandbox.
     pub network_mode: BwrapNetworkMode,
     /// Hide the WSL Windows interop socket from commands with restricted filesystem access.
@@ -88,6 +93,7 @@ impl Default for BwrapOptions {
     fn default() -> Self {
         Self {
             mount_proc: true,
+            inherit_pid_namespace: false,
             network_mode: BwrapNetworkMode::FullAccess,
             mask_wsl_interop: false,
             mask_wslg_distro: false,
@@ -295,9 +301,11 @@ fn create_bwrap_flags_full_filesystem(command: Vec<String>, options: BwrapOption
         // Always enter a fresh user namespace so root inside a container does
         // not need ambient CAP_SYS_ADMIN to create the remaining namespaces.
         "--unshare-user".to_string(),
-        "--unshare-pid".to_string(),
         "--unshare-ipc".to_string(),
     ];
+    if !options.inherit_pid_namespace {
+        args.push("--unshare-pid".to_string());
+    }
     if options.network_mode.should_unshare_network() {
         args.push("--unshare-net".to_string());
     }
@@ -371,7 +379,9 @@ fn create_bwrap_flags(
     // This also blocks host procfs root/cwd/fd links through ptrace permission
     // checks, including when a container requires retaining the host procfs.
     args.push("--unshare-user".to_string());
-    args.push("--unshare-pid".to_string());
+    if !options.inherit_pid_namespace {
+        args.push("--unshare-pid".to_string());
+    }
     args.push("--unshare-ipc".to_string());
     if options.network_mode.should_unshare_network() {
         args.push("--unshare-net".to_string());
@@ -412,7 +422,8 @@ fn create_bwrap_flags(
 /// 3. Unreadable ancestors of writable roots are masked before their child
 ///    mounts are rebound so nested writable carveouts can be reopened safely.
 /// 4. `--bind <root> <root>` re-enables writes for allowed roots, including
-///    writable subpaths under `/dev` (for example, `/dev/shm`).
+///    writable subpaths under `/dev` (for example, `/dev/shm`). Binding `/`
+///    recreates the minimal `/dev` before applying any carveouts below it.
 /// 5. `--ro-bind <subpath> <subpath>` re-applies read-only protections under
 ///    those writable roots so protected subpaths win.
 /// 6. Nested unreadable carveouts under a writable root are masked after that
@@ -423,7 +434,7 @@ fn create_filesystem_args(
     options: BwrapOptions,
 ) -> Result<BwrapArgs> {
     let daemon_directory = antex_uds::prepare_shared_daemon_socket_directory()?;
-    crate::daemon_mounts::reject_daemon_mount_aliases(
+    let daemon_directories = crate::daemon_mounts::daemon_socket_mask_paths(
         &daemon_directory,
         options
             .mask_wslg_distro
@@ -434,7 +445,7 @@ fn create_filesystem_args(
     // roots so mixed-platform configs can keep harmless paths for other
     // environments without breaking Linux command startup.
     let mut writable_roots = file_system_sandbox_policy
-        .get_writable_roots_with_cwd(cwd)
+        .get_writable_roots_with_cwd_inheriting_root_metadata(cwd)
         .into_iter()
         .filter(|writable_root| writable_root.root.as_path().exists())
         .collect::<Vec<_>>();
@@ -482,7 +493,7 @@ fn create_filesystem_args(
             })
             .collect();
     let mut unreadable_roots = file_system_sandbox_policy
-        .get_unreadable_roots_with_cwd(cwd)
+        .get_unreadable_roots_with_cwd_preserving_symlinks(cwd)
         .into_iter()
         .map(AbsolutePathBuf::into_path_buf)
         .collect::<Vec<_>>();
@@ -493,9 +504,17 @@ fn create_filesystem_args(
         expand_unreadable_globs_with_ripgrep(
             &unreadable_globs,
             cwd,
+            || {
+                find_pre_sandbox_executable_in_path(
+                    GLOB_SCAN_PROGRAM,
+                    file_system_sandbox_policy,
+                    cwd,
+                )
+            },
             options
                 .glob_scan_max_depth
                 .or(file_system_sandbox_policy.glob_scan_max_depth),
+            |_| {},
         )?
         .into_iter()
         .map(AbsolutePathBuf::into_path_buf),
@@ -538,6 +557,11 @@ fn create_filesystem_args(
                     .map(|path| PathBuf::from(*path))
                     .filter(|path| path.exists()),
             );
+            if options.inherit_pid_namespace {
+                // Reuse the caller's procfs, including its submount masks. Bind it
+                // with the other read roots so explicit deny rules still win.
+                readable_roots.insert(PathBuf::from("/proc"));
+            }
         }
 
         // A restricted policy can still explicitly request `/`, which is
@@ -571,14 +595,14 @@ fn create_filesystem_args(
                 args.push("--ro-bind".to_string());
                 args.push(path_to_string(&mount_root));
                 args.push(path_to_string(&mount_root));
-                append_daemon_socket_mask(&mut args, &mount_root, &daemon_directory)?;
+                append_daemon_socket_masks(&mut args, &mount_root, &daemon_directories)?;
             }
         }
 
         args
     };
     if args[0] == "--ro-bind" {
-        append_daemon_socket_mask(&mut args, Path::new("/"), &daemon_directory)?;
+        append_daemon_socket_masks(&mut args, Path::new("/"), &daemon_directories)?;
     }
     let mut bwrap_args = BwrapArgs {
         args,
@@ -597,6 +621,9 @@ fn create_filesystem_args(
     let unreadable_paths: HashSet<PathBuf> = unreadable_roots.iter().cloned().collect();
     let mut sorted_writable_roots = writable_roots;
     sorted_writable_roots.sort_by_key(|writable_root| path_depth(writable_root.root.as_path()));
+    let binds_file_system_root = sorted_writable_roots
+        .iter()
+        .any(|writable_root| writable_root.root.as_path() == Path::new("/"));
     // Mask only the unreadable ancestors that sit outside every writable root.
     // Unreadable paths nested under a broader writable root are applied after
     // that broader root is bound, then reopened by any deeper writable child.
@@ -616,7 +643,7 @@ fn create_filesystem_args(
     unreadable_ancestors_of_writable_roots.sort_by_key(|path| path_depth(path));
 
     for unreadable_root in &unreadable_ancestors_of_writable_roots {
-        append_unreadable_root_args(&mut bwrap_args, unreadable_root, &allowed_write_paths)?;
+        append_unreadable_root_args(&mut bwrap_args, unreadable_root, &allowed_write_paths, &[])?;
     }
 
     for writable_root in &sorted_writable_roots {
@@ -634,10 +661,27 @@ fn create_filesystem_args(
         }
 
         let mount_root = symlink_target.as_deref().unwrap_or(root);
-        bwrap_args.args.push("--bind".to_string());
-        bwrap_args.args.push(path_to_string(mount_root));
-        bwrap_args.args.push(path_to_string(mount_root));
-        append_daemon_socket_mask(&mut bwrap_args.args, mount_root, &daemon_directory)?;
+        // Rebinding a root alias would also undo masks already applied to `/`.
+        // The physical root is already writable; only the alias's carveouts remain.
+        let redundant_root_alias =
+            binds_file_system_root && root != Path::new("/") && mount_root == Path::new("/");
+        if !redundant_root_alias {
+            bwrap_args.args.push("--bind".to_string());
+            bwrap_args.args.push(path_to_string(mount_root));
+            bwrap_args.args.push(path_to_string(mount_root));
+            if mount_root == Path::new("/") {
+                // The root bind shadows the earlier device tree and applies nodev.
+                // Recreate only standard devices before applying explicit deny masks.
+                bwrap_args.args.extend([
+                    "--dev".to_string(),
+                    "/dev".to_string(),
+                    "--bind-try".to_string(),
+                    "/dev/shm".to_string(),
+                    "/dev/shm".to_string(),
+                ]);
+            }
+            append_daemon_socket_masks(&mut bwrap_args.args, mount_root, &daemon_directories)?;
+        }
 
         let mut read_only_subpaths: Vec<PathBuf> = writable_root
             .read_only_subpaths
@@ -646,25 +690,78 @@ fn create_filesystem_args(
             .filter(|path| !unreadable_paths.contains(path))
             .filter(|path| !missing_auto_metadata_read_only_project_root_subpaths.contains(path))
             .collect();
-        let protected_metadata_names = writable_root.protected_metadata_names.clone();
+        // Remember which mounts belong to a deeper writable root without dropping
+        // their paths: every path must still be remapped and validated below.
+        let mut deferred_read_only_subpaths: Vec<PathBuf> = read_only_subpaths
+            .iter()
+            .filter(|path| {
+                sorted_writable_roots.iter().any(|nested_root| {
+                    let nested_path = nested_root.root.as_path();
+                    nested_path != root
+                        && nested_path.starts_with(root)
+                        && path.starts_with(nested_path)
+                        && nested_root
+                            .read_only_subpaths
+                            .iter()
+                            .any(|nested_subpath| nested_subpath.as_path() == path.as_path())
+                })
+            })
+            .cloned()
+            .collect();
+        // A file bind grants writes to that inode, not a directory namespace.
+        // Synthesizing metadata children beneath it produces ENOTDIR during
+        // mount setup and cleanup. Suppress only these implicit children for
+        // known regular files; retain explicit carveouts and fail-closed
+        // handling for unknown types, including failed metadata lookups.
+        let protected_metadata_names: &[String] = if mount_root.is_file() {
+            &[]
+        } else {
+            &writable_root.protected_metadata_names
+        };
         append_metadata_path_masks_for_writable_root(
             &mut read_only_subpaths,
             root,
-            &protected_metadata_names,
+            protected_metadata_names,
         );
         if let Some(target) = &symlink_target {
             read_only_subpaths = remap_paths_for_symlink_target(read_only_subpaths, root, target);
+            deferred_read_only_subpaths =
+                remap_paths_for_symlink_target(deferred_read_only_subpaths, root, target);
         }
         append_protected_create_targets_for_writable_root(
             &mut bwrap_args,
-            &protected_metadata_names,
+            protected_metadata_names,
             root,
             symlink_target.as_deref(),
             &read_only_subpaths,
         );
         read_only_subpaths.sort_by_key(|path| path_depth(path));
         for subpath in read_only_subpaths {
-            append_read_only_subpath_args(&mut bwrap_args, &subpath, &allowed_write_paths)?;
+            if let Some(symlink) =
+                first_writable_symlink_component_in_path(&subpath, &allowed_write_paths)
+            {
+                /*
+                 * A read-only carveout under a writable symlink cannot be made reliable
+                 * with bwrap path arguments. Binding the symlink's current target would
+                 * only protect a startup-time snapshot; the sandboxed process could
+                 * replace the writable symlink before it reads through the logical path.
+                 */
+                return Err(CodexErr::Fatal(format!(
+                    "cannot enforce sandbox read-only path {} because it crosses writable symlink {}",
+                    subpath.display(),
+                    symlink.display()
+                )));
+            }
+            // Defer only the mount, after the same validation as an immediate mount.
+            if deferred_read_only_subpaths.contains(&subpath) {
+                continue;
+            }
+            append_read_only_subpath_args(
+                &mut bwrap_args,
+                &subpath,
+                &allowed_write_paths,
+                &daemon_directories,
+            )?;
         }
         // Protect the registry only where a writable bind exposes it. Apply
         // this before deny masks so a denied parent stays hidden, rather than
@@ -682,6 +779,7 @@ fn create_filesystem_args(
             bwrap_args.args.push("--ro-bind".to_string());
             bwrap_args.args.push(path_to_string(registry_mount));
             bwrap_args.args.push(path_to_string(registry_mount));
+            append_daemon_socket_masks(&mut bwrap_args.args, registry_mount, &daemon_directories)?;
         }
         let mut nested_unreadable_roots: Vec<PathBuf> = unreadable_roots
             .iter()
@@ -694,7 +792,12 @@ fn create_filesystem_args(
         }
         nested_unreadable_roots.sort_by_key(|path| path_depth(path));
         for unreadable_root in nested_unreadable_roots {
-            append_unreadable_root_args(&mut bwrap_args, &unreadable_root, &allowed_write_paths)?;
+            append_unreadable_root_args(
+                &mut bwrap_args,
+                &unreadable_root,
+                &allowed_write_paths,
+                &[],
+            )?;
         }
     }
 
@@ -709,8 +812,35 @@ fn create_filesystem_args(
         .cloned()
         .collect();
     rootless_unreadable_roots.sort_by_key(|path| path_depth(path));
+    let readable_roots = file_system_sandbox_policy.get_readable_roots_with_cwd(cwd);
     for unreadable_root in rootless_unreadable_roots {
-        append_unreadable_root_args(&mut bwrap_args, &unreadable_root, &allowed_write_paths)?;
+        // These denials do not overlap any writable root. Preserve explicit
+        // read-only exceptions (for example the active arg0 helper directory
+        // inside a denied home), without exposing the rest of the denied tree.
+        // Deeper denials are processed later and mask any reopened subtree.
+        let mut readable_descendants: Vec<PathBuf> = readable_roots
+            .iter()
+            .map(AbsolutePathBuf::as_path)
+            .filter(|path| {
+                *path != unreadable_root && path.starts_with(&unreadable_root) && path.exists()
+            })
+            .map(Path::to_path_buf)
+            .collect();
+        readable_descendants.sort_by_key(|path| path_depth(path));
+        append_unreadable_root_args(
+            &mut bwrap_args,
+            &unreadable_root,
+            &allowed_write_paths,
+            &readable_descendants,
+        )?;
+        for root in readable_descendants {
+            bwrap_args.args.extend([
+                "--ro-bind".to_string(),
+                path_to_string(&root),
+                path_to_string(&root),
+            ]);
+            append_daemon_socket_masks(&mut bwrap_args.args, &root, &daemon_directories)?;
+        }
     }
 
     if options.mask_wslg_distro
@@ -736,6 +866,21 @@ fn create_filesystem_args(
         ]);
     }
 
+    if unreadable_roots
+        .iter()
+        .any(|path| path == Path::new("/dev/fd"))
+    {
+        // --dev normally creates fd -> /proc/self/fd. A deny mount cannot
+        // cover that symlink, and resolving it on the host would pin a transient
+        // PID rather than protect the child's descriptor path. Omit only this
+        // synthetic alias; the existing 000, read-only mask creates a real target.
+        // This vector contains filesystem setup options only, not the command.
+        for argument in &mut bwrap_args.args {
+            if argument == "--dev" {
+                *argument = "--dev-no-fd".to_string();
+            }
+        }
+    }
     Ok(bwrap_args)
 }
 
@@ -777,39 +922,81 @@ fn append_metadata_path_masks_for_writable_root(
 
 // Mask immediately after every bind that exposes the directory, before policy
 // deny masks can hide its parent. Use the mount destination for read-root aliases.
-fn append_daemon_socket_mask(
+fn append_daemon_socket_masks(
     args: &mut Vec<String>,
     mount_root: &Path,
-    daemon_directory: &Path,
+    daemon_directories: &BTreeSet<PathBuf>,
 ) -> Result<()> {
     let source = fs::canonicalize(mount_root)?;
-    if source.starts_with(daemon_directory) {
-        return Err(CodexErr::Fatal(
-            "app-server socket directory cannot be a sandbox mount root".to_string(),
-        ));
-    }
-    if let Ok(relative) = daemon_directory.strip_prefix(source) {
-        let destination = path_to_string(&mount_root.join(relative));
-        args.extend([
-            "--perms".to_string(),
-            "000".to_string(),
-            "--tmpfs".to_string(),
-            destination.clone(),
-            "--remount-ro".to_string(),
-            destination,
-        ]);
+    for daemon_directory in daemon_directories {
+        if source.starts_with(daemon_directory) {
+            return Err(CodexErr::Fatal(
+                "app-server socket directory cannot be a sandbox mount root".to_string(),
+            ));
+        }
+        if let Ok(relative) = daemon_directory.strip_prefix(&source) {
+            let destination = mount_root.join(relative);
+            // A lossy conversion could mask a different path and expose the socket.
+            let destination = destination
+                .to_str()
+                .ok_or_else(|| {
+                    CodexErr::Fatal("app-server socket mask path must be valid UTF-8".to_string())
+                })?
+                .to_string();
+            args.extend([
+                "--perms".to_string(),
+                "000".to_string(),
+                "--tmpfs".to_string(),
+                destination.clone(),
+                "--remount-ro".to_string(),
+                destination,
+            ]);
+        }
     }
     Ok(())
+}
+
+/// Expand deny globs with the launcher's scanner in an explicit command environment.
+/// The supplied environment replaces inheritance, including when it is empty.
+pub fn expand_unreadable_globs_in_environment(
+    patterns: &[String],
+    cwd: &Path,
+    file_system_policy: &FileSystemSandboxPolicy,
+    max_depth: Option<usize>,
+    env: &HashMap<String, String>,
+    command_cwd: &Path,
+) -> Result<Vec<AbsolutePathBuf>> {
+    expand_unreadable_globs_with_ripgrep(
+        patterns,
+        cwd,
+        || {
+            find_executable_in_search_paths(
+                GLOB_SCAN_PROGRAM,
+                std::env::split_paths(env.get("PATH")?),
+                command_cwd,
+                file_system_policy,
+                cwd,
+            )
+        },
+        max_depth,
+        |command| {
+            command.env_clear().envs(env).current_dir(command_cwd);
+        },
+    )
 }
 
 fn expand_unreadable_globs_with_ripgrep(
     patterns: &[String],
     cwd: &Path,
+    resolve_scanner: impl FnOnce() -> Option<PathBuf>,
     max_depth: Option<usize>,
+    configure_command: impl Fn(&mut Command),
 ) -> Result<Vec<AbsolutePathBuf>> {
     if patterns.is_empty() || max_depth == Some(0) {
         return Ok(Vec::new());
     }
+
+    let rg_path = resolve_scanner();
 
     // Group each pattern by the static path prefix before its first glob
     // metacharacter. That keeps scans narrow, avoids searching from `/`, and
@@ -834,7 +1021,17 @@ fn expand_unreadable_globs_with_ripgrep(
     // bypassing an unreadable glob match.
     let mut expanded_paths = BTreeSet::new();
     for (search_root, globs) in patterns_by_search_root {
-        for path in ripgrep_files(search_root.as_path(), &globs, max_depth)? {
+        let paths = match &rg_path {
+            Some(rg_path) => ripgrep_files(
+                rg_path,
+                search_root.as_path(),
+                &globs,
+                max_depth,
+                &configure_command,
+            )?,
+            None => glob_files(search_root.as_path(), &globs, max_depth)?,
+        };
+        for path in paths {
             if let Some(target) = canonical_target_if_symlinked_path(path.as_path()) {
                 expanded_paths.insert(AbsolutePathBuf::from_absolute_path_checked(target)?);
             }
@@ -916,15 +1113,19 @@ fn escape_unclosed_glob_classes(glob: &str) -> String {
 }
 
 fn ripgrep_files(
+    rg_path: &Path,
     search_root: &Path,
     globs: &[String],
     max_depth: Option<usize>,
+    configure_command: &impl Fn(&mut Command),
 ) -> Result<Vec<AbsolutePathBuf>> {
+    let mut command = Command::new(rg_path);
+    configure_command(&mut command);
     // Use `rg --files` rather than shell expansion so dotfiles and ignored files
     // are still considered. A status 1 with no stderr is ripgrep's "no matches"
     // case, not a sandbox construction error.
-    let mut command = Command::new("rg");
     command
+        .arg("--no-config")
         .arg("--files")
         .arg("--hidden")
         .arg("--no-ignore")
@@ -941,7 +1142,7 @@ fn ripgrep_files(
      * Prefer ripgrep for unreadable glob expansion because it is fast and
      * already implements the file-walking semantics we want here: include
      * dotfiles, ignore ignore files, and do not recurse through symlinked
-     * directories. If `rg` is not installed in the runtime environment, fall
+     * directories. If the selected `rg` is unavailable at execution time, fall
      * back to the internal globset walker so sandbox construction still masks
      * matching paths. Other ripgrep failures stay fatal so deny-read does not
      * silently weaken.
@@ -1126,25 +1327,13 @@ fn append_mount_target_parent_dir_args(args: &mut Vec<String>, mount_target: &Pa
     }
 }
 
+/// Append mounts for a read-only path after writable-symlink validation.
 fn append_read_only_subpath_args(
     bwrap_args: &mut BwrapArgs,
     subpath: &Path,
     allowed_write_paths: &[PathBuf],
+    daemon_directories: &BTreeSet<PathBuf>,
 ) -> Result<()> {
-    if let Some(symlink) = first_writable_symlink_component_in_path(subpath, allowed_write_paths) {
-        /*
-         * A read-only carveout under a writable symlink cannot be made reliable
-         * with bwrap path arguments. Binding the symlink's current target would
-         * only protect a startup-time snapshot; the sandboxed process could
-         * replace the writable symlink before it reads through the logical path.
-         */
-        return Err(CodexErr::Fatal(format!(
-            "cannot enforce sandbox read-only path {} because it crosses writable symlink {}",
-            subpath.display(),
-            symlink.display()
-        )));
-    }
-
     if let Some(metadata) = transient_empty_metadata_path(subpath)
         && is_within_allowed_write_paths(subpath, allowed_write_paths)
     {
@@ -1175,20 +1364,16 @@ fn append_read_only_subpath_args(
         bwrap_args.args.push("--ro-bind".to_string());
         bwrap_args.args.push(path_to_string(subpath));
         bwrap_args.args.push(path_to_string(subpath));
-        append_daemon_socket_mask(
-            &mut bwrap_args.args,
-            subpath,
-            &antex_uds::shared_daemon_socket_directory()?,
-        )?;
+        append_daemon_socket_masks(&mut bwrap_args.args, subpath, daemon_directories)?;
     }
     Ok(())
 }
 
 fn append_empty_file_bind_data_args(bwrap_args: &mut BwrapArgs, path: &Path) -> Result<()> {
-    if bwrap_args.preserved_files.is_empty() {
-        bwrap_args.preserved_files.push(File::open("/dev/null")?);
-    }
-    let null_fd = bwrap_args.preserved_files[0].as_raw_fd().to_string();
+    // Bubblewrap consumes and closes the descriptor for each bind-data mount.
+    let null_file = File::open("/dev/null")?;
+    let null_fd = null_file.as_raw_fd().to_string();
+    bwrap_args.preserved_files.push(null_file);
     bwrap_args.args.push("--ro-bind-data".to_string());
     bwrap_args.args.push(null_fd);
     bwrap_args.args.push(path_to_string(path));
@@ -1253,6 +1438,7 @@ fn append_unreadable_root_args(
     bwrap_args: &mut BwrapArgs,
     unreadable_root: &Path,
     allowed_write_paths: &[PathBuf],
+    readable_descendants: &[PathBuf],
 ) -> Result<()> {
     if let Some(symlink) =
         first_writable_symlink_component_in_path(unreadable_root, allowed_write_paths)
@@ -1271,6 +1457,16 @@ fn append_unreadable_root_args(
         )));
     }
 
+    // This entry belongs to the synthetic --dev-no-fd tree, not the host /dev.
+    // Always create its deny mount even if the host alias is missing or differs.
+    if unreadable_root == Path::new("/dev/fd") {
+        return append_existing_unreadable_path_args(
+            bwrap_args,
+            unreadable_root,
+            allowed_write_paths,
+            readable_descendants,
+        );
+    }
     if !unreadable_root.exists() {
         if let Some(first_missing_component) = find_first_non_existent_component(unreadable_root)
             && is_within_allowed_write_paths(&first_missing_component, allowed_write_paths)
@@ -1280,42 +1476,44 @@ fn append_unreadable_root_args(
         return Ok(());
     }
 
-    append_existing_unreadable_path_args(bwrap_args, unreadable_root, allowed_write_paths)
+    append_existing_unreadable_path_args(
+        bwrap_args,
+        unreadable_root,
+        allowed_write_paths,
+        readable_descendants,
+    )
 }
 
 fn append_existing_unreadable_path_args(
     bwrap_args: &mut BwrapArgs,
     unreadable_root: &Path,
     allowed_write_paths: &[PathBuf],
+    readable_descendants: &[PathBuf],
 ) -> Result<()> {
-    if unreadable_root.is_dir() {
-        let mut writable_descendants: Vec<&Path> = allowed_write_paths
+    if unreadable_root == Path::new("/dev/fd") || unreadable_root.is_dir() {
+        let mut mount_descendants: Vec<&Path> = allowed_write_paths
             .iter()
+            .chain(readable_descendants)
             .map(PathBuf::as_path)
             .filter(|path| *path != unreadable_root && path.starts_with(unreadable_root))
             .collect();
         bwrap_args.args.push("--perms".to_string());
-        // Execute-only perms let the process traverse into explicitly
-        // re-opened writable descendants while still hiding the denied
-        // directory contents. Plain denied directories with no writable child
-        // mounts stay at `000`.
-        bwrap_args.args.push(if writable_descendants.is_empty() {
+        // Execute-only perms allow traversal to explicitly reopened descendants
+        // while hiding the denied directory contents. With no child mounts,
+        // denied directories stay at `000`.
+        bwrap_args.args.push(if mount_descendants.is_empty() {
             "000".to_string()
         } else {
             "111".to_string()
         });
         bwrap_args.args.push("--tmpfs".to_string());
         bwrap_args.args.push(path_to_string(unreadable_root));
-        // Recreate any writable descendants inside the tmpfs before remounting
+        // Recreate descendant mount targets inside the tmpfs before remounting
         // the denied parent read-only. Otherwise bubblewrap cannot mkdir the
         // nested mount targets after the parent has been frozen.
-        writable_descendants.sort_by_key(|path| path_depth(path));
-        for writable_descendant in writable_descendants {
-            append_mount_target_parent_dir_args(
-                &mut bwrap_args.args,
-                writable_descendant,
-                unreadable_root,
-            );
+        mount_descendants.sort_by_key(|path| path_depth(path));
+        for descendant in mount_descendants {
+            append_mount_target_parent_dir_args(&mut bwrap_args.args, descendant, unreadable_root);
         }
         bwrap_args.args.push("--remount-ro".to_string());
         bwrap_args.args.push(path_to_string(unreadable_root));
@@ -1442,9 +1640,22 @@ fn find_first_non_existent_component(target_path: &Path) -> Option<PathBuf> {
 mod wslg_tests;
 
 #[cfg(test)]
+#[path = "bwrap_device_alias_tests.rs"]
+mod device_alias_tests;
+
+#[cfg(test)]
+#[path = "bwrap_writable_file_tests.rs"]
+mod writable_file_tests;
+
+#[cfg(test)]
+#[path = "bwrap_readable_descendant_tests.rs"]
+mod readable_descendant_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
+    use antex_protocol::models::PermissionProfile;
     use antex_protocol::protocol::FileSystemAccessMode;
     use antex_protocol::protocol::FileSystemPath;
     use antex_protocol::protocol::FileSystemSandboxEntry;
@@ -1457,6 +1668,45 @@ mod tests {
     #[test]
     fn default_unreadable_glob_scan_has_no_depth_cap() {
         assert_eq!(BwrapOptions::default().glob_scan_max_depth, None);
+    }
+
+    #[test]
+    fn pid_inheritance_and_legacy_proc_modes_read_only() {
+        assert_pid_namespace_args(&PermissionProfile::read_only().file_system_sandbox_policy());
+    }
+
+    #[test]
+    fn pid_inheritance_and_legacy_proc_modes_full_filesystem() {
+        assert_pid_namespace_args(&FileSystemSandboxPolicy::unrestricted());
+    }
+
+    fn assert_pid_namespace_args(policy: &FileSystemSandboxPolicy) {
+        for (mount_proc, inherit_pid_namespace) in [(true, false), (false, false), (false, true)] {
+            let args = create_bwrap_command_args(
+                vec!["/bin/true".to_string()],
+                policy,
+                Path::new("/"),
+                Path::new("/"),
+                BwrapOptions {
+                    mount_proc,
+                    inherit_pid_namespace,
+                    network_mode: BwrapNetworkMode::Isolated,
+                    ..Default::default()
+                },
+            )
+            .expect("create bwrap args")
+            .args;
+
+            assert_eq!(
+                args.iter().any(|arg| arg == "--unshare-pid"),
+                !inherit_pid_namespace
+            );
+            assert_eq!(args.iter().any(|arg| arg == "--proc"), mount_proc);
+            assert!(args.iter().any(|arg| arg == "--unshare-user"));
+            assert!(args.iter().any(|arg| arg == "--unshare-ipc"));
+            assert!(args.iter().any(|arg| arg == "--unshare-net"));
+            assert!(args.windows(2).any(|args| args == ["--cap-drop", "ALL"]));
+        }
     }
 
     fn unreadable_glob_entry(pattern: String) -> FileSystemSandboxEntry {
@@ -1522,8 +1772,8 @@ mod tests {
                 "/dev/shm".to_string(),
                 "/dev/shm".to_string(),
                 "--unshare-user".to_string(),
-                "--unshare-pid".to_string(),
                 "--unshare-ipc".to_string(),
+                "--unshare-pid".to_string(),
                 "--unshare-net".to_string(),
                 "--proc".to_string(),
                 "/proc".to_string(),
@@ -1544,6 +1794,8 @@ mod tests {
         let temp_dir = TempDir::new().expect("temp dir");
         let root_env = temp_dir.path().join(".env");
         std::fs::write(&root_env, "secret").expect("write env");
+        let root_alias = temp_dir.path().join("root-alias");
+        std::os::unix::fs::symlink("/", &root_alias).expect("create root symlink");
         let policy = FileSystemSandboxPolicy::restricted(vec![
             FileSystemSandboxEntry {
                 path: FileSystemPath::Special {
@@ -1553,6 +1805,18 @@ mod tests {
                 missing_path_behavior: None,
             },
             unreadable_glob_entry(format!("{}/**/*.env", temp_dir.path().display())),
+            FileSystemSandboxEntry::new(
+                AbsolutePathBuf::from_absolute_path(root_alias)
+                    .expect("absolute root alias")
+                    .into(),
+                FileSystemAccessMode::Write,
+            ),
+            FileSystemSandboxEntry::new(
+                AbsolutePathBuf::try_from("/dev/zero")
+                    .expect("device path")
+                    .into(),
+                FileSystemAccessMode::Deny,
+            ),
         ]);
         let command = vec!["/bin/true".to_string()];
 
@@ -1570,6 +1834,30 @@ mod tests {
             "full-write policy with unreadable globs must still use bwrap"
         );
         assert_file_masked(&args.args, &root_env);
+        assert_file_masked(&args.args, Path::new("/dev/zero"));
+        assert_eq!(
+            args.args
+                .windows(3)
+                .filter(|window| *window == ["--bind", "/", "/"])
+                .count(),
+            1,
+        );
+        let writable_root = args
+            .args
+            .windows(3)
+            .position(|window| window == ["--bind", "/", "/"])
+            .expect("writable root");
+        let devices = args
+            .args
+            .windows(5)
+            .rposition(|window| window == ["--dev", "/dev", "--bind-try", "/dev/shm", "/dev/shm"])
+            .expect("minimal device tree with shared memory");
+        let device_mask = args
+            .args
+            .windows(3)
+            .position(|window| window[0] == "--ro-bind-data" && window[2] == "/dev/zero")
+            .expect("explicit device deny mask");
+        assert!(writable_root < devices && devices < device_mask);
     }
 
     #[cfg(unix)]
@@ -1859,6 +2147,7 @@ mod tests {
         let temp_dir = TempDir::new().expect("temp dir");
         let workspace = temp_dir.path().join("workspace");
         let blocked = workspace.join("blocked");
+        let second_blocked = workspace.join("second-blocked");
         std::fs::create_dir_all(&workspace).expect("create workspace");
 
         let workspace_root =
@@ -1875,28 +2164,39 @@ mod tests {
                 access: FileSystemAccessMode::Read,
                 missing_path_behavior: None,
             },
+            FileSystemSandboxEntry {
+                path: AbsolutePathBuf::from_absolute_path(&second_blocked)
+                    .expect("absolute second blocked")
+                    .into(),
+                access: FileSystemAccessMode::Read,
+                missing_path_behavior: None,
+            },
         ]);
 
         let args = create_filesystem_args(&policy, temp_dir.path(), BwrapOptions::default())
             .expect("filesystem args");
 
         assert_empty_file_bound_without_perms(&args.args, &blocked);
+        assert_empty_file_bound_without_perms(&args.args, &second_blocked);
         assert_empty_directory_mounted_read_only(&args.args, &workspace.join(".git"));
         assert_empty_directory_mounted_read_only(&args.args, &workspace.join(".agents"));
         assert_empty_directory_mounted_read_only(&args.args, &workspace.join(".antex"));
-        assert_eq!(args.preserved_files.len(), 1);
+        assert_eq!(args.preserved_files.len(), 2);
+        assert_bind_data_uses_distinct_preserved_fds(&args);
         assert_eq!(
             synthetic_mount_target_paths(&args),
             vec![
                 blocked.clone(),
+                second_blocked.clone(),
                 workspace.join(".git"),
                 workspace.join(".agents"),
                 workspace.join(".antex"),
                 workspace.join(".codex"),
+                workspace.join(".aws"),
             ]
         );
         assert!(
-            !blocked.exists(),
+            !blocked.exists() && !second_blocked.exists(),
             "missing path mask should not materialize host-side metadata paths at arg construction time",
         );
     }
@@ -1931,6 +2231,7 @@ mod tests {
                 workspace.join(".agents"),
                 workspace.join(".antex"),
                 workspace.join(".codex"),
+                workspace.join(".aws"),
             ]
         );
         assert!(
@@ -1976,7 +2277,8 @@ mod tests {
                 workspace.join(".antex"),
                 dot_git,
                 workspace.join(".agents"),
-                workspace.join(".codex")
+                workspace.join(".codex"),
+                workspace.join(".aws"),
             ],
         );
         assert!(
@@ -2018,7 +2320,8 @@ mod tests {
                 workspace.join(".antex"),
                 dot_git,
                 workspace.join(".agents"),
-                workspace.join(".codex")
+                workspace.join(".codex"),
+                workspace.join(".aws"),
             ],
         );
         assert!(
@@ -2180,6 +2483,7 @@ mod tests {
             synthetic_mount_target_paths(&args),
             vec![
                 PathBuf::from("/.codex"),
+                PathBuf::from("/.aws"),
                 PathBuf::from("/.git"),
                 PathBuf::from("/.agents"),
                 PathBuf::from("/.antex"),
@@ -2187,98 +2491,43 @@ mod tests {
                 PathBuf::from("/dev/.agents"),
                 PathBuf::from("/dev/.antex"),
                 PathBuf::from("/dev/.codex"),
+                PathBuf::from("/dev/.aws"),
             ]
         );
+        let dev_mounts = args
+            .args
+            .windows(2)
+            .enumerate()
+            .filter_map(|(index, args)| (args == ["--dev", "/dev"]).then_some(index))
+            .collect::<Vec<_>>();
+        let [initial_dev_mount, restored_dev_mount] = dev_mounts.as_slice() else {
+            panic!("expected exactly two /dev mounts, got {dev_mounts:?}");
+        };
+        let root_bind = args
+            .args
+            .windows(3)
+            .position(|args| args == ["--bind", "/", "/"])
+            .expect("root bind");
+        let dev_bind = args
+            .args
+            .windows(3)
+            .position(|args| args == ["--bind", "/dev", "/dev"])
+            .expect("/dev bind");
+        assert!(*initial_dev_mount < root_bind && root_bind < *restored_dev_mount);
+        assert!(*restored_dev_mount < dev_bind);
+    }
+
+    #[test]
+    fn non_utf8_daemon_socket_mask_path_is_rejected() {
         let daemon_directory =
-            path_to_string(&antex_uds::shared_daemon_socket_directory().unwrap());
-        assert_eq!(
-            args.args,
-            vec![
-                // Start from a read-only view of the full filesystem.
-                "--ro-bind".to_string(),
-                "/".to_string(),
-                "/".to_string(),
-                // Recreate a writable /dev inside the sandbox.
-                "--dev".to_string(),
-                "/dev".to_string(),
-                "--perms".to_string(),
-                "000".to_string(),
-                "--tmpfs".to_string(),
-                daemon_directory.clone(),
-                "--remount-ro".to_string(),
-                daemon_directory.clone(),
-                // Make the writable root itself writable again.
-                "--bind".to_string(),
-                "/".to_string(),
-                "/".to_string(),
-                "--perms".to_string(),
-                "000".to_string(),
-                "--tmpfs".to_string(),
-                daemon_directory.clone(),
-                "--remount-ro".to_string(),
-                daemon_directory,
-                // Mask the default metadata path names under the writable root.
-                // Because the root is `/` in this test, these carveout paths
-                // appear directly below `/`.
-                "--perms".to_string(),
-                "555".to_string(),
-                "--tmpfs".to_string(),
-                "/.codex".to_string(),
-                "--remount-ro".to_string(),
-                "/.codex".to_string(),
-                "--perms".to_string(),
-                "555".to_string(),
-                "--tmpfs".to_string(),
-                "/.git".to_string(),
-                "--remount-ro".to_string(),
-                "/.git".to_string(),
-                "--perms".to_string(),
-                "555".to_string(),
-                "--tmpfs".to_string(),
-                "/.agents".to_string(),
-                "--remount-ro".to_string(),
-                "/.agents".to_string(),
-                "--perms".to_string(),
-                "555".to_string(),
-                "--tmpfs".to_string(),
-                "/.antex".to_string(),
-                "--remount-ro".to_string(),
-                "/.antex".to_string(),
-                "--ro-bind".to_string(),
-                path_to_string(&synthetic_mount_registry_root()),
-                path_to_string(&synthetic_mount_registry_root()),
-                // Rebind /dev after the root bind so device nodes remain
-                // writable/usable inside the writable root.
-                "--bind".to_string(),
-                "/dev".to_string(),
-                "/dev".to_string(),
-                // Then mask the metadata names that would otherwise be
-                // creatable below the writable /dev bind.
-                "--perms".to_string(),
-                "555".to_string(),
-                "--tmpfs".to_string(),
-                "/dev/.git".to_string(),
-                "--remount-ro".to_string(),
-                "/dev/.git".to_string(),
-                "--perms".to_string(),
-                "555".to_string(),
-                "--tmpfs".to_string(),
-                "/dev/.agents".to_string(),
-                "--remount-ro".to_string(),
-                "/dev/.agents".to_string(),
-                "--perms".to_string(),
-                "555".to_string(),
-                "--tmpfs".to_string(),
-                "/dev/.antex".to_string(),
-                "--remount-ro".to_string(),
-                "/dev/.antex".to_string(),
-                "--perms".to_string(),
-                "555".to_string(),
-                "--tmpfs".to_string(),
-                "/dev/.codex".to_string(),
-                "--remount-ro".to_string(),
-                "/dev/.codex".to_string(),
-            ]
+            PathBuf::from(OsString::from_vec(b"/tmp/antex-daemon-\xff".to_vec()));
+        assert!(
+            append_daemon_socket_masks(
+                &mut Vec::new(),
+                Path::new("/"),
+                &BTreeSet::from([daemon_directory]),
+            )
+            .is_err()
         );
     }
 
@@ -2461,23 +2710,18 @@ mod tests {
         let docs = AbsolutePathBuf::from_absolute_path(&docs).expect("absolute docs");
         let docs_public =
             AbsolutePathBuf::from_absolute_path(&docs_public).expect("absolute docs/public");
-        let policy = FileSystemSandboxPolicy::restricted(vec![
-            FileSystemSandboxEntry {
-                path: writable_root.into(),
-                access: FileSystemAccessMode::Write,
-                missing_path_behavior: None,
-            },
-            FileSystemSandboxEntry {
-                path: docs.clone().into(),
-                access: FileSystemAccessMode::Read,
-                missing_path_behavior: None,
-            },
-            FileSystemSandboxEntry {
-                path: docs_public.clone().into(),
-                access: FileSystemAccessMode::Write,
-                missing_path_behavior: None,
-            },
-        ]);
+        let mut entries = vec![
+            FileSystemSandboxEntry::new(writable_root.into(), FileSystemAccessMode::Write),
+            FileSystemSandboxEntry::new(docs.clone().into(), FileSystemAccessMode::Read),
+            FileSystemSandboxEntry::new(docs_public.clone().into(), FileSystemAccessMode::Write),
+        ];
+        for name in [".git", ".agents", ".codex", ".aws"] {
+            entries.push(FileSystemSandboxEntry::skip_missing_path(
+                docs_public.join(name).into(),
+                FileSystemAccessMode::Read,
+            ));
+        }
+        let policy = FileSystemSandboxPolicy::restricted(entries);
 
         let args = create_filesystem_args(&policy, temp_dir.path(), BwrapOptions::default())
             .expect("filesystem args");
@@ -2501,6 +2745,23 @@ mod tests {
             "expected read-only parent remount before nested writable bind: {:#?}",
             args.args
         );
+        for name in [".git", ".agents", ".codex", ".aws"] {
+            let metadata_path = path_to_string(docs_public.join(name).as_path());
+            let mount_indices = args
+                .args
+                .windows(2)
+                .enumerate()
+                .filter_map(|(index, window)| {
+                    (window == ["--tmpfs", metadata_path.as_str()]).then_some(index)
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(mount_indices.len(), 1, "one mount for {metadata_path}");
+            assert!(
+                docs_public_rw_index < mount_indices[0],
+                "metadata must be mounted after its writable root: {:#?}",
+                args.args
+            );
+        }
     }
 
     #[test]
@@ -2746,7 +3007,9 @@ mod tests {
     fn split_policy_masks_root_read_file_carveouts() {
         let temp_dir = TempDir::new().expect("temp dir");
         let blocked_file = temp_dir.path().join("blocked.txt");
+        let second_blocked_file = temp_dir.path().join("second-blocked.txt");
         std::fs::write(&blocked_file, "secret").expect("create blocked file");
+        std::fs::write(&second_blocked_file, "dummy secret").expect("create second blocked file");
         let blocked_file =
             AbsolutePathBuf::from_absolute_path(&blocked_file).expect("absolute blocked file");
         let policy = FileSystemSandboxPolicy::restricted(vec![
@@ -2762,20 +3025,46 @@ mod tests {
                 access: FileSystemAccessMode::Deny,
                 missing_path_behavior: None,
             },
+            FileSystemSandboxEntry {
+                path: AbsolutePathBuf::from_absolute_path(&second_blocked_file)
+                    .expect("absolute second blocked file")
+                    .into(),
+                access: FileSystemAccessMode::Deny,
+                missing_path_behavior: None,
+            },
         ]);
 
         let args = create_filesystem_args(&policy, temp_dir.path(), BwrapOptions::default())
             .expect("filesystem args");
-        let blocked_file_str = path_to_string(blocked_file.as_path());
-
-        assert_eq!(args.preserved_files.len(), 1);
+        assert_eq!(args.preserved_files.len(), 2);
+        assert_bind_data_uses_distinct_preserved_fds(&args);
         assert!(args.synthetic_mount_targets.is_empty());
-        assert!(args.args.windows(5).any(|window| {
-            window[0] == "--perms"
-                && window[1] == "000"
-                && window[2] == "--ro-bind-data"
-                && window[4] == blocked_file_str
-        }));
+        for blocked_file in [blocked_file.as_path(), second_blocked_file.as_path()] {
+            assert!(args.args.windows(5).any(|window| {
+                window[0] == "--perms"
+                    && window[1] == "000"
+                    && window[2] == "--ro-bind-data"
+                    && window[4] == path_to_string(blocked_file)
+            }));
+        }
+    }
+
+    fn assert_bind_data_uses_distinct_preserved_fds(args: &BwrapArgs) {
+        let mount_fds = args
+            .args
+            .windows(3)
+            .filter(|window| window[0] == "--ro-bind-data")
+            .map(|window| window[1].parse::<i32>().expect("bind-data fd"))
+            .collect::<Vec<_>>();
+        let distinct_fds = mount_fds.iter().copied().collect::<HashSet<_>>();
+        assert_eq!(mount_fds.len(), distinct_fds.len());
+        assert_eq!(
+            distinct_fds,
+            args.preserved_files
+                .iter()
+                .map(AsRawFd::as_raw_fd)
+                .collect()
+        );
     }
 
     #[test]
@@ -2876,7 +3165,7 @@ mod tests {
     }
 
     fn ripgrep_available() -> bool {
-        Command::new("rg")
+        Command::new(GLOB_SCAN_PROGRAM)
             .arg("--version")
             .output()
             .is_ok_and(|output| output.status.success())

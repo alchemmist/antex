@@ -1,4 +1,4 @@
-//! Fixtures for integration tests that seed the provider's model cache.
+//! Fixtures for integration tests that seed provider credentials and model caches.
 
 use antex_login::AntexAuth;
 use antex_model_provider_info::ModelProviderInfo;
@@ -19,3 +19,5 @@ pub fn models_cache_entry(
         models,
     }
 }
+
+pub use crate::shared_state::test_support::seed_gateway_auth;

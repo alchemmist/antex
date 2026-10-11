@@ -2,22 +2,15 @@ use super::session::Session;
 use super::session::SessionSettingsUpdate;
 use super::step_context::StepContext;
 use super::thread_settings;
-use super::turn_context::TurnContext;
-use crate::environment_selection::TurnEnvironmentSnapshot;
 use crate::function_tool::FunctionCallError;
 use antex_protocol::protocol::TurnEnvironmentSelections;
 use antex_utils_absolute_path::AbsolutePathBuf;
-use arc_swap::ArcSwap;
-use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering;
-
-struct WorkingDirectoryUpdate {
-    cwd: AbsolutePathBuf,
-    environments: TurnEnvironmentSnapshot,
-}
 
 impl Session {
+    #[expect(
+        clippy::await_holding_invalid_type,
+        reason = "persistent cwd and active environments must publish atomically with step capture"
+    )]
     pub(crate) async fn set_working_directory(
         &self,
         step: &StepContext,
@@ -65,12 +58,22 @@ impl Session {
             ));
         }
         let guard = thread_settings::acquire_persistence_lock(self).await;
+        // Serialize publication with step capture and live environment updates. Already captured
+        // steps keep their immutable environment, without cloning or replacing the TurnContext.
+        let active = self.active_turn.lock().await;
+        if !active
+            .as_ref()
+            .and_then(|active| active.task.as_ref())
+            .is_some_and(|task| {
+                std::sync::Arc::ptr_eq(&task.turn_context, &step.turn)
+                    && !task.cancellation_token.is_cancelled()
+            })
+        {
+            return Err(fail("the originating turn is no longer active".into()));
+        }
         let current = self.state.lock().await.session_configuration.clone();
         let mut selections = self.services.turn_environments.selections();
-        if selections.len() != 1
-            || selections[0].cwd != *environment.cwd()
-            || selections[0].environment_id != environment.selection.environment_id
-        {
+        if selections.len() != 1 || selections[0] != environment.selection() {
             return Err(fail(
                 "the session directory changed; retry from the current session context".into(),
             ));
@@ -79,7 +82,10 @@ impl Session {
         let commit = self
             .update_settings_if(
                 SessionSettingsUpdate {
-                    environments: Some(TurnEnvironmentSelections::new(cwd.clone(), selections)),
+                    environments: Some(TurnEnvironmentSelections::new(
+                        cwd.clone(),
+                        selections.clone(),
+                    )),
                     runtime_workspace_roots: Some(current.runtime_workspace_roots.clone()),
                     permission_profile: Some(current.permission_profile()),
                     active_permission_profile: current.active_permission_profile(),
@@ -101,11 +107,10 @@ impl Session {
             .ok_or_else(|| {
                 fail("session settings changed; retry from the current session context".into())
             })?;
-        let environments = self.services.turn_environments.snapshot().await;
-        step.turn.extension_data.insert(WorkingDirectoryUpdate {
-            cwd: cwd.clone(),
-            environments,
-        });
+        self.services
+            .turn_environments
+            .update_selections(&selections);
+        drop(active);
         thread_settings::emit_applied(self, step.turn.sub_id.clone(), commit.snapshot).await;
         drop(guard);
         self.checkpoint_thread_settings().await.map_err(|error| {
@@ -117,60 +122,5 @@ impl Session {
             "Session working directory changed to {}. End this tool batch or functions.exec cell now. Commands issued in the next model step use this directory; calls already issued in this step and existing processes retain their working directories.",
             cwd.display()
         ))
-    }
-}
-
-impl TurnContext {
-    pub(super) fn with_working_directory_update(self: Arc<Self>) -> Arc<Self> {
-        let Some(update) = self.extension_data.get::<WorkingDirectoryUpdate>() else {
-            return self;
-        };
-        let mut config = self.config.as_ref().clone();
-        config.cwd = update.cwd.clone();
-        Arc::new(Self {
-            sub_id: self.sub_id.clone(),
-            trace_id: self.trace_id.clone(),
-            realtime_active: self.realtime_active,
-            code_mode_available: self.code_mode_available,
-            config: Arc::new(config),
-            configured_token_budget: self.configured_token_budget.clone(),
-            use_model_token_budget_defaults: self.use_model_token_budget_defaults,
-            auth_manager: self.auth_manager.clone(),
-            initial_settings: Arc::clone(&self.initial_settings),
-            disabled_plugin_ids: self.disabled_plugin_ids.clone(),
-            current_settings: ArcSwap::from(self.current_settings.load_full()),
-            session_telemetry: self.session_telemetry.clone(),
-            provider: self.provider.clone(),
-            session_source: self.session_source.clone(),
-            history_mode: self.history_mode,
-            parent_thread_id: self.parent_thread_id,
-            originator: self.originator.clone(),
-            environments: update.environments.clone(),
-            #[allow(deprecated)]
-            cwd: update.cwd.clone(),
-            current_date: self.current_date.clone(),
-            timezone: self.timezone.clone(),
-            app_server_client_name: self.app_server_client_name.clone(),
-            developer_instructions: self.developer_instructions.clone(),
-            multi_agent_version: self.multi_agent_version,
-            subagent_spawn_policy: self.subagent_spawn_policy,
-            network: self.network.clone(),
-            windows_sandbox_level: self.windows_sandbox_level,
-            available_models: self.available_models.clone(),
-            unified_exec_shell_mode: self.unified_exec_shell_mode.clone(),
-            final_output_json_schema: self.final_output_json_schema.clone(),
-            dynamic_tools: self.dynamic_tools.clone(),
-            turn_metadata_state: Arc::clone(&self.turn_metadata_state),
-            extension_data: Arc::clone(&self.extension_data),
-            turn_timing_state: Arc::clone(&self.turn_timing_state),
-            terminal_error: Arc::clone(&self.terminal_error),
-            server_model_warning_emitted: AtomicBool::new(
-                self.server_model_warning_emitted.load(Ordering::Relaxed),
-            ),
-            model_verification_emitted: AtomicBool::new(
-                self.model_verification_emitted.load(Ordering::Relaxed),
-            ),
-            cyber_access_program: self.cyber_access_program,
-        })
     }
 }

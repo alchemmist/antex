@@ -1,13 +1,12 @@
 use crate::config::edit::ConfigEdit;
 use crate::config::edit::ConfigEditsBuilder;
 use crate::context::world_state::validate_managed_developer_instructions;
-use crate::guardian::BUNDLED_GUARDIAN_POLICY;
 use crate::path_utils::normalize_for_native_workdir;
 use crate::unified_exec::DEFAULT_MAX_BACKGROUND_TERMINAL_TIMEOUT_MS;
 use crate::unified_exec::MIN_EMPTY_YIELD_TIME_MS;
 use crate::windows_sandbox::WindowsSandboxLevelExt;
 use crate::windows_sandbox::resolve_windows_sandbox_mode;
-use crate::windows_sandbox::resolve_windows_sandbox_private_desktop;
+use crate::windows_sandbox::windows_sandbox_level_for_legacy_checks;
 use antex_agent_roles::load_agent_roles;
 use antex_config::CloudConfigBundleLoader;
 use antex_config::ConfigLayerSource;
@@ -26,6 +25,7 @@ use antex_config::ResidencyRequirement;
 use antex_config::SandboxModeRequirement;
 use antex_config::Sourced;
 use antex_config::ThreadConfigLoader;
+use antex_config::config_toml::CircuitBreakAction;
 use antex_config::config_toml::ConfigToml;
 use antex_config::config_toml::DEFAULT_PROJECT_DOC_MAX_BYTES;
 use antex_config::config_toml::ProjectConfig;
@@ -81,7 +81,6 @@ use antex_features::TokenBudgetConfigToml;
 use antex_git_utils::resolve_root_git_project_for_trust;
 use antex_http_client::HttpClientFactory;
 use antex_http_client::OutboundProxyPolicy;
-use antex_install_context::InstallContext;
 use antex_login::AuthManagerConfig;
 use antex_login::AuthRouteConfig;
 use antex_mcp::DEFAULT_OPTIONAL_MCP_STARTUP_GRACE;
@@ -97,6 +96,7 @@ use antex_model_provider_info::OLLAMA_CHAT_PROVIDER_REMOVED_ERROR;
 use antex_model_provider_info::built_in_model_providers;
 use antex_model_provider_info::merge_configured_model_providers;
 use antex_models_manager::ModelsManagerConfig;
+use antex_prompts::ResolvedModelMessages;
 use antex_protocol::config_types::AltScreenMode;
 use antex_protocol::config_types::AutoCompactTokenLimitScope;
 use antex_protocol::config_types::ForcedLoginMethod;
@@ -117,7 +117,6 @@ use antex_protocol::models::PermissionProfile;
 pub use antex_protocol::models::PermissionProfileSnapshot;
 use antex_protocol::models::ProfileWorkspaceRoot;
 use antex_protocol::models::SandboxEnforcement;
-use antex_protocol::openai_models::ModelMessages;
 use antex_protocol::openai_models::ModelsResponse;
 use antex_protocol::openai_models::ReasoningEffort;
 use antex_protocol::permissions::DenyReadValidator;
@@ -154,9 +153,7 @@ use std::time::Duration;
 
 use crate::config::permissions::BUILT_IN_READ_ONLY_PROFILE;
 use crate::config::permissions::BUILT_IN_WORKSPACE_PROFILE;
-use crate::config::permissions::apply_network_proxy_feature_config;
 use crate::config::permissions::default_builtin_permission_profile_name;
-use crate::config::permissions::get_readable_roots_required_for_antex_runtime;
 use crate::config::permissions::network_proxy_config_for_profile_selection;
 use crate::config::permissions::validate_user_permission_profile_names;
 use crate::responses_metadata::validate_extra_metadata;
@@ -177,6 +174,8 @@ mod permission_profile_selection;
 mod permissions;
 mod requirements;
 mod resolved_permission_profile;
+mod runtime_refresh;
+pub(crate) use runtime_refresh::RuntimeConfigRefresh;
 #[cfg(test)]
 mod schema;
 mod token_budget_startup;
@@ -217,7 +216,10 @@ pub use permissions::resolve_permission_profile;
 pub(crate) use resolved_permission_profile::PermissionProfileState;
 pub use token_budget_startup::TokenBudgetStartupConfig;
 pub use windows_sandbox_config::PreparedWindowsSandboxConfig;
+use windows_sandbox_config::config_allows_mxc;
 pub use windows_sandbox_config::prepare_windows_sandbox_config;
+use windows_sandbox_config::resolve_windows_sandbox_type;
+pub use windows_sandbox_config::windows_mxc_allowed_by_config;
 
 const DEFAULT_IGNORE_LARGE_UNTRACKED_DIRS: i64 = 200;
 const DEFAULT_IGNORE_LARGE_UNTRACKED_FILES: i64 = 10 * 1024 * 1024;
@@ -348,10 +350,8 @@ pub struct Permissions {
     /// Effective Windows sandbox mode derived from `[windows].sandbox` or
     /// legacy feature keys.
     pub windows_sandbox_mode: Option<WindowsSandboxModeToml>,
-    /// Selected Windows sandbox implementation, separate from the legacy setup level.
+    /// Configured Windows backend; use `Config::effective_local_windows_sandbox_type()` for local selection.
     pub windows_sandbox_type: SandboxType,
-    /// Whether the final Windows sandboxed child should run on a private desktop.
-    pub windows_sandbox_private_desktop: bool,
 }
 
 impl Permissions {
@@ -373,7 +373,6 @@ impl Permissions {
             shell_environment_policy: ShellEnvironmentPolicy::default(),
             windows_sandbox_mode: None,
             windows_sandbox_type: SandboxType::None,
-            windows_sandbox_private_desktop: true,
         })
     }
 
@@ -588,7 +587,19 @@ fn build_network_proxy_spec(
     network_requirements: Option<Sourced<antex_config::NetworkConstraints>>,
     permission_profile: &PermissionProfile,
     environment_overrides: &HashMap<String, String>,
+    features: &ManagedFeatures,
+    feature_settings: Option<&FeaturesToml>,
 ) -> std::io::Result<Option<NetworkProxySpec>> {
+    if features.enabled(Feature::CredentialMasking) {
+        configured_network_proxy_config.set_credential_broker_enabled(/*enabled*/ true);
+        if let Some(credentials) = network_proxy_toml_config(feature_settings)
+            .and_then(|network_proxy| network_proxy.credentials.as_ref())
+        {
+            configured_network_proxy_config
+                .credential_providers
+                .clone_from(credentials);
+        }
+    }
     configured_network_proxy_config.configure_credential_broker_environment(environment_overrides);
     PreparedNetworkConfig {
         configured_proxy: configured_network_proxy_config,
@@ -609,15 +620,25 @@ pub enum ThreadStoreConfig {
 /// Application configuration loaded from disk and merged with overrides.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
+    /// App-server-owned destination policy; other runtimes remain unmanaged.
+    pub application_network_policy: antex_http_client::NetworkPolicy,
+    /// Auth bootstrap routing installed by the app-server configuration owner.
+    pub application_auth_route_config: Option<AuthRouteConfig>,
     /// Provenance for how this [`Config`] was derived (merged layers + enforced
     /// requirements).
     pub config_layer_stack: ConfigLayerStack,
+
+    /// Plugin settings resolved with this snapshot, before capability admission.
+    pub plugins: antex_config::types::PluginsConfigToml,
 
     /// Warnings collected during config load that should be shown on startup.
     pub startup_warnings: Vec<String>,
 
     /// Optional override of model selection.
     pub model: Option<String>,
+
+    /// Default Daybreak preference for new threads and non-interactive turns.
+    pub daybreak_enabled: bool,
 
     /// Effective service tier request id preference for new turns.
     /// `default` means the user explicitly selected standard routing.
@@ -635,6 +656,10 @@ pub struct Config {
     /// Controls whether `model_auto_compact_token_limit` applies to the full
     /// active context or only tokens after the carried compaction-window prefix.
     pub model_auto_compact_token_limit_scope: AutoCompactTokenLimitScope,
+
+    /// Percentage of the usable context window that triggers turn-end compaction.
+    /// Zero disables turn-end compaction.
+    pub model_post_turn_compact_threshold_percent: u8,
 
     /// Key into the model_providers map that specifies which provider to use.
     pub model_provider_id: String,
@@ -689,10 +714,27 @@ pub struct Config {
     /// guardian developer prompt.
     pub guardian_policy_config: Option<String>,
 
+    /// Additional Guardian policy from requirements.toml or config.toml.
+    /// Rendered into `{{ extra_policy }}` alongside the resolved tenant policy.
+    pub guardian_extra_policy: Option<String>,
+
     /// Guardian prompt template override from config.toml.
     /// The resolved policy config replaces its `{{ tenant_policy_config }}`
     /// placeholder when a review session is built.
     pub guardian_policy_template: Option<String>,
+    /// Transcript encoding shared by Guardian review and scoring.
+    pub guardian_transcript_mode: antex_protocol::TranscriptFormat,
+
+    /// Optional replacement for the gated history-retrieval instructions.
+    /// Blank config values are treated as unset, like other Guardian policy overrides.
+    pub guardian_conversation_history_prompt: Option<String>,
+
+    /// Optional per-response history-tool budget. Guardian defaults to 4,000 tokens and
+    /// preserves stricter parent tool limits.
+    pub guardian_conversation_history_max_output_tokens: Option<NonZeroUsize>,
+
+    /// Include a structured error when Guardian's circuit breaker interrupts a turn.
+    pub guardian_circuit_break_action: CircuitBreakAction,
 
     /// Whether to inject the `<permissions instructions>` developer block.
     pub include_permissions_instructions: bool,
@@ -709,14 +751,17 @@ pub struct Config {
     /// Optional token budget override for the available-skills catalog.
     pub skill_max_context_tokens: Option<NonZeroUsize>,
 
-    /// Whether orchestrator-owned skills are exposed to the model.
-    pub orchestrator_skills_enabled: bool,
+    /// Whether cloud skills are discovered and exposed to the model.
+    pub cloud_skill_enabled: bool,
 
     /// Whether orchestrator-owned MCP tools are exposed to the model.
     pub orchestrator_mcp_enabled: bool,
 
     /// Whether to inject the `<environment_context>` user block.
     pub include_environment_context: bool,
+
+    /// Whether environment context includes the current date and timezone.
+    pub include_environment_context_time: bool,
 
     /// Compact prompt override.
     pub compact_prompt: Option<String>,
@@ -749,8 +794,11 @@ pub struct Config {
     /// Enable ASCII animations and shimmer effects in the TUI.
     pub animations: bool,
 
-    /// Enable decorative TUI effects such as Astra composer stars.
-    pub tui_whimsy: bool,
+    /// Individual TUI effects, subordinate to the animation master switch.
+    pub tui_effects: antex_config::types::TuiEffects,
+
+    /// Rich content rendering preferences, independent of animations.
+    pub tui_rendering: antex_config::types::TuiRendering,
 
     /// Show startup tooltips in the TUI welcome screen.
     pub show_tooltips: bool,
@@ -780,6 +828,21 @@ pub struct Config {
 
     /// Mirror shell command activity into a dedicated tmux window when running inside tmux.
     pub tui_tmux_command_log: bool,
+
+    /// Own the fullscreen transcript when the alternate screen is enabled.
+    pub tui_fullscreen_transcript: bool,
+
+    /// Mouse wheel speed multiplier for transcript scrolling; defaults to one row per event.
+    pub tui_mouse_scroll_speed: Option<f64>,
+
+    /// Override the terminal-specific default for copying transcript mouse selections.
+    pub tui_copy_on_select: antex_config::types::CopyOnSelect,
+
+    /// Whether to deselect transcript text after a confirmed automatic copy.
+    pub tui_copy_on_select_clear_selection: bool,
+
+    /// Right-click text paste fallback for the fullscreen TUI.
+    pub tui_right_click_paste: antex_config::types::RightClickPaste,
 
     /// Start the TUI in the specified collaboration mode (plan/default).
 
@@ -816,6 +879,9 @@ pub struct Config {
 
     /// Preferred layout for resume/fork session picker results.
     pub tui_session_picker_view: SessionPickerViewMode,
+
+    /// Last selected grouping in Agent Command Center.
+    pub tui_agents_overview_grouping: antex_config::types::AgentsOverviewGrouping,
 
     /// Working directory to use when resuming or forking a session.
     /// When unset, prompt if the current and session directories differ.
@@ -965,12 +1031,10 @@ pub struct Config {
     /// When this program is invoked, arg0 will be set to `antex-linux-sandbox`.
     pub antex_linux_sandbox_exe: Option<PathBuf>,
 
-    /// Path to the `antex-execve-wrapper` executable used for shell
-    /// escalation. This cannot be set in the config file: it must be set in
-    /// code via [`ConfigOverrides`].
+    /// Ignored compatibility field for clients that still pass the retired wrapper path.
     pub main_execve_wrapper_exe: Option<PathBuf>,
 
-    /// Optional absolute path to patched zsh used by zsh-exec-bridge-backed shell execution.
+    /// Ignored compatibility field for clients that still pass a patched zsh path.
     pub zsh_path: Option<PathBuf>,
 
     /// Value to use for `reasoning.effort` when making a request using the
@@ -1090,6 +1154,12 @@ pub struct Config {
     /// Centralized feature flags; source of truth for feature gating.
     pub features: ManagedFeatures,
 
+    /// Local rollout preference after checking network restrictions and native availability.
+    pub prefer_mxc: bool,
+
+    /// Host feature defaults retained beneath explicit configuration overrides.
+    pub runtime_feature_defaults: BTreeMap<Feature, bool>,
+
     /// When `true`, suppress warnings about unstable (under development) features.
     pub suppress_unstable_features_warning: bool,
 
@@ -1110,7 +1180,8 @@ pub struct Config {
     /// or placeholder replacement will occur for fast keypress bursts.
     pub disable_paste_burst: bool,
 
-    /// When `false`, disables analytics across Antex product surfaces in this machine.
+    /// When `false`, disables OpenAI analytics across Codex product surfaces on this machine.
+    /// Custom OTLP metrics exporters are controlled by `otel.metrics_exporter`.
     /// Voluntarily left as Optional because the default value might depend on the client.
     pub analytics_enabled: Option<bool>,
 
@@ -1138,6 +1209,11 @@ const DEFAULT_CODE_MODE_EXEC_YIELD_TIME_MS: u64 = 30_000;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CodeModeConfig {
     pub default_exec_yield_time_ms: u64,
+    /// Show handler duration, code-mode host duration, and harness overhead
+    /// in each code-mode cell response.
+    /// Experimental: this option and the response format may change or be removed.
+    pub experimental_show_cell_overhead: bool,
+    pub tool_input_schema_max_bytes: Option<usize>,
     pub excluded_tool_namespaces: Vec<String>,
     pub direct_only_tool_namespaces: Vec<String>,
     /// Keep code mode fail-closed when the standalone host is unavailable.
@@ -1148,6 +1224,8 @@ impl Default for CodeModeConfig {
     fn default() -> Self {
         Self {
             default_exec_yield_time_ms: DEFAULT_CODE_MODE_EXEC_YIELD_TIME_MS,
+            experimental_show_cell_overhead: false,
+            tool_input_schema_max_bytes: None,
             excluded_tool_namespaces: Vec::new(),
             direct_only_tool_namespaces: Vec::new(),
             disable_in_process_fallback: false,
@@ -1155,10 +1233,6 @@ impl Default for CodeModeConfig {
     }
 }
 
-pub(crate) const DEFAULT_TOKEN_BUDGET_REMINDER_MESSAGE_TEMPLATE: &str = concat!(
-    "Your context window is nearly exhausted (only {n_remaining} tokens remaining) and will be automatically reset for you soon. ",
-    "Once reset, message items in current context window will be cleared in the new window, but notes and history items will be persistent across windows."
-);
 const TOKEN_BUDGET_REMINDER_MESSAGE_TEMPLATE_MAX_BYTES: usize = 2000;
 const TOKEN_BUDGET_GUIDANCE_MESSAGE_MAX_BYTES: usize = 2000;
 const AUTO_COMPACT_FALLBACK_PROMPT_MAX_BYTES: usize = 2000;
@@ -1260,7 +1334,9 @@ impl Default for TokenBudgetConfig {
         Self {
             use_history_notes_extension: false,
             reminder_threshold_tokens: None,
-            reminder_message_template: DEFAULT_TOKEN_BUDGET_REMINDER_MESSAGE_TEMPLATE.to_string(),
+            reminder_message_template: ResolvedModelMessages::bundled()
+                .token_budget_reminder_template()
+                .to_owned(),
             guidance_message: None,
             auto_compact_fallback_prompt: None,
             auto_compact_fallback_buffer_tokens: None,
@@ -1306,11 +1382,15 @@ pub struct MultiAgentV2Config {
     pub root_agent_usage_hint_text: Option<String>,
     pub subagent_usage_hint_text: Option<String>,
     pub subagent_developer_instructions: Option<String>,
+    pub preserve_fork_prefix: bool,
     pub multi_agent_mode_hint_text: Option<String>,
     pub tool_namespace: Option<String>,
     pub hide_spawn_agent_metadata: bool,
     pub expose_spawn_agent_model_overrides: bool,
     pub wait_agent_enabled: bool,
+    pub disable_direct_message: bool,
+    pub message_board_in_memory: bool,
+    pub message_board_remote: Option<antex_features::RemoteMessageBoardConfigToml>,
     pub non_code_mode_only: bool,
 }
 
@@ -1325,11 +1405,15 @@ impl MultiAgentV2Config {
             root_agent_usage_hint_text: None,
             subagent_usage_hint_text: None,
             subagent_developer_instructions: None,
+            preserve_fork_prefix: false,
             multi_agent_mode_hint_text: None,
             tool_namespace: Some(DEFAULT_MULTI_AGENT_V2_TOOL_NAMESPACE.to_string()),
             hide_spawn_agent_metadata: true,
             expose_spawn_agent_model_overrides: true,
             wait_agent_enabled: true,
+            disable_direct_message: false,
+            message_board_in_memory: false,
+            message_board_remote: None,
             non_code_mode_only: true,
         }
     }
@@ -1403,6 +1487,7 @@ pub struct ConfigBuilder {
     cloud_config_bundle: CloudConfigBundleLoader,
     thread_config_loader: Option<Arc<dyn ThreadConfigLoader>>,
     fallback_cwd: Option<PathBuf>,
+    without_project_context: bool,
 }
 
 impl ConfigBuilder {
@@ -1449,6 +1534,12 @@ impl ConfigBuilder {
         self
     }
 
+    /// Materializes `Config.cwd` without using it as config-layer context.
+    pub fn without_project_context(mut self) -> Self {
+        self.without_project_context = true;
+        self
+    }
+
     pub async fn build(self) -> std::io::Result<Config> {
         // Keep the large config-loading future off small runtime thread stacks.
         Box::pin(self.build_inner()).await
@@ -1464,6 +1555,7 @@ impl ConfigBuilder {
             cloud_config_bundle,
             thread_config_loader,
             fallback_cwd,
+            without_project_context,
         } = self;
         let codex_home = match codex_home {
             Some(codex_home) => AbsolutePathBuf::from_absolute_path(codex_home)?,
@@ -1481,7 +1573,7 @@ impl ConfigBuilder {
         let config_layer_stack = load_config_layers_state(
             LOCAL_FS.as_ref(),
             &codex_home,
-            Some(cwd),
+            (!without_project_context).then_some(cwd),
             &cli_overrides,
             ConfigLoadOptions {
                 loader_overrides,
@@ -1493,30 +1585,7 @@ impl ConfigBuilder {
                 .unwrap_or(&antex_config::NoopThreadConfigLoader),
         )
         .await?;
-        let merged_toml = config_layer_stack.effective_config();
-
-        // Note that each layer in ConfigLayerStack should have resolved
-        // relative paths to absolute paths based on the parent folder of the
-        // respective config file, so we should be safe to deserialize without
-        // AbsolutePathBufGuard here.
-        let config_toml: ConfigToml = match merged_toml.try_into() {
-            Ok(config_toml) => config_toml,
-            Err(err) => {
-                if let Some(config_error) = antex_config::first_layer_config_error::<ConfigToml>(
-                    &config_layer_stack,
-                    antex_config::CONFIG_TOML_FILE,
-                )
-                .await
-                {
-                    return Err(antex_config::io_error_from_config_error(
-                        std::io::ErrorKind::InvalidData,
-                        config_error,
-                        Some(err),
-                    ));
-                }
-                return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, err));
-            }
-        };
+        let config_toml = config_toml_from_layers(&config_layer_stack).await?;
         Config::load_config_with_layer_stack(
             LOCAL_FS.as_ref(),
             config_toml,
@@ -1533,6 +1602,28 @@ impl ConfigBuilder {
     }
 }
 
+async fn config_toml_from_layers(layers: &ConfigLayerStack) -> std::io::Result<ConfigToml> {
+    // The loader resolves paths relative to each layer's file before deserialization.
+    match layers.effective_config().try_into() {
+        Ok(config_toml) => Ok(config_toml),
+        Err(err) => {
+            if let Some(config_error) = antex_config::first_layer_config_error::<ConfigToml>(
+                layers,
+                antex_config::CONFIG_TOML_FILE,
+            )
+            .await
+            {
+                return Err(antex_config::io_error_from_config_error(
+                    std::io::ErrorKind::InvalidData,
+                    config_error,
+                    Some(err),
+                ));
+            }
+            Err(std::io::Error::new(std::io::ErrorKind::InvalidData, err))
+        }
+    }
+}
+
 impl Config {
     pub fn sqlite_config(&self) -> &antex_state::SqliteConfig {
         &self.sqlite
@@ -1541,16 +1632,11 @@ impl Config {
     /// Resolves the configured, reviewer-catalog, or bundled Guardian policy.
     pub fn resolve_guardian_policy<'a>(
         &'a self,
-        model_messages: Option<&'a ModelMessages>,
+        model_messages: ResolvedModelMessages<'a>,
     ) -> &'a str {
         self.guardian_policy_config
             .as_deref()
-            .or_else(|| {
-                model_messages
-                    .and_then(|messages| messages.auto_review.as_ref())
-                    .and_then(|messages| messages.policy.as_deref())
-            })
-            .unwrap_or(BUNDLED_GUARDIAN_POLICY)
+            .unwrap_or(model_messages.auto_review().policy)
     }
 
     pub(crate) fn multi_agent_version_override(&self) -> Option<MultiAgentVersion> {
@@ -1653,7 +1739,14 @@ impl Config {
 
     /// Returns auth routing resolved from the effective feature configuration.
     pub fn auth_route_config(&self) -> AuthRouteConfig {
-        AuthRouteConfig::from_http_client_factory(self.http_client_factory())
+        self.application_auth_route_config
+            .clone()
+            .unwrap_or_else(|| {
+                AuthRouteConfig::from_http_client_factory(
+                    self.http_client_factory()
+                        .with_network_policy(self.application_network_policy.clone()),
+                )
+            })
     }
 
     /// Creates the HTTP client factory resolved from the effective feature configuration.
@@ -1663,7 +1756,11 @@ impl Config {
         } else {
             OutboundProxyPolicy::ReqwestDefault
         };
-        let factory = HttpClientFactory::new(outbound_proxy_policy);
+        let mut factory = HttpClientFactory::new(outbound_proxy_policy)
+            .with_network_policy(self.application_network_policy.clone());
+        if !self.respect_system_proxy && self.features.enabled(Feature::SystemProxyFallback) {
+            factory = factory.with_system_proxy_fallback();
+        }
         if self.features.enabled(Feature::Psp) {
             factory.with_chatgpt_cookies([HeaderValue::from_static("oai-chat-psp=true")])
         } else {
@@ -1675,11 +1772,13 @@ impl Config {
     pub fn plugins_config_input(&self) -> PluginsConfigInput {
         PluginsConfigInput::new(
             self.config_layer_stack.clone(),
+            self.plugins.clone(),
             self.model_provider_id.clone(),
             self.features.enabled(Feature::Plugins),
             self.features.enabled(Feature::RemotePlugin),
             self.chatgpt_base_url.clone(),
             self.http_client_factory(),
+            self.apps_mcp_product_sku.clone(),
         )
     }
 
@@ -1777,6 +1876,7 @@ impl Config {
         McpConfig {
             chatgpt_base_url: self.chatgpt_base_url.clone(),
             apps_mcp_product_sku: self.apps_mcp_product_sku.clone(),
+            requires_read_only_mcp_tools: false,
             codex_home: self.codex_home.to_path_buf(),
             mcp_enterprise_managed_auth: self.mcp_enterprise_managed_auth.clone(),
             xaa_enabled: self.features.enabled(Feature::UseXaa)
@@ -1797,9 +1897,12 @@ impl Config {
             approval_policy: self.permissions.approval_policy.clone(),
             permission_profile: self.permissions.permission_profile().clone(),
             config_layer_stack: self.config_layer_stack.clone(),
+            plugins: self.plugins.clone(),
             approvals_reviewer: self.approvals_reviewer,
             environment_cwds: HashMap::new(),
+            environment_use_mxc: HashMap::new(),
             server_permission_profiles: HashMap::new(),
+            codex_self_exe: self.antex_self_exe.clone(),
             antex_linux_sandbox_exe: self.antex_linux_sandbox_exe.clone(),
             use_legacy_landlock: self.features.use_legacy_landlock(),
             apps_enabled: self.features.enabled(Feature::Apps),
@@ -1861,31 +1964,20 @@ impl Config {
     pub async fn rebuild_with_session_layers(
         session_layers: &ConfigLayerStack,
         cwd: PathBuf,
-        refreshed_config: &Config,
+        refreshed_layers: &ConfigLayerStack,
+        codex_home: AbsolutePathBuf,
     ) -> std::io::Result<Self> {
-        let config_layer_stack = Self::layer_stack_preserving_session(
-            session_layers,
-            &refreshed_config.config_layer_stack,
-        )?;
-        let cfg: ConfigToml = config_layer_stack
-            .effective_config()
-            .try_into()
-            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
-        let default_zsh_path = refreshed_config
-            .zsh_path
-            .clone()
-            .map(AbsolutePathBuf::try_from)
-            .transpose()?;
-
+        let config_layer_stack =
+            Self::layer_stack_preserving_session(session_layers, refreshed_layers)?;
+        let cfg = config_toml_from_layers(&config_layer_stack).await?;
         Self::load_config_with_layer_stack(
             LOCAL_FS.as_ref(),
             cfg,
             ConfigOverrides {
                 cwd: Some(cwd),
-                default_zsh_path,
                 ..Default::default()
             },
-            refreshed_config.codex_home.clone(),
+            codex_home,
             config_layer_stack,
         )
         .await
@@ -1913,6 +2005,7 @@ impl Config {
             refreshed_layers.requirements().clone(),
             refreshed_layers.requirements_toml().clone(),
         )?
+        .with_cloud_config_binding(refreshed_layers.cloud_config_binding().cloned())
         .with_user_and_project_exec_policy_rules_ignored(
             refreshed_layers.ignore_user_and_project_exec_policy_rules(),
         ))
@@ -1971,8 +2064,7 @@ impl Config {
     /// designed to use [AskForApproval::Never] exclusively.
     ///
     /// Further, [ConfigOverrides] contains some options that are not supported
-    /// in [ConfigToml], such as `cwd`, `antex_self_exe`, `antex_linux_sandbox_exe`, and
-    /// `main_execve_wrapper_exe`.
+    /// in [ConfigToml], such as `cwd`, `antex_self_exe`, and `antex_linux_sandbox_exe`.
     pub async fn load_with_cli_overrides_and_harness_overrides(
         cli_overrides: Vec<(String, TomlValue)>,
         harness_overrides: ConfigOverrides,
@@ -2605,8 +2697,8 @@ pub struct ConfigOverrides {
     pub service_tier: Option<Option<String>>,
     pub antex_self_exe: Option<PathBuf>,
     pub antex_linux_sandbox_exe: Option<PathBuf>,
+    /// Ignored compatibility field for clients that still pass the retired wrapper path.
     pub main_execve_wrapper_exe: Option<PathBuf>,
-    pub default_zsh_path: Option<AbsolutePathBuf>,
     pub base_instructions: Option<String>,
     pub developer_instructions: Option<String>,
     /// Deprecated: `friendly` and `pragmatic` no longer select a style.
@@ -2681,9 +2773,7 @@ fn resolve_update_plan_enabled(config_toml: &ConfigToml) -> bool {
         .is_some_and(|config| config.enabled)
 }
 
-fn resolve_orchestrator_feature_enabled(
-    feature: Option<&antex_config::config_toml::OrchestratorFeatureToml>,
-) -> bool {
+fn resolve_feature_enabled(feature: Option<&antex_config::config_toml::FeatureToggleToml>) -> bool {
     feature.and_then(|feature| feature.enabled).unwrap_or(true)
 }
 
@@ -2702,6 +2792,12 @@ fn resolve_code_mode_config(config_toml: &ConfigToml) -> CodeModeConfig {
         default_exec_yield_time_ms: base
             .and_then(|config| config.default_exec_yield_time_ms)
             .unwrap_or(DEFAULT_CODE_MODE_EXEC_YIELD_TIME_MS),
+        experimental_show_cell_overhead: base
+            .and_then(|config| config.experimental_show_cell_overhead)
+            .unwrap_or_default(),
+        tool_input_schema_max_bytes: base
+            .and_then(|config| config.tool_input_schema_max_bytes)
+            .map(NonZeroUsize::get),
         excluded_tool_namespaces: base
             .and_then(|config| config.excluded_tool_namespaces.as_ref())
             .cloned()
@@ -2758,9 +2854,18 @@ fn resolve_multi_agent_v2_config(config_toml: &ConfigToml) -> MultiAgentV2Config
     let wait_agent_enabled = base
         .and_then(|config| config.wait_agent_enabled)
         .unwrap_or(default.wait_agent_enabled);
+    let disable_direct_message = base
+        .and_then(|config| config.disable_direct_message)
+        .unwrap_or(default.disable_direct_message);
+    let message_board_in_memory = base
+        .and_then(|config| config.message_board_in_memory)
+        .unwrap_or(default.message_board_in_memory);
     let subagent_developer_instructions = base
         .and_then(|config| config.subagent_developer_instructions.as_ref())
         .map(|instructions| instructions.trim().to_string());
+    let preserve_fork_prefix = base
+        .and_then(|config| config.preserve_fork_prefix)
+        .unwrap_or(default.preserve_fork_prefix);
     let multi_agent_mode_hint_text = base
         .and_then(|config| config.multi_agent_mode_hint_text.as_ref())
         .cloned()
@@ -2782,11 +2887,15 @@ fn resolve_multi_agent_v2_config(config_toml: &ConfigToml) -> MultiAgentV2Config
         root_agent_usage_hint_text,
         subagent_usage_hint_text,
         subagent_developer_instructions,
+        preserve_fork_prefix,
         multi_agent_mode_hint_text,
         tool_namespace,
         hide_spawn_agent_metadata,
         expose_spawn_agent_model_overrides,
         wait_agent_enabled,
+        disable_direct_message,
+        message_board_in_memory,
+        message_board_remote: base.and_then(|config| config.message_board_remote.clone()),
         non_code_mode_only,
     }
 }
@@ -2807,7 +2916,11 @@ pub(crate) fn resolve_token_budget_config(
         token_budget_config.and_then(|config| config.reminder_threshold_tokens);
     let reminder_message_template = token_budget_config
         .and_then(|config| config.reminder_message_template.clone())
-        .unwrap_or_else(|| DEFAULT_TOKEN_BUDGET_REMINDER_MESSAGE_TEMPLATE.to_string());
+        .unwrap_or_else(|| {
+            ResolvedModelMessages::bundled()
+                .token_budget_reminder_template()
+                .to_owned()
+        });
     let guidance_message = token_budget_config
         .and_then(|config| config.guidance_message.clone())
         .filter(|message| !message.trim().is_empty());
@@ -2987,17 +3100,8 @@ pub fn resolve_bootstrap_respect_system_proxy(
     cfg: &ConfigToml,
     feature_requirements: Option<&Sourced<FeatureRequirementsToml>>,
 ) -> std::io::Result<bool> {
-    let configured_features = Features::from_sources(
-        FeatureConfigSource {
-            features: cfg.features.as_ref(),
-            experimental_use_unified_exec_tool: cfg.experimental_use_unified_exec_tool,
-        },
-        FeatureConfigSource::default(),
-        FeatureOverrides::default(),
-    );
-    let features =
-        ManagedFeatures::from_configured(configured_features, feature_requirements.cloned())?;
-    Ok(features.get().enabled(Feature::RespectSystemProxy))
+    resolve_bootstrap_http_client_factory(cfg, feature_requirements)
+        .map(|factory| factory.outbound_proxy_policy() == OutboundProxyPolicy::RespectSystemProxy)
 }
 
 /// Resolves auth route settings for the initial cloud-config bootstrap.
@@ -3014,14 +3118,28 @@ pub fn resolve_bootstrap_http_client_factory(
     cfg: &ConfigToml,
     feature_requirements: Option<&Sourced<FeatureRequirementsToml>>,
 ) -> std::io::Result<HttpClientFactory> {
-    resolve_bootstrap_respect_system_proxy(cfg, feature_requirements).map(|respect_system_proxy| {
-        let outbound_proxy_policy = if respect_system_proxy {
-            OutboundProxyPolicy::RespectSystemProxy
-        } else {
-            OutboundProxyPolicy::ReqwestDefault
-        };
-        HttpClientFactory::new(outbound_proxy_policy)
-    })
+    let configured_features = Features::from_sources(
+        FeatureConfigSource {
+            features: cfg.features.as_ref(),
+            experimental_use_unified_exec_tool: cfg.experimental_use_unified_exec_tool,
+        },
+        FeatureConfigSource::default(),
+        FeatureOverrides::default(),
+    );
+    let features =
+        ManagedFeatures::from_configured(configured_features, feature_requirements.cloned())?;
+    let outbound_proxy_policy = if features.enabled(Feature::RespectSystemProxy) {
+        OutboundProxyPolicy::RespectSystemProxy
+    } else {
+        OutboundProxyPolicy::ReqwestDefault
+    };
+    let mut factory = HttpClientFactory::new(outbound_proxy_policy);
+    if outbound_proxy_policy == OutboundProxyPolicy::ReqwestDefault
+        && features.enabled(Feature::SystemProxyFallback)
+    {
+        factory = factory.with_system_proxy_fallback();
+    }
+    Ok(factory)
 }
 
 pub(crate) fn resolve_web_search_mode_for_turn(
@@ -3187,6 +3305,12 @@ impl Config {
 
         validate_model_providers(&cfg.model_providers)
             .map_err(|message| std::io::Error::new(std::io::ErrorKind::InvalidInput, message))?;
+        if cfg.model_post_turn_compact_threshold_percent.is_some_and(|percent| percent > 100) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "model_post_turn_compact_threshold_percent must be between 0 and 100",
+            ));
+        }
         if let Some(responses_api_metadata) = cfg.responses_api_metadata.as_ref() {
             validate_extra_metadata(responses_api_metadata.iter()).map_err(|message| {
                 std::io::Error::new(std::io::ErrorKind::InvalidInput, message)
@@ -3199,10 +3323,14 @@ impl Config {
                 .as_ref(),
         )?;
         let orchestrator = cfg.orchestrator.as_ref();
-        let orchestrator_skills_enabled =
-            resolve_orchestrator_feature_enabled(orchestrator.and_then(|value| value.skills.as_ref()));
+        let cloud_skill_enabled = cfg
+            .cloud
+            .as_ref()
+            .and_then(|cloud| cloud.skills.as_ref())
+            .and_then(|skills| skills.enabled)
+            .unwrap_or(true);
         let orchestrator_mcp_enabled =
-            resolve_orchestrator_feature_enabled(orchestrator.and_then(|value| value.mcp.as_ref()));
+            resolve_feature_enabled(orchestrator.and_then(|value| value.mcp.as_ref()));
         let mut startup_warnings = config_layer_stack
             .startup_warnings()
             .unwrap_or_default()
@@ -3233,7 +3361,6 @@ impl Config {
             auto_review_required_models: _,
             permission_profile: mut constrained_permission_profile,
             windows_sandbox_mode: mut constrained_windows_sandbox_mode,
-            windows_sandbox_private_desktop: _,
             web_search_mode: mut constrained_web_search_mode,
             allow_managed_hooks_only: _,
             allow_appshots: _,
@@ -3251,6 +3378,7 @@ impl Config {
             filesystem: filesystem_requirements,
             additional_developer_instructions: _,
             guardian_policy_config_source: _,
+            guardian_extra_policy_source: _,
         } = config_layer_stack.requirements().clone();
 
         // Destructure ConfigOverrides fully to ensure all overrides are applied.
@@ -3268,8 +3396,7 @@ impl Config {
             service_tier: service_tier_override,
             antex_self_exe,
             antex_linux_sandbox_exe,
-            main_execve_wrapper_exe,
-            default_zsh_path,
+            main_execve_wrapper_exe: _,
             base_instructions,
             developer_instructions,
             personality,
@@ -3356,6 +3483,14 @@ impl Config {
         };
         let respect_system_proxy = features.enabled(Feature::RespectSystemProxy);
         let enable_network_proxy = features.enabled(Feature::NetworkProxy);
+        let allow_mxc =
+            cfg.windows.as_ref().and_then(|windows| windows.allow_mxc) != Some(false);
+        if !allow_mxc && resolve_windows_sandbox_mode(&cfg) == Some(WindowsSandboxModeToml::Mxc) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "windows.sandbox = \"mxc\" is not allowed when windows.allow_mxc = false",
+            ));
+        }
         let PreparedWindowsSandboxConfig {
             mode: windows_sandbox_mode,
             sandbox_type: windows_sandbox_type,
@@ -3366,7 +3501,6 @@ impl Config {
             &mut constrained_windows_sandbox_mode,
             &mut startup_warnings,
         )?;
-        let windows_sandbox_private_desktop = resolve_windows_sandbox_private_desktop(&cfg);
         let resolved_cwd = AbsolutePathBuf::try_from(normalize_for_native_workdir({
             use std::env;
 
@@ -3445,6 +3579,23 @@ impl Config {
             default_permissions_override.as_deref(),
             permission_config_syntax,
         );
+        let prefer_mxc = features.enabled(Feature::PreferMxc)
+            && config_allows_mxc(
+                &constrained_windows_sandbox_mode,
+                &effective_permission_selection,
+                profiles_are_active,
+                permission_profile.as_ref(),
+                network_requirements.as_ref(),
+                &cfg,
+                enable_network_proxy,
+            )?
+            && antex_sandboxing::windows_mxc_available();
+        let local_windows_sandbox_type =
+            resolve_windows_sandbox_type(windows_sandbox_type, prefer_mxc);
+        let legacy_windows_sandbox_level = windows_sandbox_level_for_legacy_checks(
+            local_windows_sandbox_type,
+            windows_sandbox_level,
+        );
         let explicit_permission_profile_mode = effective_permission_selection
             .persisted_profile_id_was_provided
             || default_permissions_override.is_some()
@@ -3516,7 +3667,7 @@ impl Config {
                         .unwrap_or_else(|| {
                             default_builtin_permission_profile_name(
                                 &active_project,
-                                windows_sandbox_level,
+                                legacy_windows_sandbox_level,
                             )
                         });
                     network_proxy_config_for_profile_selection(
@@ -3537,7 +3688,10 @@ impl Config {
             let default_permissions = effective_permission_selection
                 .selected_profile_id
                 .unwrap_or_else(|| {
-                    default_builtin_permission_profile_name(&active_project, windows_sandbox_level)
+                    default_builtin_permission_profile_name(
+                        &active_project,
+                        legacy_windows_sandbox_level,
+                    )
                 });
             let builtin_workspace_write_settings = if using_implicit_builtin_profile {
                 cfg.sandbox_workspace_write.as_ref().map(|settings| WorkspaceWriteSettings {
@@ -3602,7 +3756,7 @@ impl Config {
             let mut permission_profile = cfg
                 .derive_permission_profile(
                     sandbox_mode,
-                    windows_sandbox_level,
+                    legacy_windows_sandbox_level,
                     Some(&active_project),
                     Some(&constrained_permission_profile),
                 )
@@ -3823,7 +3977,7 @@ impl Config {
             .unwrap_or(DEFAULT_MAX_BACKGROUND_TERMINAL_TIMEOUT_MS)
             .max(MIN_EMPTY_YIELD_TIME_MS);
         let thread_unload_delay =
-            Duration::from_secs(cfg.thread_unload_delay_secs.unwrap_or(/*default*/ 60));
+            Duration::from_secs(cfg.thread_unload_delay_secs.unwrap_or(/*default*/ 1800));
         if std::time::Instant::now()
             .checked_add(thread_unload_delay)
             .is_none()
@@ -3887,6 +4041,9 @@ impl Config {
                     .enabled(Feature::FastMode)
                     .then(|| ServiceTier::Fast.request_value().to_string()),
                 Some(ServiceTier::Flex) => Some(ServiceTier::Flex.request_value().to_string()),
+                None if service_tier == "ultrafast" => features
+                    .enabled(Feature::UltrafastMode)
+                    .then_some(service_tier),
                 None => Some(service_tier),
             }
         });
@@ -3931,6 +4088,7 @@ impl Config {
             .as_ref()
             .and_then(|skills| skills.max_context_tokens);
         let include_environment_context = cfg.include_environment_context.unwrap_or(true);
+        let include_environment_context_time = cfg.include_environment_context_time.unwrap_or(true);
         let guardian_policy_config =
             guardian_policy_config_from_requirements(config_layer_stack.requirements_toml())
                 .or_else(|| {
@@ -3940,6 +4098,26 @@ impl Config {
                             auto_review.policy.as_deref(),
                         ))
                 });
+        let guardian_extra_policy = normalize_guardian_policy_config(
+            config_layer_stack
+                .requirements_toml()
+                .guardian_extra_policy
+                .as_deref(),
+        )
+        .or_else(|| {
+            cfg.auto_review.as_ref().and_then(|auto_review| {
+                normalize_guardian_policy_config(auto_review.extra_policy.as_deref())
+            })
+        });
+        let guardian_transcript_mode = cfg
+            .features
+            .as_ref()
+            .and_then(|features| features.guardianv2.as_ref())
+            .and_then(|feature| match feature {
+                FeatureToml::Config(config) => config.transcript_mode,
+                FeatureToml::Enabled(_) => None,
+            })
+            .unwrap_or_default();
         let guardian_policy_template = cfg
             .auto_review
             .as_ref()
@@ -3948,6 +4126,15 @@ impl Config {
                     auto_review.experimental_policy_template.as_deref(),
                 )
             });
+        let guardian_conversation_history_prompt = cfg.auto_review.as_ref().and_then(|auto_review| {
+            normalize_guardian_policy_config(
+                auto_review.experimental_conversation_history_prompt.as_deref(),
+            )
+        });
+        let guardian_conversation_history_max_output_tokens = cfg
+            .auto_review
+            .as_ref()
+            .and_then(|auto_review| auto_review.conversation_history_max_output_tokens);
         let personality = personality.or(cfg.personality);
 
         let experimental_compact_prompt_path = cfg.experimental_compact_prompt_file.as_ref();
@@ -3958,10 +4145,6 @@ impl Config {
         )
         .await?;
         let compact_prompt = compact_prompt.or(file_compact_prompt);
-        let zsh_path = default_zsh_path
-            .or_else(|| InstallContext::current().bundled_zsh_path())
-            .map(AbsolutePathBuf::into_path_buf);
-
         let review_model = override_review_model.or(cfg.review_model);
 
         let check_for_update_on_startup = cfg.check_for_update_on_startup.unwrap_or(true);
@@ -4054,12 +4237,14 @@ impl Config {
             network_requirements,
             &network_permission_profile,
             &shell_environment_policy.r#set,
+            &features,
+            cfg.features.as_ref(),
         )?;
-        let mut helper_readable_roots = get_readable_roots_required_for_antex_runtime(
-            &codex_home,
-            zsh_path.as_ref(),
-            main_execve_wrapper_exe.as_ref(),
-        );
+        let mut helper_readable_roots: Vec<_> = std::env::var_os("PATH")
+            .as_deref()
+            .and_then(|path| permissions::active_arg0_helper_dir(&codex_home, path))
+            .into_iter()
+            .collect();
         if features.enabled(Feature::MemoryTool) && memories_config.use_memories {
             helper_readable_roots.push(memories_root);
         }
@@ -4166,14 +4351,20 @@ impl Config {
         )
         .map_err(std::io::Error::from)?;
         let otel = otel::resolve_config(cfg.otel.unwrap_or_default(), &mut startup_warnings);
-        let config = Self {
+        let mut config = Self {
+            plugins: cfg.plugins,
+            prefer_mxc,
             model,
+            daybreak_enabled: cfg.daybreak.unwrap_or(false),
             service_tier,
             review_model,
             model_context_window: cfg.model_context_window,
             model_auto_compact_token_limit: cfg.model_auto_compact_token_limit,
             model_auto_compact_token_limit_scope: cfg
                 .model_auto_compact_token_limit_scope
+                .unwrap_or_default(),
+            model_post_turn_compact_threshold_percent: cfg
+                .model_post_turn_compact_threshold_percent
                 .unwrap_or_default(),
             model_provider_id,
             model_provider,
@@ -4191,7 +4382,6 @@ impl Config {
                 shell_environment_policy,
                 windows_sandbox_mode,
                 windows_sandbox_type,
-                windows_sandbox_private_desktop,
             },
             explicit_permission_profile_mode,
             custom_permission_profiles,
@@ -4208,9 +4398,10 @@ impl Config {
             include_collaboration_mode_instructions,
             include_skill_instructions,
             skill_max_context_tokens,
-            orchestrator_skills_enabled,
+            cloud_skill_enabled,
             orchestrator_mcp_enabled,
             include_environment_context,
+            include_environment_context_time,
             // The config.toml omits "_mode" because it's a config file. However, "_mode"
             // is important in code to differentiate the mode from the store implementation.
             cli_auth_credentials_store_mode: match cli_auth_credentials_store {
@@ -4276,6 +4467,8 @@ impl Config {
             sqlite: antex_state::SqliteConfig::from_sqlite_home(sqlite_home),
             log_dir,
             config_layer_stack,
+            application_network_policy: Default::default(),
+            application_auth_route_config: None,
             history,
             ephemeral: ephemeral.unwrap_or_default(),
             extra_config: None,
@@ -4283,8 +4476,8 @@ impl Config {
             file_opener: cfg.file_opener.unwrap_or(UriBasedFileOpener::VsCode),
             antex_self_exe,
             antex_linux_sandbox_exe,
-            main_execve_wrapper_exe,
-            zsh_path,
+            main_execve_wrapper_exe: None,
+            zsh_path: None,
 
             hide_agent_reasoning: cfg.hide_agent_reasoning.unwrap_or(false),
             show_raw_agent_reasoning: cfg
@@ -4292,7 +4485,16 @@ impl Config {
                 .or(show_raw_agent_reasoning)
                 .unwrap_or(false),
             guardian_policy_config,
+            guardian_extra_policy,
             guardian_policy_template,
+            guardian_transcript_mode,
+            guardian_conversation_history_prompt,
+            guardian_conversation_history_max_output_tokens,
+            guardian_circuit_break_action: cfg
+                .auto_review
+                .as_ref()
+                .and_then(|auto_review| auto_review.circuit_break_action)
+                .unwrap_or_default(),
             model_reasoning_effort: cfg.model_reasoning_effort,
             plan_mode_reasoning_effort: cfg.plan_mode_reasoning_effort,
             model_reasoning_summary: cfg.model_reasoning_summary,
@@ -4308,6 +4510,7 @@ impl Config {
                 .audio
                 .map_or_else(RealtimeAudioConfig::default, |audio| RealtimeAudioConfig {
                     microphone: audio.microphone,
+                    microphone_channel: audio.microphone_channel,
                     speaker: audio.speaker,
                 }),
             experimental_realtime_ws_base_url: cfg.experimental_realtime_ws_base_url,
@@ -4347,6 +4550,7 @@ impl Config {
             current_time_reminder,
             sleep_tool_mode,
             features,
+            runtime_feature_defaults: BTreeMap::new(),
             suppress_unstable_features_warning: cfg
                 .suppress_unstable_features_warning
                 .unwrap_or(false),
@@ -4372,7 +4576,8 @@ impl Config {
                 .map(|t| t.notification_settings.clone())
                 .unwrap_or_default(),
             animations: cfg.tui.as_ref().map(|t| t.animations).unwrap_or(true),
-            tui_whimsy: cfg.tui.as_ref().map(|t| t.whimsy).unwrap_or(true),
+            tui_effects: cfg.tui.as_ref().map(|t| t.effects).unwrap_or_default(),
+            tui_rendering: cfg.tui.as_ref().map(|t| t.rendering).unwrap_or_default(),
             show_tooltips: cfg.tui.as_ref().map(|t| t.show_tooltips).unwrap_or(true),
             tui_startup_panel: cfg
                 .tui
@@ -4416,6 +4621,25 @@ impl Config {
                 .as_ref()
                 .map(|t| t.tmux_command_log)
                 .unwrap_or(false),
+            tui_fullscreen_transcript: cfg
+                .tui
+                .as_ref()
+                .is_none_or(|tui| tui.fullscreen_transcript),
+            tui_mouse_scroll_speed: cfg.tui.as_ref().and_then(|tui| tui.mouse_scroll_speed),
+            tui_copy_on_select: cfg
+                .tui
+                .as_ref()
+                .map(|tui| tui.copy_on_select)
+                .unwrap_or_default(),
+            tui_copy_on_select_clear_selection: cfg
+                .tui
+                .as_ref()
+                .is_some_and(|tui| tui.copy_on_select_clear_selection),
+            tui_right_click_paste: cfg
+                .tui
+                .as_ref()
+                .map(|tui| tui.right_click_paste)
+                .unwrap_or_default(),
             tui_alternate_screen: cfg
                 .tui
                 .as_ref()
@@ -4440,6 +4664,7 @@ impl Config {
                 .as_ref()
                 .and_then(|t| t.session_picker_view)
                 .unwrap_or_default(),
+            tui_agents_overview_grouping: cfg.tui.as_ref().map(|t| t.agents_overview_grouping).unwrap_or_default(),
             tui_resume_cwd: cfg.tui.as_ref().and_then(|t| t.resume_cwd),
             terminal_resize_reflow,
             tui_keymap: cfg
@@ -4449,6 +4674,10 @@ impl Config {
                 .unwrap_or_default(),
             otel,
         };
+        if let Some(message) = config.credential_masking_warning(config.permissions.permission_profile()) {
+            tracing::warn!("{message}");
+            config.startup_warnings.push(message.to_string());
+        }
         Ok(config)
         })
         .await
@@ -4558,51 +4787,84 @@ impl Config {
     ) -> std::io::Result<Option<NetworkProxySpec>> {
         let profile_allows_network_proxy =
             profile_allows_configured_network_proxy(permission_profile);
+        let cfg: ConfigToml = self
+            .config_layer_stack
+            .effective_config()
+            .try_into()
+            .map_err(|err| {
+                std::io::Error::new(
+                    ErrorKind::InvalidInput,
+                    format!(
+                        "failed to read effective config for selected permission profile: {err}"
+                    ),
+                )
+            })?;
         let configured_network_proxy_config = if profile_allows_network_proxy {
-            let cfg: ConfigToml = self
-                .config_layer_stack
-                .effective_config()
-                .try_into()
-                .map_err(|err| {
-                    std::io::Error::new(
-                        ErrorKind::InvalidInput,
-                        format!(
-                            "failed to read effective config for selected permission profile: {err}"
-                        ),
-                    )
-                })?;
             let permissions = merge_managed_permission_profiles(
                 cfg.permissions.as_ref(),
                 self.config_layer_stack.requirements_toml(),
             )?;
-            let mut configured_network_proxy_config = network_proxy_config_for_profile_selection(
+            network_proxy_config_for_profile_selection(
                 permissions.as_ref(),
                 active_permission_profile.id.as_str(),
-            )?;
-            if self.features.enabled(Feature::NetworkProxy)
-                && permission_profile.network_sandbox_policy().is_enabled()
-            {
-                if let Some(network_proxy) = network_proxy_toml_config(cfg.features.as_ref()) {
-                    apply_network_proxy_feature_config(
-                        &mut configured_network_proxy_config,
-                        network_proxy,
-                    );
-                }
-                configured_network_proxy_config
-                    .set_credential_broker_openai_base_url(cfg.openai_base_url.as_deref());
-                configured_network_proxy_config.enabled = true;
-            }
-            configured_network_proxy_config
+            )?
         } else {
             NetworkProxyConfig::default()
         };
-
+        let prepared_network = PreparedNetworkConfig::from_inputs(NetworkConfigInputs {
+            configured_proxy: configured_network_proxy_config,
+            feature_enabled: profile_allows_network_proxy
+                && self.features.enabled(Feature::NetworkProxy),
+            features: cfg.features.as_ref(),
+            candidate_permission_profile: permission_profile,
+            credential_broker_base_url: cfg.openai_base_url.as_deref(),
+        });
         build_network_proxy_spec(
-            configured_network_proxy_config,
+            prepared_network.configured_proxy,
             self.config_layer_stack.requirements().network.clone(),
             permission_profile,
             &self.permissions.shell_environment_policy.r#set,
+            &self.features,
+            cfg.features.as_ref(),
         )
+    }
+
+    pub(crate) fn credential_masking_warning(
+        &self,
+        permission_profile: &PermissionProfile,
+    ) -> Option<&'static str> {
+        if !self.features.enabled(Feature::CredentialMasking) {
+            return None;
+        }
+        // The session bypasses the configured proxy for unsandboxed execution,
+        // even when managed requirements keep the proxy spec enabled.
+        if matches!(permission_profile, PermissionProfile::Disabled) {
+            return Some(
+                "Credential masking is inactive because sandboxing is disabled. Commands will receive unmasked credentials. Select a sandboxed permission profile to use credential masking.",
+            );
+        }
+        if self
+            .permissions
+            .network
+            .as_ref()
+            .is_some_and(NetworkProxySpec::credential_broker_enabled)
+        {
+            return None;
+        }
+        if self
+            .permissions
+            .network
+            .as_ref()
+            .is_some_and(NetworkProxySpec::enabled)
+        {
+            Some(
+                "Credential masking is inactive because shell environment overrides contain conflicting case-insensitive provider keys. Commands will receive unmasked credentials. Remove the conflicting entries from `shell_environment_policy.set`.",
+            )
+        } else {
+            Some(
+                "Credential masking is inactive because the network proxy is disabled. Commands will receive unmasked credentials. Enable `features.network_proxy` or configure managed network requirements to use credential masking.",
+            )
+        }
     }
 
     pub fn bundled_skills_enabled(&self) -> bool {

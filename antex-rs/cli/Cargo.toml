@@ -25,6 +25,7 @@ workspace = true
 [dependencies]
 antex-home-migration = { workspace = true }
 dirs = { workspace = true }
+antex-utils-process = { workspace = true }
 anyhow = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true, features = ["derive", "env"] }
@@ -77,6 +78,8 @@ antex-tui = { workspace = true }
 antex-utils-absolute-path = { workspace = true }
 antex-utils-path = { workspace = true }
 antex-utils-path-uri = { workspace = true }
+antex-utils-redacted-string = { workspace = true }
+antex-websocket-auth = { workspace = true }
 crossterm = { workspace = true, features = ["event-stream"] }
 futures = { workspace = true }
 http = { workspace = true }
@@ -111,7 +114,7 @@ tikv-jemallocator = { workspace = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 antex_windows_sandbox = { package = "antex-windows-sandbox", path = "../windows-sandbox-rs" }
-windows-sys = { version = "0.52", features = [
+windows-sys = { workspace = true, features = [
     "Win32_Foundation",
     "Win32_Storage_Packaging_Appx",
     "Win32_System_Console",
@@ -122,15 +125,19 @@ windows-sys = { version = "0.52", features = [
 app_test_support = { workspace = true }
 assert_cmd = { workspace = true }
 assert_matches = { workspace = true }
+antex-app-server-client = { workspace = true }
 antex-utils-cargo-bin = { workspace = true }
 antex-utils-pty = { workspace = true }
 flate2 = { workspace = true }
 insta = { workspace = true }
+jsonwebtoken = { workspace = true }
 predicates = { workspace = true }
 pretty_assertions = { workspace = true }
+sha2 = { workspace = true }
 sqlx = { workspace = true }
 tar = { workspace = true }
 tokio-tungstenite = { workspace = true }
+vt100 = { workspace = true }
 wiremock = { workspace = true }
 zstd = { workspace = true }
 

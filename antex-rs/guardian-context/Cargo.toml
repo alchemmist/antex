@@ -16,6 +16,7 @@ workspace = true
 antex-context-fragments = { workspace = true }
 antex-history = { workspace = true }
 antex-protocol = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 
 [dev-dependencies]

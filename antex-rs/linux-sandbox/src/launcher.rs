@@ -11,6 +11,7 @@ use crate::bundled_bwrap;
 use crate::bundled_bwrap::BundledBwrapLauncher;
 use crate::exec_util::argv_to_cstrings;
 use crate::exec_util::make_files_inheritable;
+use antex_protocol::permissions::FileSystemSandboxPolicy;
 use antex_sandboxing::find_system_bwrap_in_path;
 use antex_utils_absolute_path::AbsolutePathBuf;
 
@@ -26,6 +27,7 @@ struct SystemBwrapLauncher {
     program: AbsolutePathBuf,
     supports_argv0: bool,
     supports_ro_bind_fd: bool,
+    supports_dev_no_fd: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,12 +35,37 @@ struct SystemBwrapCapabilities {
     supports_argv0: bool,
     supports_perms: bool,
     supports_ro_bind_fd: bool,
+    supports_dev_no_fd: bool,
 }
 
+static LAUNCHER: OnceLock<BubblewrapLauncher> = OnceLock::new();
+
 pub(crate) fn exec_bwrap(mut argv: Vec<String>, preserved_files: Vec<File>) -> ! {
-    argv.insert(1, "--as-pid-1".to_string());
+    if argv
+        .iter()
+        .take_while(|arg| arg.as_str() != "--")
+        .any(|arg| arg == "--unshare-pid")
+    {
+        argv.insert(1, "--as-pid-1".to_string());
+    }
 
     match preferred_bwrap_launcher() {
+        BubblewrapLauncher::System(launcher)
+            if !launcher.supports_dev_no_fd
+                && argv
+                    .iter()
+                    .take_while(|arg| arg.as_str() != "--")
+                    .any(|arg| arg == "--dev-no-fd") =>
+        {
+            // Never drop the fd denial or canonicalize it through host procfs
+            // merely to accommodate an older system bubblewrap.
+            match bundled_bwrap::launcher() {
+                Some(launcher) => launcher.exec(argv, preserved_files),
+                None => panic!(
+                    "masking /dev/fd requires bundled bubblewrap or a system bubblewrap with --dev-no-fd support"
+                ),
+            }
+        }
         BubblewrapLauncher::System(launcher) => {
             if !launcher.supports_ro_bind_fd {
                 translate_legacy_bwrap_fd_mounts(&mut argv)
@@ -123,22 +150,28 @@ fn translate_legacy_bwrap_fd_mounts(argv: &mut Vec<String>) -> Result<(), String
     Ok(())
 }
 
-fn preferred_bwrap_launcher() -> BubblewrapLauncher {
-    static LAUNCHER: OnceLock<BubblewrapLauncher> = OnceLock::new();
-    LAUNCHER
-        .get_or_init(|| {
-            if let Some(path) = find_system_bwrap_in_path()
-                && let Some(launcher) = system_bwrap_launcher_for_path(&path)
-            {
-                return BubblewrapLauncher::System(launcher);
-            }
+pub(crate) fn initialize_bwrap_launcher(
+    file_system_policy: &FileSystemSandboxPolicy,
+    sandbox_policy_cwd: &Path,
+) {
+    LAUNCHER.get_or_init(|| {
+        if let Some(path) = find_system_bwrap_in_path(file_system_policy, sandbox_policy_cwd)
+            && let Some(launcher) = system_bwrap_launcher_for_path(&path)
+        {
+            return BubblewrapLauncher::System(launcher);
+        }
 
-            match bundled_bwrap::launcher() {
-                Some(launcher) => BubblewrapLauncher::Bundled(launcher),
-                None => BubblewrapLauncher::Unavailable,
-            }
-        })
-        .clone()
+        match bundled_bwrap::launcher() {
+            Some(launcher) => BubblewrapLauncher::Bundled(launcher),
+            None => BubblewrapLauncher::Unavailable,
+        }
+    });
+}
+
+fn preferred_bwrap_launcher() -> &'static BubblewrapLauncher {
+    LAUNCHER.get().unwrap_or_else(|| {
+        panic!("bubblewrap launcher must be initialized with the command's permissions")
+    })
 }
 
 fn system_bwrap_launcher_for_path(system_bwrap_path: &Path) -> Option<SystemBwrapLauncher> {
@@ -157,6 +190,7 @@ fn system_bwrap_launcher_for_path_with_probe(
         supports_argv0,
         supports_perms: true,
         supports_ro_bind_fd,
+        supports_dev_no_fd,
     }) = system_bwrap_capabilities(system_bwrap_path)
     else {
         return None;
@@ -172,6 +206,7 @@ fn system_bwrap_launcher_for_path_with_probe(
         program: system_bwrap_path,
         supports_argv0,
         supports_ro_bind_fd,
+        supports_dev_no_fd,
     })
 }
 
@@ -201,6 +236,7 @@ fn system_bwrap_capabilities(system_bwrap_path: &Path) -> Option<SystemBwrapCapa
         supports_argv0: stdout.contains("--argv0") || stderr.contains("--argv0"),
         supports_perms: stdout.contains("--perms") || stderr.contains("--perms"),
         supports_ro_bind_fd: stdout.contains("--ro-bind-fd") || stderr.contains("--ro-bind-fd"),
+        supports_dev_no_fd: stdout.contains("--dev-no-fd") || stderr.contains("--dev-no-fd"),
     })
 }
 
@@ -236,7 +272,6 @@ fn exec_system_bwrap(
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
-    use std::os::unix::fs::PermissionsExt;
     use tempfile::NamedTempFile;
 
     #[test]
@@ -251,12 +286,14 @@ mod tests {
                     supports_argv0: true,
                     supports_perms: true,
                     supports_ro_bind_fd: true,
+                    supports_dev_no_fd: false,
                 })
             }),
             Some(SystemBwrapLauncher {
                 program: expected,
                 supports_argv0: true,
                 supports_ro_bind_fd: true,
+                supports_dev_no_fd: false,
             })
         );
     }
@@ -272,12 +309,14 @@ mod tests {
                     supports_argv0: false,
                     supports_perms: true,
                     supports_ro_bind_fd: false,
+                    supports_dev_no_fd: false,
                 })
             }),
             Some(SystemBwrapLauncher {
                 program: AbsolutePathBuf::from_absolute_path(fake_bwrap_path).expect("absolute"),
                 supports_argv0: false,
                 supports_ro_bind_fd: false,
+                supports_dev_no_fd: false,
             })
         );
     }
@@ -292,6 +331,7 @@ mod tests {
                     supports_argv0: false,
                     supports_perms: false,
                     supports_ro_bind_fd: false,
+                    supports_dev_no_fd: false,
                 })
             }),
             None
@@ -302,13 +342,11 @@ mod tests {
     fn detects_fd_backed_read_only_mount_support_in_system_bwrap_help() {
         let temp_dir = tempfile::tempdir().expect("temp directory");
         let fake_bwrap_path = temp_dir.path().join("bwrap");
-        std::fs::write(
+        antex_utils_cargo_bin::write_executable(
             &fake_bwrap_path,
-            "#!/bin/sh\nprintf '%s\\n' '--as-pid-1' '--perms' '--argv0' '--ro-bind-fd'\n",
+            "#!/bin/sh\nprintf '%s\\n' '--as-pid-1' '--perms' '--argv0' '--ro-bind-fd' '--dev-no-fd'\n",
         )
         .expect("write fake bubblewrap");
-        std::fs::set_permissions(&fake_bwrap_path, std::fs::Permissions::from_mode(0o755))
-            .expect("make fake bubblewrap executable");
 
         assert_eq!(
             system_bwrap_capabilities(&fake_bwrap_path),
@@ -316,6 +354,7 @@ mod tests {
                 supports_argv0: true,
                 supports_perms: true,
                 supports_ro_bind_fd: true,
+                supports_dev_no_fd: true,
             })
         );
     }

@@ -1,0 +1,36 @@
+---
+source: tui/src/history_cell/startup_panel_tests.rs
+assertion_line: 29
+expression: frames
+---
+default:
+ ▀▄       ▄▀
+  ▄▀█████▀▄    ╭─ alchemmist antex ─────╮
+▄█▀▀█████▀▀█▄  │  Test model            │
+▀▀▄▄▀▀▀▀▀▄▄▀▀  │  workspace             │
+  ██  ▄  ██    ╰────────────────────────╯
+   ▀▀▀ ▀▀▀
+---
+priority:
+ ▀▄       ▄▀
+  ▄▀█████▀▄    ╭─ alchemmist antex ─────╮
+▄█▀▀█████▀▀█▄  │  Test model · fast     │
+▀▀▄▄▀▀▀▀▀▄▄▀▀  │  workspace             │
+  ██  ▄  ██    ╰────────────────────────╯
+   ▀▀▀ ▀▀▀
+---
+ultrafast:
+ ▀▄       ▄▀
+  ▄▀█████▀▄    ╭─ alchemmist antex ────────╮
+▄█▀▀█████▀▀█▄  │  Test model · ultra fast  │
+▀▀▄▄▀▀▀▀▀▄▄▀▀  │  workspace                │
+  ██  ▄  ██    ╰───────────────────────────╯
+   ▀▀▀ ▀▀▀
+---
+flex:
+ ▀▄       ▄▀
+  ▄▀█████▀▄    ╭─ alchemmist antex ─────╮
+▄█▀▀█████▀▀█▄  │  Test model · flex     │
+▀▀▄▄▀▀▀▀▀▄▄▀▀  │  workspace             │
+  ██  ▄  ██    ╰────────────────────────╯
+   ▀▀▀ ▀▀▀

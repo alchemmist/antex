@@ -1,4 +1,3 @@
-use antex_apply_patch::ANTEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS_ENV_VAR;
 use antex_utils_cargo_bin::find_resource;
 use anyhow::Context;
 use pretty_assertions::assert_eq;
@@ -49,7 +48,6 @@ fn run_apply_patch_scenario(dir: &Path) -> anyhow::Result<()> {
     // final filesystem state, which we compare below.
     Command::new(antex_utils_cargo_bin::cargo_bin("apply_patch")?)
         .arg(patch)
-        .env(ANTEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS_ENV_VAR, "1")
         .current_dir(tmp.path())
         .output()
         .with_context(|| format!("failed to run scenario {}", dir.display()))?;

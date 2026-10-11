@@ -9,6 +9,7 @@ use crate::ExecServerClient;
 use crate::ExecServerClientConnectOptions;
 use crate::ExecServerError;
 use crate::client::LazyRemoteExecServerClient;
+use antex_config::ScopedSkillsConfig;
 use antex_http_client::HttpClientFactory;
 use axum::extract::ws::WebSocket;
 
@@ -29,7 +30,9 @@ impl EnvironmentManager {
         let client =
             LazyRemoteExecServerClient::from_connected(client, http_client_factory.clone());
         let environment = Arc::new(Environment::remote_with_client(
-            client, /*local_runtime_paths*/ None,
+            client,
+            /*local_runtime_paths*/ None,
+            ScopedSkillsConfig::default(),
         ));
         Ok(Self {
             default_environment: Some(environment_id.clone()),

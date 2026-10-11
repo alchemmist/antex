@@ -1,7 +1,10 @@
 //! Worktree choices for local, feature-enabled session commands.
+//!
+//! Shared picker presentation preserves request identity and action safety checks.
 
 use super::*;
 use crate::app_event::ManagedWorktreeMode;
+use crate::bottom_pane::PickerSurface;
 use crate::worktree_browser::Action;
 use crate::worktree_browser::Entry;
 use crate::worktree_browser::Owner;
@@ -40,11 +43,10 @@ impl ChatWidget {
         };
         let current_name = name.clone();
         self.bottom_pane.show_selection_view(SelectionViewParams {
-            title: Some(title.to_string()),
-            footer_hint: Some(standard_popup_hint_line()),
+            title: Some(title.into()),
             items: vec![
                 SelectionItem {
-                    name: "Current checkout".to_string(),
+                    name: "Use current Git worktree".to_string(),
                     description: Some("Keep using the current working directory".to_string()),
                     actions: vec![Box::new(move |tx| match mode {
                         ManagedWorktreeMode::New => {
@@ -62,8 +64,11 @@ impl ChatWidget {
                     ..Default::default()
                 },
                 SelectionItem {
-                    name: "New worktree".to_string(),
-                    description: Some("Create an isolated managed checkout".to_string()),
+                    name: "Create new Git worktree".to_string(),
+                    description: Some(
+                        "Create a separate checkout of this repository in another directory"
+                            .to_string(),
+                    ),
                     actions: vec![Box::new(move |tx| {
                         tx.send(AppEvent::StartManagedWorktree {
                             mode,
@@ -74,7 +79,7 @@ impl ChatWidget {
                     ..Default::default()
                 },
             ],
-            ..Default::default()
+            ..SelectionViewParams::picker()
         });
         self.request_redraw();
     }
@@ -92,8 +97,7 @@ impl ChatWidget {
         }
 
         self.bottom_pane.show_selection_view(SelectionViewParams {
-            title: Some("Worktrees".to_string()),
-            footer_hint: Some(standard_popup_hint_line()),
+            title: Some("Worktrees".into()),
             items: vec![
                 SelectionItem {
                     name: "Continue current conversation".to_string(),
@@ -129,7 +133,7 @@ impl ChatWidget {
                     ..Default::default()
                 },
             ],
-            ..Default::default()
+            ..SelectionViewParams::picker()
         });
         self.request_redraw();
     }
@@ -147,13 +151,13 @@ impl ChatWidget {
         self.worktree_popup_request_id = Some(request.id);
         self.bottom_pane.show_selection_view(SelectionViewParams {
             view_id: Some(BROWSER_VIEW_ID),
-            title: Some("Managed worktrees".to_string()),
+            picker_surface: PickerSurface::Panel,
+            title: Some("Managed worktrees".into()),
             items: vec![SelectionItem {
                 name: "Loading worktrees…".to_string(),
                 is_disabled: true,
                 ..Default::default()
             }],
-            footer_hint: Some(standard_popup_hint_line()),
             ..Default::default()
         });
         Some(request)
@@ -205,14 +209,17 @@ impl ChatWidget {
                 .map(|entry| {
                     let request = request.clone();
                     let (name, description) = match &entry.owner {
-                        Owner::None => (
-                            entry.cwd.display().to_string(),
-                            "No attached thread".to_string(),
-                        ),
-                        Owner::Unavailable(_) => (
-                            entry.cwd.display().to_string(),
-                            "Owner thread unavailable".to_string(),
-                        ),
+                        Owner::None | Owner::Unavailable(_) => {
+                            let status = if matches!(entry.owner, Owner::None) {
+                                "No attached thread"
+                            } else {
+                                "Owner thread unavailable"
+                            };
+                            (
+                                entry.cwd.display().to_string(),
+                                format!("{status} · {}", entry.cwd.display()),
+                            )
+                        }
                         Owner::Archived(thread) | Owner::Resumable(thread) => {
                             let status = match &entry.owner {
                                 Owner::Archived(_) => "Archived · ",
@@ -247,8 +254,7 @@ impl ChatWidget {
                     }
                 })
                 .collect(),
-            footer_hint: Some(standard_popup_hint_line()),
-            ..Default::default()
+            ..SelectionViewParams::picker()
         });
     }
 
@@ -340,8 +346,7 @@ impl ChatWidget {
             title: Some(title),
             subtitle: Some(entry.cwd.display().to_string()),
             items,
-            footer_hint: Some(standard_popup_hint_line()),
-            ..Default::default()
+            ..SelectionViewParams::picker()
         });
     }
 
@@ -374,8 +379,7 @@ impl ChatWidget {
                     ..Default::default()
                 },
             ],
-            footer_hint: Some(standard_popup_hint_line()),
-            ..Default::default()
+            ..SelectionViewParams::confirmation()
         });
     }
 }

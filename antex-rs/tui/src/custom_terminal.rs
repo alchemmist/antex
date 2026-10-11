@@ -27,6 +27,7 @@ use std::io::Write;
 use crossterm::cursor::MoveTo;
 use crossterm::cursor::SetCursorStyle;
 use crossterm::queue;
+use crossterm::style::Colored;
 use crossterm::style::Colors;
 use crossterm::style::Print;
 use crossterm::style::SetAttribute;
@@ -273,7 +274,7 @@ where
     }
 
     /// Gets the previous buffer as a reference.
-    fn previous_buffer(&self) -> &Buffer {
+    pub(crate) fn previous_buffer(&self) -> &Buffer {
         &self.buffers[1 - self.current]
     }
 
@@ -725,6 +726,8 @@ fn draw<I>(writer: &mut impl Write, commands: I) -> io::Result<()>
 where
     I: Iterator<Item = DrawCommand>,
 {
+    // Disabled crossterm colors emit an empty SGR that also resets non-color attributes.
+    let color_enabled = !Colored::ansi_color_disabled_memoized();
     let mut fg = Color::Reset;
     let mut bg = Color::Reset;
     let mut modifier = Modifier::empty();
@@ -761,7 +764,7 @@ where
                     diff.queue(writer)?;
                     modifier = cell.modifier;
                 }
-                if cell_fg != fg || cell_bg != bg {
+                if color_enabled && (cell_fg != fg || cell_bg != bg) {
                     queue!(
                         writer,
                         SetColors(Colors::new(
@@ -1376,6 +1379,29 @@ mod tests {
                 .iter()
                 .any(|command| matches!(command, DrawCommand::Put { x: 1, y: 0, .. })),
             "expected the styled trailing cell to be cleared; commands: {commands:?}"
+        );
+    }
+
+    #[test]
+    fn transcript_selection_survives_terminal_palette_normalization() {
+        let mut cell = Cell::default();
+        cell.set_symbol("selected")
+            .set_style(Style::default().cyan().on_blue().bold())
+            .set_style(crate::style::transcript_selection_style());
+        let mut output = Vec::new();
+        draw(
+            &mut output,
+            [DrawCommand::Put { x: 0, y: 0, cell }].into_iter(),
+        )
+        .expect("draw selection");
+        let mut reverse = Vec::new();
+        queue!(reverse, SetAttribute(crossterm::style::Attribute::Reverse)).expect("reverse video");
+        assert!(output.windows(reverse.len()).any(|bytes| bytes == reverse));
+        insta::assert_snapshot!(
+            String::from_utf8(output)
+                .expect("terminal output")
+                .escape_debug()
+                .to_string()
         );
     }
 

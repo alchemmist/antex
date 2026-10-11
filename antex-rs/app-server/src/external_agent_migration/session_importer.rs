@@ -23,6 +23,7 @@ use antex_external_agent_migration::sessions::detect_imported_cla_session_connec
 use antex_external_agent_migration::sessions::prepare_validated_session_import_with_metadata_mode;
 use antex_external_agent_migration::sessions::record_completed_session_imports;
 use antex_models_manager::manager::RefreshStrategy;
+use antex_prompts::render_model_instructions;
 use antex_protocol::ThreadId;
 use antex_protocol::models::BaseInstructions;
 use antex_protocol::models::BaseInstructionsProvenance;
@@ -31,7 +32,7 @@ use antex_protocol::protocol::MultiAgentVersion;
 use antex_protocol::protocol::ThreadHistoryMode;
 use antex_protocol::protocol::ThreadMemoryMode;
 use antex_rollout::RolloutItem;
-use antex_rollout::is_persisted_rollout_item;
+use antex_rollout::into_persisted_rollout_items;
 use antex_thread_store::AppendThreadItemsParams;
 use antex_thread_store::CreateThreadParams;
 use antex_thread_store::PersistContext;
@@ -404,7 +405,6 @@ impl ExternalAgentSessionImporter {
                 ConfigOverrides {
                     cwd: Some(cwd),
                     antex_linux_sandbox_exe: self.arg0_paths.antex_linux_sandbox_exe.clone(),
-                    main_execve_wrapper_exe: self.arg0_paths.main_execve_wrapper_exe.clone(),
                     ..Default::default()
                 },
             )
@@ -455,6 +455,8 @@ impl ExternalAgentSessionImporter {
         };
         let now = Utc::now();
         let create_params = CreateThreadParams {
+            creator_user_id: None,
+            creator_account_id: None,
             session_id: thread_id.into(),
             thread_id,
             extra_config: None,
@@ -467,7 +469,7 @@ impl ExternalAgentSessionImporter {
                 text: config
                     .base_instructions
                     .clone()
-                    .unwrap_or_else(|| model_info.get_model_instructions(config.personality)),
+                    .unwrap_or_else(|| render_model_instructions(&model_info)),
                 provenance: Some(config.base_instructions_provenance.clone().unwrap_or_else(
                     || {
                         if config.base_instructions.is_some() {
@@ -494,7 +496,7 @@ impl ExternalAgentSessionImporter {
                 memory_mode,
             },
         };
-        rollout_items.retain(|item| is_persisted_rollout_item(item, ThreadHistoryMode::Legacy));
+        rollout_items = into_persisted_rollout_items(rollout_items, ThreadHistoryMode::Legacy);
         let (created_at, updated_at) = rollout_items
             .iter()
             .filter_map(|item| match item {

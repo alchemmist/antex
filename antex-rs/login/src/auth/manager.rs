@@ -3,7 +3,6 @@ mod workspace_routing;
 use chrono::Utc;
 use http::StatusCode;
 use serde::Deserialize;
-use serde::Serialize;
 #[cfg(test)]
 use serial_test::serial;
 use std::env;
@@ -58,9 +57,15 @@ pub use crate::auth::storage::AuthDotJson;
 pub use crate::auth::storage::AuthKeyringBackendKind;
 use crate::auth::storage::AuthStorageBackend;
 use crate::auth::storage::create_auth_storage;
-use crate::auth::util::try_parse_error_message;
 use crate::default_client::create_client;
 use crate::default_client::create_default_auth_client;
+use crate::oauth::ErrorBodyLimit;
+use crate::oauth::OAuthClient;
+use crate::oauth::OAuthError;
+use crate::oauth::RefreshTokenGrant;
+use crate::oauth::TokenEncoding;
+use crate::oauth::TokenEndpoint;
+use crate::oauth::TokenErrorDetail;
 use crate::outbound_proxy::AuthRouteConfig;
 use crate::token_data::TokenData;
 use crate::token_data::parse_chatgpt_account_user_id;
@@ -76,7 +81,6 @@ use antex_protocol::auth::PlanType as InternalPlanType;
 use antex_protocol::auth::RefreshTokenFailedError;
 use antex_protocol::auth::RefreshTokenFailedReason;
 use antex_protocol::protocol::SessionSource;
-use serde_json::Value;
 use thiserror::Error;
 pub use workspace_routing::WorkspaceRouting;
 pub use workspace_routing::WorkspaceRoutingRequest;
@@ -218,6 +222,9 @@ pub enum RefreshTokenError {
     Permanent(#[from] RefreshTokenFailedError),
     #[error(transparent)]
     Transient(#[from] std::io::Error),
+    /// Denied by application policy; neither retry nor cache as a credential failure.
+    #[error(transparent)]
+    Policy(#[from] antex_http_client::NetworkPolicyDenied),
 }
 
 /// Error returned when constructing an [`AuthManager`] from resolved configuration.
@@ -291,7 +298,16 @@ impl RefreshTokenError {
     pub fn failed_reason(&self) -> Option<RefreshTokenFailedReason> {
         match self {
             Self::Permanent(error) => Some(error.reason),
-            Self::Transient(_) => None,
+            Self::Transient(_) | Self::Policy(_) => None,
+        }
+    }
+}
+
+impl From<antex_http_client::HttpError> for RefreshTokenError {
+    fn from(error: antex_http_client::HttpError) -> Self {
+        match error {
+            antex_http_client::HttpError::Policy(denied) => Self::Policy(denied),
+            error => Self::Transient(std::io::Error::other(error)),
         }
     }
 }
@@ -301,6 +317,9 @@ impl From<RefreshTokenError> for std::io::Error {
         match err {
             RefreshTokenError::Permanent(failed) => std::io::Error::other(failed),
             RefreshTokenError::Transient(inner) => inner,
+            RefreshTokenError::Policy(error) => {
+                std::io::Error::new(std::io::ErrorKind::PermissionDenied, error)
+            }
         }
     }
 }
@@ -957,8 +976,8 @@ fn read_non_empty_env_var(key: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-/// Delete the auth.json file inside `codex_home` if it exists. Returns `Ok(true)`
-/// if a file was removed, `Ok(false)` if no auth file was present.
+/// Delete credentials for `codex_home` through the selected storage backend.
+/// Returns `Ok(true)` if credentials were removed, `Ok(false)` if none were present.
 pub fn logout(
     codex_home: &Path,
     auth_credentials_store_mode: AuthCredentialsStoreMode,
@@ -999,7 +1018,7 @@ pub async fn logout_with_revoke(
     )
 }
 
-/// Writes an `auth.json` that contains only the API key.
+/// Store API-key credentials through the selected storage backend.
 pub fn login_with_api_key(
     codex_home: &Path,
     api_key: &str,
@@ -1024,7 +1043,8 @@ pub fn login_with_api_key(
     )
 }
 
-/// Writes an `auth.json` that contains only the access token.
+/// Validate and store personal-access-token or Agent Identity credentials through
+/// the selected storage backend.
 pub async fn login_with_access_token(
     codex_home: &Path,
     access_token: &str,
@@ -1435,7 +1455,7 @@ fn logout_with_message(
     );
     let error_message = match removal_result {
         Ok(_) => message,
-        Err(err) => format!("{message}. Failed to remove auth.json: {err}"),
+        Err(err) => format!("{message}. Failed to remove stored credentials: {err}"),
     };
     Err(std::io::Error::other(error_message))
 }
@@ -1608,58 +1628,58 @@ async fn request_chatgpt_token_refresh(
     refresh_token: String,
     client: &HttpClient,
 ) -> Result<RefreshResponse, RefreshTokenError> {
-    let refresh_request = RefreshRequest {
-        client_id: oauth_client_id(),
-        grant_type: "refresh_token",
-        refresh_token,
-    };
+    let client_id = oauth_client_id();
     let endpoint = refresh_token_endpoint();
-
-    // Use shared client factory to include standard headers
-    let response = client
-        .post(endpoint.as_str())
-        .header("Content-Type", "application/json")
-        .json(&refresh_request)
-        .send()
+    let oauth = OAuthClient::new(
+        client,
+        TokenEndpoint {
+            url: &endpoint,
+            client_id: &client_id,
+            encoding: TokenEncoding::Json,
+            timeout: None,
+            error_body_limit: ErrorBodyLimit::Unlimited,
+        },
+    );
+    match oauth
+        .refresh(RefreshTokenGrant {
+            refresh_token: &refresh_token,
+            resource: None,
+        })
         .await
-        .map_err(|err| RefreshTokenError::Transient(std::io::Error::other(err)))?;
-
-    let status = response.status();
-    if status.is_success() {
-        let refresh_response = response
-            .json::<RefreshResponse>()
-            .await
-            .map_err(|err| RefreshTokenError::Transient(std::io::Error::other(err)))?;
-        Ok(refresh_response)
-    } else {
-        let body = response.text().await.unwrap_or_default();
-        tracing::error!("Failed to refresh token: {status}: {body}");
-        let code = extract_refresh_token_error_code(&body);
-        // RFC 6749 reports an unusable refresh token as invalid_grant without preserving
-        // the legacy expired/reused/revoked subtype. Keep it terminal with the generic reason.
-        let is_invalid_grant_bad_request = status == StatusCode::BAD_REQUEST
-            && code
-                .as_deref()
-                .is_some_and(|code| code.eq_ignore_ascii_case("invalid_grant"));
-        let failed =
-            classify_refresh_token_failure(code.as_deref(), &body, is_invalid_grant_bad_request);
-        if status == StatusCode::UNAUTHORIZED
-            || failed.reason != RefreshTokenFailedReason::Other
-            || is_invalid_grant_bad_request
-        {
-            Err(RefreshTokenError::Permanent(failed))
-        } else {
-            let message = try_parse_error_message(&body);
-            Err(RefreshTokenError::Transient(std::io::Error::other(
-                format!("Failed to refresh token: {status}: {message}"),
-            )))
+    {
+        Ok(response) => Ok(response),
+        Err(OAuthError::Rejected(rejection)) => {
+            if let Some(antex_http_client::HttpError::Policy(denied)) = rejection.body_read_error {
+                return Err(denied.into());
+            }
+            let status = rejection.status;
+            let detail = &rejection.detail;
+            tracing::error!(%status, ?detail, "Failed to refresh token");
+            let code = detail.error_code();
+            let is_invalid_grant_bad_request = status == StatusCode::BAD_REQUEST
+                && code.is_some_and(|code| code.eq_ignore_ascii_case("invalid_grant"));
+            let failed = classify_refresh_token_failure(code, detail, is_invalid_grant_bad_request);
+            if status == StatusCode::UNAUTHORIZED
+                || failed.reason != RefreshTokenFailedReason::Other
+                || is_invalid_grant_bad_request
+            {
+                Err(RefreshTokenError::Permanent(failed))
+            } else {
+                Err(RefreshTokenError::Transient(std::io::Error::other(
+                    format!("Failed to refresh token: {status}: {detail}"),
+                )))
+            }
+        }
+        Err(OAuthError::Transport(error)) => Err(error.into()),
+        Err(error @ OAuthError::InvalidResponse) => {
+            Err(RefreshTokenError::Transient(std::io::Error::other(error)))
         }
     }
 }
 
 fn classify_refresh_token_failure(
     code: Option<&str>,
-    body: &str,
+    detail: &TokenErrorDetail,
     is_invalid_grant_bad_request: bool,
 ) -> RefreshTokenFailedError {
     let normalized_code = code.map(str::to_ascii_lowercase);
@@ -1672,8 +1692,7 @@ fn classify_refresh_token_failure(
 
     if reason == RefreshTokenFailedReason::Other && !is_invalid_grant_bad_request {
         tracing::warn!(
-            backend_code = normalized_code.as_deref(),
-            backend_body = body,
+            backend_detail = ?detail,
             "Encountered unknown response while refreshing token"
         );
     }
@@ -1686,39 +1705,6 @@ fn classify_refresh_token_failure(
     };
 
     RefreshTokenFailedError::new(reason, message)
-}
-
-fn extract_refresh_token_error_code(body: &str) -> Option<String> {
-    if body.trim().is_empty() {
-        return None;
-    }
-
-    let Value::Object(map) = serde_json::from_str::<Value>(body).ok()? else {
-        return None;
-    };
-
-    if let Some(error_value) = map.get("error") {
-        match error_value {
-            Value::Object(obj) => {
-                if let Some(code) = obj.get("code").and_then(Value::as_str) {
-                    return Some(code.to_string());
-                }
-            }
-            Value::String(code) => {
-                return Some(code.to_string());
-            }
-            _ => {}
-        }
-    }
-
-    map.get("code").and_then(Value::as_str).map(str::to_string)
-}
-
-#[derive(Serialize)]
-struct RefreshRequest {
-    client_id: String,
-    grant_type: &'static str,
-    refresh_token: String,
 }
 
 #[derive(Deserialize, Clone)]
@@ -2046,12 +2032,12 @@ impl UnauthorizedRecovery {
     }
 }
 
-/// Central manager providing a single source of truth for auth.json derived
+/// Central manager providing a single source of truth for stored
 /// authentication data. It loads once (or on preference change) and then
 /// hands out cloned `AntexAuth` values so the rest of the program has a
 /// consistent snapshot.
 ///
-/// External modifications to `auth.json` will NOT be observed until
+/// External modifications to stored credentials will NOT be observed until
 /// `reload()` is called explicitly. This matches the design goal of avoiding
 /// different parts of the program seeing inconsistent auth data mid‑run.
 pub struct AuthManager {
@@ -2108,6 +2094,13 @@ pub trait AuthManagerConfig {
     fn auth_route_config(&self) -> AuthRouteConfig;
 }
 
+/// Runtime storage and network policy shared by independent credential managers.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AuthRuntimeConfig {
+    pub codex_home: PathBuf,
+    pub auth_route_config: AuthRouteConfig,
+}
+
 impl Debug for AuthManager {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AuthManager")
@@ -2141,6 +2134,18 @@ fn default_agent_identity_authapi_base_url() -> Option<String> {
 }
 
 impl AuthManager {
+    /// Returns the application policy associated with this account owner.
+    pub fn application_network_policy(&self) -> antex_http_client::NetworkPolicy {
+        self.auth_route_config.application_network_policy().clone()
+    }
+
+    /// Creates content clients bound to the account currently owned by this manager.
+    pub fn http_client_factory(&self) -> HttpClientFactory {
+        self.auth_route_config
+            .http_client_factory()
+            .clone()
+            .with_network_policy(self.application_network_policy().for_current_account())
+    }
     /// Create a new manager loading the initial auth using the provided
     /// preferred auth method. Errors loading auth are swallowed; `auth()` will
     /// simply return `None` in that case so callers can treat it as an
@@ -2399,6 +2404,14 @@ impl AuthManager {
         self.auth_cached()
     }
 
+    /// Refreshes auth, then captures credentials and their account-bound factory together.
+    /// The auth read lock prevents an identity change between the two snapshots.
+    pub async fn auth_with_http_client_factory(&self) -> Option<(AntexAuth, HttpClientFactory)> {
+        self.auth().await;
+        let cached = self.inner.read().ok()?;
+        Some((cached.auth.clone()?, self.http_client_factory()))
+    }
+
     pub async fn agent_identity_auth(
         &self,
         policy: AgentIdentityAuthPolicy,
@@ -2579,6 +2592,7 @@ impl AuthManager {
                             cached_auth
                         }
                         RefreshTokenError::Transient(_) => None,
+                        RefreshTokenError::Policy(_) => cached_auth,
                     }
                 }
             };
@@ -2618,6 +2632,11 @@ impl AuthManager {
                 !Self::auths_equal_for_refresh(previous, new_auth.as_ref());
             let owner_changed =
                 auth_changed_for_refresh && !same_owner(previous, new_auth.as_ref());
+            if owner_changed {
+                self.auth_route_config
+                    .application_network_policy()
+                    .invalidate();
+            }
             if auth_changed_for_refresh {
                 guard.permanent_refresh_failure = None;
             }
@@ -2729,6 +2748,14 @@ impl AuthManager {
 
     pub fn antex_api_key_env_enabled(&self) -> bool {
         self.enable_antex_api_key_env
+    }
+
+    /// Returns policy only; independent credential managers own their own state and lifecycle.
+    pub fn runtime_config(&self) -> AuthRuntimeConfig {
+        AuthRuntimeConfig {
+            codex_home: self.codex_home.clone(),
+            auth_route_config: self.auth_route_config.clone(),
+        }
     }
 
     /// Convenience constructor returning an `Arc` wrapper.
@@ -2909,10 +2936,10 @@ impl AuthManager {
         result
     }
 
-    /// Log out by deleting the on‑disk auth.json (if present). Returns Ok(true)
-    /// if a file was removed, Ok(false) if no auth file existed. On success,
-    /// reloads the in‑memory auth cache so callers immediately observe the
-    /// unauthenticated state.
+    /// Log out by deleting credentials from the selected storage backend and the
+    /// ephemeral store. Returns `Ok(true)` if credentials were removed, `Ok(false)`
+    /// if none were present. On success, reloads the in-memory auth cache so
+    /// callers immediately observe the unauthenticated state.
     pub async fn logout(&self) -> std::io::Result<bool> {
         self.ensure_logout_allowed()?;
         let removed = logout_all_stores(
@@ -2920,7 +2947,7 @@ impl AuthManager {
             self.auth_credentials_store_mode,
             self.keyring_backend_kind,
         )?;
-        // Always reload to clear any cached auth (even if file absent).
+        // Always reload to clear cached auth, even if no stored credentials were present.
         self.clear_external_auth();
         self.reload().await;
         Ok(removed)
@@ -2940,7 +2967,7 @@ impl AuthManager {
             self.auth_credentials_store_mode,
             self.keyring_backend_kind,
         )?;
-        // Always reload to clear any cached auth (even if file absent).
+        // Always reload to clear cached auth, even if no stored credentials were present.
         self.clear_external_auth();
         self.reload().await;
         Ok(result)

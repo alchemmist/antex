@@ -74,7 +74,9 @@ impl App {
             }
         }
         let lines = header.display_hyperlink_lines_for_mode(width, mode);
-        if animation.width == width && lines != animation.previous_lines {
+        // Fullscreen owns every displayed row. Its transcript renderer paints the header; never
+        // issue inline-scrollback cursor commands against the owned surface.
+        if !tui.is_owned_screen() && animation.width == width && lines != animation.previous_lines {
             tui.repaint_visible_history_block(
                 &animation.previous_lines,
                 &lines,

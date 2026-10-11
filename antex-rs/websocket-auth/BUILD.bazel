@@ -1,0 +1,6 @@
+load("//:defs.bzl", "antex_rust_crate")
+
+antex_rust_crate(
+    name = "websocket-auth",
+    crate_name = "antex_websocket_auth",
+)

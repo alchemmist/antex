@@ -91,7 +91,7 @@ fn install_helper(root: &Path) -> Result<AntexPackageLayout> {
     fs::write(&app, [])?;
     let source = cargo_bin("antex-voice-host")?;
     let helper = helper_dir.join(source.file_name().context("helper binary file name")?);
-    fs::copy(&source, &helper)?;
+    antex_utils_cargo_bin::copy_executable(&source, &helper)?;
     install_startup_libraries(helper_dir.parent().context("helper runtime directory")?)?;
     InstallContext::from_exe(
         /*is_macos*/ cfg!(target_os = "macos"),
@@ -160,7 +160,7 @@ async fn installed_client_accepts_non_utf8_package_path() -> Result<()> {
     let app = bin.join("antex");
     fs::write(&app, [])?;
     let source = cargo_bin("antex-voice-host")?;
-    fs::copy(&source, helper_dir.join(source.file_name().unwrap()))?;
+    antex_utils_cargo_bin::copy_executable(&source, &helper_dir.join(source.file_name().unwrap()))?;
     install_startup_libraries(helper_dir.parent().unwrap())?;
     let package = InstallContext::from_exe(
         /*is_macos*/ cfg!(target_os = "macos"),

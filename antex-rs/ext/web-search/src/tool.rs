@@ -1,4 +1,3 @@
-use antex_api::ReqwestTransport;
 use antex_api::SearchClient;
 use antex_api::SearchCommands;
 use antex_api::SearchQuery;
@@ -18,8 +17,10 @@ use antex_extension_api::parse_tool_input_schema_without_compaction;
 use antex_extension_items::ExtensionItem;
 use antex_extension_items::web_search::WebSearchAction;
 use antex_extension_items::web_search::WebSearchItem;
+use antex_http_client::ClientRouteClass;
+use antex_http_client::HttpClientFactory;
 use antex_login::default_client::add_originator_header;
-use antex_login::default_client::create_client;
+use antex_login::default_client::create_transport_for_routes_async;
 use antex_model_provider::SharedModelProvider;
 use antex_protocol::models::WebSearchAction as CoreWebSearchAction;
 use antex_protocol::protocol::EventMsg;
@@ -44,6 +45,7 @@ const RESULTS_PAYLOAD_BYTES_METRIC: &str = "codex.web_search.results.payload_byt
 
 pub(crate) struct WebSearchTool {
     pub(crate) session_id: String,
+    pub(crate) http_client_factory: HttpClientFactory,
     pub(crate) provider: SharedModelProvider,
     pub(crate) settings: SearchSettings,
     pub(crate) originator: Option<String>,
@@ -108,11 +110,13 @@ impl WebSearchTool {
             .api_auth()
             .await
             .map_err(|err| FunctionCallError::Fatal(err.to_string()))?;
-        let client = SearchClient::new(
-            ReqwestTransport::from_http_client(create_client()),
-            provider,
-            auth,
-        );
+        let transport = create_transport_for_routes_async(
+            self.http_client_factory.clone(),
+            ClientRouteClass::Api,
+        )
+        .await
+        .map_err(|err| FunctionCallError::Fatal(err.to_string()))?;
+        let client = SearchClient::new(transport, provider, auth);
         let request = SearchRequest {
             id: self.session_id.clone(),
             model: call.model.clone(),

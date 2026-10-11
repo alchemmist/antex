@@ -115,26 +115,18 @@ def test_root_fmt_recipes_use_shared_formatter_driver() -> None:
     )
     actual = {
         "working_directory": lines[0],
-        "fmt_comment": next(line for line in reversed(lines[:fmt_index]) if line.startswith("#")),
         "fmt_commands": [
             line.strip()
             for line in lines[fmt_index + 1 : fmt_check_index]
             if line.strip() and not line.startswith("#")
         ],
-        "fmt_check_comment": next(
-            line for line in reversed(lines[:fmt_check_index]) if line.startswith("#")
-        ),
         "fmt_check_commands": [
             line.strip() for line in lines[fmt_check_index + 1 : next_recipe_index] if line.strip()
         ],
     }
     expected = {
         "working_directory": 'set working-directory := "antex-rs"',
-        "fmt_comment": (
-            "# Format the justfile, Rust, Bazel/Starlark, Python SDK code, and Python scripts."
-        ),
         "fmt_commands": ["@{{ python }} ../scripts/format.py"],
-        "fmt_check_comment": "# Check formatting without modifying files.",
         "fmt_check_commands": ["@{{ python }} ../scripts/format.py --check"],
     }
 
@@ -536,6 +528,18 @@ def test_generated_chatgpt_account_email_is_required_nullable() -> None:
         ChatgptAccount.model_validate({"planType": "pro", "type": "chatgpt"})
 
 
+@pytest.mark.parametrize("link_id", ["link_calendar", None])
+def test_generated_resource_read_target_requires_explicit_account(link_id: str | None) -> None:
+    from antex_sdk.generated.v2_all import McpResourceReadTarget
+
+    payload = {"connectorId": "calendar", "linkId": link_id}
+    target = McpResourceReadTarget.model_validate(payload)
+    assert target.model_dump(by_alias=True) == payload
+
+    with pytest.raises(ValidationError):
+        McpResourceReadTarget.model_validate({"connectorId": "calendar"})
+
+
 def test_generated_inline_image_class_names_remain_stable() -> None:
     """Keep the existing Python class names when image references expand."""
     from antex_sdk.generated.v2_all import (
@@ -894,9 +898,13 @@ def test_stage_runtime_release_rejects_incomplete_package_layout(
         )
 
 
-def test_stage_runtime_directory_matches_archive(tmp_path: Path) -> None:
+@pytest.mark.parametrize("source_mode", [0o644, 0o664, 0o777, 0o444, 0o655])
+def test_stage_runtime_directory_matches_archive(tmp_path: Path, source_mode: int) -> None:
     script = _load_update_script_module()
     package_dir = _write_fake_codex_package(tmp_path / "codex-package", script)
+    for path in package_dir.rglob("*"):
+        if path.is_file():
+            path.chmod(source_mode)
     (package_dir / "bin" / script.runtime_binary_name()).chmod(0o755)
     package_archive = tmp_path / "codex-package.tar.gz"
     _write_package_archive(package_dir, package_archive)
@@ -915,6 +923,12 @@ def test_stage_runtime_directory_matches_archive(tmp_path: Path) -> None:
         )
 
     assert staged_trees[0] == staged_trees[1]
+    if os.name != "nt":
+        package_root = script.staged_runtime_package_root(tmp_path / "directory")
+        assert (package_root / "bin" / script.runtime_binary_name()).stat().st_mode & 0o777 == 0o755
+        expected_mode = 0o755 if source_mode & 0o100 else 0o644
+        assert (package_root / "antex-package.json").stat().st_mode & 0o777 == expected_mode
+        assert (package_dir / "antex-package.json").stat().st_mode & 0o777 == source_mode
     (script.staged_runtime_package_root(tmp_path / "directory") / "antex-package.json").unlink()
     assert (package_dir / "antex-package.json").is_file()
 

@@ -12,6 +12,7 @@ path = "src/lib.rs"
 workspace = true
 
 [dependencies]
+antex-utils-process = { workspace = true }
 anyhow = { workspace = true }
 arc-swap = { workspace = true }
 async-channel = { workspace = true }
@@ -67,6 +68,8 @@ antex-sandboxing = { workspace = true }
 antex-skills = { workspace = true }
 antex-skills-extension = { workspace = true }
 antex-state = { workspace = true }
+antex-agent-message-board-extension = { workspace = true }
+antex-agent-message-board-client = { workspace = true }
 antex-terminal-detection = { workspace = true }
 antex-thread-store = { workspace = true }
 antex-tools = { workspace = true }
@@ -89,6 +92,7 @@ dunce = { workspace = true }
 eventsource-stream = { workspace = true }
 futures = { workspace = true }
 http = { workspace = true }
+hyper-util = { workspace = true }
 iana-time-zone = { workspace = true }
 image = { workspace = true, features = ["jpeg", "png", "webp"] }
 indexmap = { workspace = true }
@@ -120,6 +124,8 @@ tokio-util = { workspace = true, features = ["rt"] }
 tokio-tungstenite = { workspace = true }
 toml = { workspace = true }
 toml_edit = { workspace = true }
+tonic = { workspace = true }
+tower = { version = "0.5.3", features = ["util"] }
 tracing = { workspace = true, features = ["log"] }
 url = { workspace = true }
 uuid = { workspace = true, features = ["serde", "v4", "v5", "v7"] }
@@ -134,20 +140,19 @@ openssl-sys = { workspace = true, features = ["vendored"] }
 [target.aarch64-unknown-linux-musl.dependencies]
 openssl-sys = { workspace = true, features = ["vendored"] }
 
-[target.'cfg(unix)'.dependencies]
-antex-shell-escalation = { workspace = true }
-
 [dev-dependencies]
 assert_cmd = { workspace = true }
 assert_matches = { workspace = true }
 antex-exec-server-test-support = { workspace = true }
 antex-image-generation-extension = { workspace = true }
 antex-home = { workspace = true }
+antex-mcp-extension = { workspace = true }
 antex-otel = { workspace = true }
 antex-test-binary-support = { workspace = true }
 antex-utils-cargo-bin = { workspace = true }
 antex-utils-redacted-string = { workspace = true }
 antex-web-search-extension = { workspace = true }
+antex-windows-sandbox-test-support = { workspace = true }
 core_test_support = { workspace = true }
 ctor = { workspace = true }
 insta = { workspace = true }
@@ -169,6 +174,9 @@ tracing-test = { workspace = true, features = ["no-env-filter"] }
 walkdir = { workspace = true }
 wiremock = { workspace = true }
 zstd = { workspace = true }
+
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_System_Threading"] }
 
 [package.metadata.cargo-shear]
 ignored = ["openssl-sys"]

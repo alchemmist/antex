@@ -13,6 +13,7 @@ pub enum SlashCommand {
     // DO NOT ALPHA-SORT! Enum order is presentation order in the popup, so
     // more frequently used commands should be listed first.
     Model,
+    Daybreak,
     Ide,
     Permissions,
     Keymap,
@@ -37,6 +38,7 @@ pub enum SlashCommand {
     App,
     Init,
     Compact,
+    Config,
     Recap,
     Plan,
     Todo,
@@ -52,6 +54,7 @@ pub enum SlashCommand {
     Dump,
     Raw,
     TmuxCommandLog,
+    Tui,
     Diff,
     Mention,
     Status,
@@ -59,6 +62,7 @@ pub enum SlashCommand {
     #[strum(to_string = "system-prompt", serialize = "styste-prompt")]
     SystemPrompt,
     Daemon,
+    Warnings,
     Cd,
     #[strum(to_string = "pwd", serialize = "cwd")]
     Pwd,
@@ -95,6 +99,7 @@ impl SlashCommand {
     /// User-visible description shown in the popup.
     pub fn description(self) -> &'static str {
         match self {
+            SlashCommand::Config => "configure Antex preferences",
             SlashCommand::Feedback => "send logs to maintainers",
             SlashCommand::New => "start a new chat during a conversation",
             SlashCommand::Init => "create an AGENTS.md file with instructions for Antex",
@@ -120,12 +125,14 @@ impl SlashCommand {
             SlashCommand::TmuxCommandLog => {
                 "mirror this session's shell commands in a dedicated tmux window"
             }
+            SlashCommand::Tui => "choose the TUI mode for the next launch",
             SlashCommand::Diff => "show git diff (including untracked files)",
             SlashCommand::Mention => "mention a file",
             SlashCommand::Skills => "use skills to improve how Antex performs specific tasks",
             SlashCommand::Import => "import setup, this project, and recent chats from Claude Code",
             SlashCommand::Hooks => "view and manage lifecycle hooks",
-            SlashCommand::Daemon => "Manage the local background server.",
+            SlashCommand::Daemon => "Manage the local background server",
+            SlashCommand::Warnings => "view retained warnings and diagnostic details",
             SlashCommand::Status => "show current session configuration and token usage",
             SlashCommand::Context => "summarize what is currently in the model context",
             SlashCommand::SystemPrompt => {
@@ -144,6 +151,7 @@ impl SlashCommand {
             SlashCommand::MemoryDrop => "DO NOT USE",
             SlashCommand::MemoryUpdate => "DO NOT USE",
             SlashCommand::Model => "choose what model and reasoning effort to use",
+            SlashCommand::Daybreak => "turn Daybreak on or off",
             SlashCommand::Ide => {
                 "include current selection, open files, and other context from your IDE"
             }
@@ -152,7 +160,7 @@ impl SlashCommand {
             SlashCommand::Voice => "start or stop voice; use /voice settings to choose a voice",
             SlashCommand::Goal => "set or view the goal for a long-running task",
             SlashCommand::Workflow => "run, pause, resume, or cancel a Python workflow",
-            SlashCommand::Agents => "view and switch between all active agent sessions",
+            SlashCommand::Agents => "open the agent command center",
             SlashCommand::MultiAgents => "toggle subagent mode",
             SlashCommand::Side | SlashCommand::Btw => {
                 "start a side conversation in an ephemeral fork"
@@ -164,7 +172,7 @@ impl SlashCommand {
             SlashCommand::Experimental => "toggle experimental features",
             SlashCommand::AutoReview => "approve one retry of a recent auto-review denial",
             SlashCommand::Memories => "configure memory use and generation",
-            SlashCommand::Mcp => "list configured MCP tools; use /mcp verbose for details",
+            SlashCommand::Mcp => "list MCP tools; use /mcp verbose or /mcp login <name>",
             SlashCommand::Apps => "manage apps",
             SlashCommand::Plugins => "browse plugins",
             SlashCommand::Logout => "log out of Antex",
@@ -224,9 +232,37 @@ impl SlashCommand {
                 | SlashCommand::Context
                 | SlashCommand::SystemPrompt
                 | SlashCommand::Daemon
+                | SlashCommand::Warnings
                 | SlashCommand::Pwd
                 | SlashCommand::Usage
                 | SlashCommand::Ide
+        )
+    }
+
+    /// Whether dispatch needs thread state to validate this command before consuming its draft.
+    /// The composer must defer busy-state rejection and draft clearing for these commands.
+    pub(crate) fn requires_dispatch_validation(self) -> bool {
+        matches!(self, SlashCommand::Review)
+    }
+
+    /// Commands that do not require a writable current thread. The server must still be connected.
+    pub(crate) fn available_when_thread_unavailable(self) -> bool {
+        matches!(
+            self,
+            SlashCommand::New
+                | SlashCommand::Clear
+                | SlashCommand::Resume
+                | SlashCommand::Agents
+                | SlashCommand::MultiAgents
+                | SlashCommand::Quit
+                | SlashCommand::Exit
+                | SlashCommand::Status
+                | SlashCommand::Warnings
+                | SlashCommand::DebugConfig
+                | SlashCommand::Pwd
+                | SlashCommand::Rollout
+                | SlashCommand::Copy
+                | SlashCommand::Raw
         )
     }
 
@@ -234,7 +270,6 @@ impl SlashCommand {
     pub fn available_during_task(self) -> bool {
         match self {
             SlashCommand::New
-            | SlashCommand::Archive
             | SlashCommand::Delete
             | SlashCommand::Fork
             | SlashCommand::Worktree
@@ -244,6 +279,7 @@ impl SlashCommand {
             | SlashCommand::Export
             | SlashCommand::Dump
             | SlashCommand::Keymap
+            | SlashCommand::Tui
             | SlashCommand::Vim
             | SlashCommand::ElevateSandbox
             | SlashCommand::Experimental
@@ -259,8 +295,10 @@ impl SlashCommand {
             | SlashCommand::MemoryUpdate => false,
             SlashCommand::Diff
             | SlashCommand::Workflow
+            | SlashCommand::Archive
             | SlashCommand::Resume
             | SlashCommand::Model
+            | SlashCommand::Daybreak
             | SlashCommand::Permissions
             | SlashCommand::Copy
             | SlashCommand::Raw
@@ -273,6 +311,7 @@ impl SlashCommand {
             | SlashCommand::Context
             | SlashCommand::SystemPrompt
             | SlashCommand::Daemon
+            | SlashCommand::Warnings
             | SlashCommand::Pwd
             | SlashCommand::Usage
             | SlashCommand::DebugConfig
@@ -297,7 +336,7 @@ impl SlashCommand {
             SlashCommand::Rollout => true,
             SlashCommand::TestApproval => true,
             SlashCommand::Agents | SlashCommand::MultiAgents => true,
-            SlashCommand::Theme | SlashCommand::Pets => false,
+            SlashCommand::Config | SlashCommand::Theme | SlashCommand::Pets => false,
         }
     }
 

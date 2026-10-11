@@ -1,23 +1,244 @@
 //! Catalogs must follow auth and provider changes without leaking default billing tiers.
 
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
+use std::time::Duration;
+use tokio_util::sync::CancellationToken;
 
+use antex_core::TurnInputRequest;
 use antex_login::AntexAuth;
 use antex_login::AuthCredentialsStoreMode;
+use antex_login::AuthHeaders;
 use antex_login::AuthKeyringBackendKind;
+use antex_login::ExternalAuth;
+use antex_login::ExternalAuthFuture;
+use antex_login::ExternalAuthRefreshContext;
 use antex_login::login_with_api_key;
 use antex_models_manager::bundled_models_response;
 use antex_models_manager::manager::RefreshStrategy;
+use antex_protocol::AgentPath;
 use antex_protocol::openai_models::ModelVisibility;
 use antex_protocol::openai_models::ModelsResponse;
+use antex_protocol::openai_models::ToolMode;
+use antex_protocol::protocol::EventMsg;
+use antex_protocol::protocol::InterAgentCommunication;
+use antex_protocol::protocol::Op;
+use antex_protocol::user_input::UserInput;
 use anyhow::Result;
 use core_test_support::responses;
 use core_test_support::responses::ev_completed;
 use core_test_support::responses::ev_response_created;
 use core_test_support::responses::sse;
 use core_test_support::test_antex::test_antex;
+use core_test_support::wait_for_event;
+use http::HeaderMap;
+use http::HeaderValue;
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
+use test_case::test_case;
+use wiremock::Mock;
+use wiremock::MockServer;
+use wiremock::ResponseTemplate;
+use wiremock::matchers::header;
+use wiremock::matchers::method;
+use wiremock::matchers::path;
+
+struct SelectedAuth(AntexAuth);
+
+impl ExternalAuth for SelectedAuth {
+    fn resolve(&self) -> ExternalAuthFuture<'_, AntexAuth> {
+        Box::pin(async { Ok(self.0.clone()) })
+    }
+
+    fn refresh(&self, _context: ExternalAuthRefreshContext) -> ExternalAuthFuture<'_, AntexAuth> {
+        self.resolve()
+    }
+}
+
+#[derive(Default)]
+struct StallingAuth {
+    stall: AtomicBool,
+    released: CancellationToken,
+}
+
+impl ExternalAuth for StallingAuth {
+    fn resolve(&self) -> ExternalAuthFuture<'_, AntexAuth> {
+        Box::pin(async {
+            if self.stall.load(Ordering::SeqCst) {
+                self.released.cancelled().await;
+            }
+            Ok(header_auth("Bearer rotated"))
+        })
+    }
+
+    fn refresh(&self, _context: ExternalAuthRefreshContext) -> ExternalAuthFuture<'_, AntexAuth> {
+        self.resolve()
+    }
+}
+
+fn header_auth(token: &'static str) -> AntexAuth {
+    AntexAuth::Headers(AuthHeaders::new(HeaderMap::from_iter([
+        (http::header::AUTHORIZATION, HeaderValue::from_static(token)),
+        (
+            http::header::HeaderName::from_static("chatgpt-account-id"),
+            HeaderValue::from_static("same-account"),
+        ),
+    ])))
+}
+
+#[derive(Clone, Copy)]
+enum Input {
+    User,
+    Mail,
+}
+
+#[derive(Clone, Copy)]
+enum RefreshOutcome {
+    Success,
+    Failure,
+    AuthTimeout,
+}
+
+#[test_case(Input::User, RefreshOutcome::Success; "user refresh")]
+#[test_case(Input::User, RefreshOutcome::Failure; "user fallback")]
+#[test_case(Input::Mail, RefreshOutcome::Success; "mail refresh")]
+#[test_case(Input::Mail, RefreshOutcome::Failure; "mail fallback")]
+#[test_case(Input::User, RefreshOutcome::AuthTimeout; "auth timeout")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn auth_rotation_refreshes_before_turn_with_best_effort(
+    input: Input,
+    outcome: RefreshOutcome,
+) -> Result<()> {
+    let server = MockServer::start().await;
+    let catalog = bundled_models_response()?;
+    let mut model = catalog
+        .models
+        .iter()
+        .find(|model| model.slug == "gpt-5.5")
+        .cloned()
+        .expect("bundled model");
+    let fallback_context_window = model.usable_context_window();
+    responses::mount_models_once(&server, catalog).await;
+    let test = test_antex()
+        .with_auth(header_auth("Bearer rotated"))
+        .with_model(&model.slug)
+        .with_config(|config| config.model_provider.request_max_retries = Some(0))
+        .build_with_auto_env(&server)
+        .await?;
+    model.visibility = ModelVisibility::List;
+    model.context_window = Some(481_000);
+    model.max_context_window = Some(481_000);
+    model.effective_context_window_percent = 100;
+    model.use_responses_lite = true;
+    model.tool_mode = Some(ToolMode::CodeModeOnly);
+    let succeeds = matches!(outcome, RefreshOutcome::Success);
+    let stalls_auth = matches!(outcome, RefreshOutcome::AuthTimeout);
+    let expected_context_window = if succeeds {
+        model.usable_context_window()
+    } else {
+        fallback_context_window
+    };
+    let template = if succeeds {
+        ResponseTemplate::new(/*s*/ 200).set_body_json(ModelsResponse {
+            models: vec![model],
+        })
+    } else {
+        ResponseTemplate::new(/*s*/ 503).set_body_string("unavailable")
+    };
+    Mock::given(method("GET"))
+        .and(path("/v1/models"))
+        .and(header("authorization", "Bearer rotated"))
+        .respond_with(template)
+        .expect(/*r*/ u64::from(!stalls_auth))
+        .mount(&server)
+        .await;
+    let stalled_auth = Arc::new(StallingAuth::default());
+    // The shared picker can replace the catalog between turns. Switching back
+    // must refresh even when this was the last identity used to start a turn.
+    test.thread_manager
+        .auth_manager()
+        .set_external_auth(Arc::new(SelectedAuth(header_auth("Bearer other"))))
+        .await?;
+    responses::mount_models_once(&server, bundled_models_response()?).await;
+    test.thread_manager
+        .get_models_manager()
+        .raw_model_catalog(
+            RefreshStrategy::Online,
+            antex_core::test_support::default_http_client_factory(),
+        )
+        .await;
+    let auth: Arc<dyn ExternalAuth> = if stalls_auth {
+        stalled_auth.clone()
+    } else {
+        Arc::new(SelectedAuth(header_auth("Bearer rotated")))
+    };
+    test.thread_manager
+        .auth_manager()
+        .set_external_auth(auth)
+        .await?;
+    stalled_auth.stall.store(stalls_auth, Ordering::SeqCst);
+    let response = responses::mount_sse_once(&server, responses::sse_completed("done")).await;
+    match input {
+        Input::User => {
+            tokio::time::timeout(
+                Duration::from_secs(/*secs*/ 7),
+                test.antex
+                    .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
+                        text: "hello".into(),
+                        text_elements: Vec::new(),
+                    }])),
+            )
+            .await??;
+        }
+        Input::Mail => {
+            test.antex
+                .submit(Op::InterAgentCommunication {
+                    communication: InterAgentCommunication::new(
+                        AgentPath::root().join("worker").expect("valid path"),
+                        AgentPath::root(),
+                        Vec::new(),
+                        "hello".into(),
+                        /*trigger_turn*/ true,
+                    ),
+                    start_options: Default::default(),
+                })
+                .await?;
+        }
+    }
+    let started = wait_for_event(&test.antex, |event| {
+        matches!(event, EventMsg::TurnStarted(_))
+    })
+    .await;
+    let EventMsg::TurnStarted(started) = started else {
+        unreachable!()
+    };
+    assert_eq!(started.model_context_window, expected_context_window);
+    if stalls_auth {
+        stalled_auth.stall.store(/*val*/ false, Ordering::SeqCst);
+        stalled_auth.released.cancel();
+    }
+    wait_for_event(&test.antex, |event| {
+        matches!(event, EventMsg::TurnComplete(_))
+    })
+    .await;
+    let request = response.single_request();
+    assert!(request.body_contains_text("hello"));
+    assert_eq!(
+        request.header("authorization").as_deref(),
+        Some("Bearer rotated")
+    );
+    let body = request.body_json();
+    let uses_responses_lite = body["input"]
+        .as_array()
+        .expect("request input")
+        .iter()
+        .any(|item| item["type"] == "additional_tools");
+    assert_eq!(uses_responses_lite, succeeds);
+    test.antex.submit(Op::Shutdown).await?;
+    test.antex.wait_until_terminated().await;
+    Ok(())
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn auth_and_provider_switches_do_not_reuse_chatgpt_catalog() -> Result<()> {
@@ -89,6 +310,11 @@ async fn auth_and_provider_switches_do_not_reuse_chatgpt_catalog() -> Result<()>
         .with_home(home.clone())
         .with_auth(AntexAuth::from_api_key("api-key"))
         .with_config(|config| {
+            config.model_provider.model_catalog_url = config
+                .model_provider
+                .base_url
+                .as_ref()
+                .map(|base_url| format!("{base_url}/models").into());
             config
                 .features
                 .enable(antex_features::Feature::ApiKeyModelDiscovery)

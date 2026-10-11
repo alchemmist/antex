@@ -13,8 +13,12 @@ path = "src/lib.rs"
 workspace = true
 
 [dependencies]
+bytes = { workspace = true }
+antex-http-client = { workspace = true }
+opentelemetry-http = "0.31.0"
 chrono = { workspace = true }
 antex-utils-absolute-path = { workspace = true }
+antex-utils-stream-parser = { workspace = true }
 antex-utils-string = { workspace = true }
 antex-api = { workspace = true }
 antex-protocol = { workspace = true }

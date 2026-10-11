@@ -10,6 +10,7 @@
 //! Both paths return [`StdioServerTransport`], so `RmcpClient` can hand the
 //! resulting byte stream to rmcp without knowing where the process lives. The
 //! executor-specific byte adaptation lives in `executor_process_transport`.
+//! Unix local servers use the stdio-only descriptor policy.
 
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -36,14 +37,14 @@ use antex_exec_server::ExecProcess;
 use antex_protocol::config_types::ShellEnvironmentPolicyInherit;
 use antex_utils_path_uri::LegacyAppPathString;
 use antex_utils_path_uri::PathUri;
-#[cfg(all(unix, not(target_os = "macos")))]
+use antex_utils_pty::Command;
+#[cfg(unix)]
+use antex_utils_pty::DescriptorPolicy;
+use antex_utils_pty::ProcessMode;
+#[cfg(unix)]
 use antex_utils_pty::process_group::kill_process_group;
-#[cfg(target_os = "macos")]
-use antex_utils_pty::process_group::kill_process_group_with_member_fallback as kill_process_group;
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 use antex_utils_pty::process_group::terminate_process_group;
-#[cfg(target_os = "macos")]
-use antex_utils_pty::process_group::terminate_process_group_with_member_fallback as terminate_process_group;
 use anyhow::Result;
 use anyhow::anyhow;
 use futures::FutureExt;
@@ -54,7 +55,6 @@ use rmcp::service::TxJsonRpcMessage;
 use rmcp::transport::Transport;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::BufReader;
-use tokio::process::Command;
 use tokio::sync::watch;
 use tokio::time::Instant;
 use tracing::info;
@@ -280,13 +280,14 @@ impl LocalStdioServerLauncher {
 
         let build_command = || {
             let mut command = Command::new(&resolved_program);
-            command
-                .current_dir(&cwd)
-                .env_clear()
-                .envs(&envs)
-                .args(&args);
+            command.current_dir(&cwd).envs(&envs).args(&args);
+            command.process_mode(ProcessMode::NewGroup);
+            // MCP uses only stdio; select Explicit to exclude unrelated
+            // orchestrator descriptors from the server and commands it launches.
+            // Descriptor allowlisting is Unix-only. Windows can still inherit unrelated
+            // handles and needs a handle allowlist in the shared spawn backend.
             #[cfg(unix)]
-            command.process_group(0);
+            command.descriptor_policy(DescriptorPolicy::Explicit);
             command
         };
         #[cfg(windows)]
@@ -296,7 +297,7 @@ impl LocalStdioServerLauncher {
         #[cfg(windows)]
         let job = match antex_utils_pty::JobObject::create_without_breakaway() {
             Ok(job) => {
-                job.prepare_suspended_spawn(&mut command);
+                command.prepare_suspended_spawn(&job);
                 Some(job)
             }
             Err(error) => {
@@ -686,8 +687,12 @@ impl ExecutorStdioServerLauncher {
             // environment, not copied from Antex. Start from `All` only so the
             // named remote variable is available to the filter below; the
             // effective child env is still limited by `include_only`.
+            // The orchestrator may be Unix while the executor is Windows.
+            // Preserve Windows runtime initialization and temporary-directory
+            // inputs even when explicit remote vars activate this allowlist.
             crate::utils::DEFAULT_ENV_VARS
                 .iter()
+                .chain(["SYSTEMROOT", "TEMP", "TMP"].iter())
                 .map(|name| (*name).to_string())
                 .chain(remote_env_vars.iter().cloned())
                 .collect()
@@ -762,6 +767,15 @@ mod tests {
         let env = shell_environment::create_env_from_vars(
             [
                 ("PATH".to_string(), "/remote/bin".to_string()),
+                ("SystemRoot".to_string(), r"C:\Windows".to_string()),
+                (
+                    "TEMP".to_string(),
+                    r"C:\Users\test\AppData\Local\Temp".to_string(),
+                ),
+                (
+                    "TMP".to_string(),
+                    r"C:\Users\test\AppData\Local\Temp".to_string(),
+                ),
                 ("REMOTE_TOKEN".to_string(), "remote-secret".to_string()),
                 (
                     "UNREQUESTED_SECRET".to_string(),
@@ -773,6 +787,16 @@ mod tests {
         );
 
         assert_eq!(env.get("PATH").map(String::as_str), Some("/remote/bin"));
+        assert_eq!(
+            env.get("SystemRoot").map(String::as_str),
+            Some(r"C:\Windows")
+        );
+        for name in ["TEMP", "TMP"] {
+            assert_eq!(
+                env.get(name).map(String::as_str),
+                Some(r"C:\Users\test\AppData\Local\Temp")
+            );
+        }
         assert_eq!(
             env.get("REMOTE_TOKEN").map(String::as_str),
             Some("remote-secret")

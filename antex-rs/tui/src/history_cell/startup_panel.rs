@@ -1,5 +1,3 @@
-use super::SESSION_HEADER_MAX_INNER_WIDTH;
-use super::card_inner_width;
 use super::startup_mascot::MASCOT_WIDTH;
 use super::startup_mascot::MascotFrame;
 use super::startup_mascot::render_mascot;
@@ -18,6 +16,10 @@ use ratatui::style::Stylize;
 use std::path::Path;
 use std::sync::OnceLock;
 use std::sync::RwLock;
+
+#[cfg(test)]
+#[path = "startup_panel_tests.rs"]
+mod tests;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct StartupUpdates {
@@ -77,7 +79,7 @@ pub(super) struct StartupPanelView<'a> {
     pub model: &'a str,
     pub model_style: Style,
     pub reasoning_effort: Option<&'a ReasoningEffort>,
-    pub show_fast_status: bool,
+    pub service_tier: Option<&'a str>,
     pub directory: &'a Path,
     pub yolo_mode: bool,
     pub context_window: Option<i64>,
@@ -148,10 +150,12 @@ impl StartupPanelView<'_> {
     }
 
     fn framed_lines(&self, width: u16, frame_style: FrameStyle) -> Vec<Line<'static>> {
-        let Some(max_inner_width) = card_inner_width(width, SESSION_HEADER_MAX_INNER_WIDTH) else {
+        if width < 4 {
             return Vec::new();
-        };
-        let max_inner_width = max_inner_width.saturating_sub(2);
+        }
+        let max_inner_width = usize::from(width.saturating_sub(4))
+            .min(56)
+            .saturating_sub(2);
         let title = self.title();
         let content = self.content_lines(frame_style);
         let content_width = content
@@ -214,8 +218,16 @@ impl StartupPanelView<'_> {
             if let Some(reasoning) = self.reasoning_effort {
                 spans.extend([" · ".dim(), reasoning.as_str().to_string().into()]);
             }
-            if self.show_fast_status {
-                spans.extend([" · ".dim(), "fast".magenta()]);
+            if let Some(tier) = self
+                .service_tier
+                .filter(|tier| !tier.is_empty() && *tier != "default")
+            {
+                let label = match tier {
+                    "fast" | "priority" => "fast",
+                    "ultrafast" => "ultra fast",
+                    tier => tier,
+                };
+                spans.extend([" · ".dim(), label.to_string().magenta()]);
             }
             lines.push(Line::from(spans));
         }

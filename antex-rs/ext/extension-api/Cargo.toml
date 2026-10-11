@@ -14,10 +14,14 @@ doctest = false
 workspace = true
 
 [dependencies]
+antex-api = { workspace = true }
+futures = { workspace = true }
+antex-guardian-context = { workspace = true }
 antex-history = { workspace = true }
 antex-config = { workspace = true }
 antex-context-fragments = { workspace = true }
 antex-exec-server-protocol = { workspace = true }
+antex-file-system = { workspace = true }
 antex-mcp = { workspace = true }
 antex-protocol = { workspace = true }
 antex-tools = { workspace = true }

@@ -72,6 +72,7 @@ pub(crate) fn thread_extensions(
         antex_queue_extension::install(&mut builder, queue_service);
     }
     antex_history_notes_extension::install(&mut builder, auth_manager.clone());
+    antex_core::install_agent_message_board(&mut builder, thread_manager.clone());
     if let Some(state_db) = state_db {
         antex_goal_extension::install_with_backend(
             &mut builder,
@@ -95,16 +96,13 @@ pub(crate) fn thread_extensions(
     antex_guardian_v2::install(&mut builder, auth_manager.clone(), thread_manager);
     antex_memories_extension::install(&mut builder, antex_otel::global());
     antex_mcp_extension::install(&mut builder);
-    antex_mcp_extension::install_executor_plugins(&mut builder, environment_manager);
+    antex_mcp_extension::install_plugins(&mut builder, environment_manager);
     antex_web_search_extension::install(&mut builder, auth_manager.clone());
     antex_image_generation_extension::install(&mut builder, auth_manager, |config: &Config| {
         Some(config.codex_home.clone())
     });
     let skill_providers = antex_skills_extension::SkillProviders::new()
         .with_executor_provider(executor_skill_provider)
-        .with_orchestrator_provider(Arc::new(
-            antex_skills_extension::OrchestratorSkillProvider::new(),
-        ))
         .with_host_provider(Arc::new(antex_skills_extension::HostSkillProvider::new()));
     antex_skills_extension::install_with_providers_and_metrics(
         &mut builder,
@@ -114,7 +112,7 @@ pub(crate) fn thread_extensions(
             include_instructions: config.include_skill_instructions,
             max_context_tokens: config.skill_max_context_tokens,
             bundled_skills_enabled: config.bundled_skills_enabled(),
-            orchestrator_skills_enabled: config.orchestrator_skills_enabled,
+            cloud_skill_enabled: config.cloud_skill_enabled,
             shadow_selection_enabled: config
                 .features
                 .enabled(antex_features::Feature::SkillSearch),

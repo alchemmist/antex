@@ -121,6 +121,88 @@ async fn changed_credentials_abort_publication_and_remove_only_new_entries() -> 
 }
 
 #[tokio::test]
+async fn gateway_credentials_migrate_with_their_independent_key() -> anyhow::Result<()> {
+    let root = tempdir()?;
+    let source = root.path().join("source");
+    let destination = root.path().join("destination");
+    fs::create_dir(&source)?;
+    let plan = inspect(&source, &destination)?;
+    let store = Arc::new(TestKeyring::default());
+    let source_key =
+        antex_secrets::compute_keyring_account(&plan.source, LocalSecretsNamespace::GatewayOAuth);
+    let destination_key = antex_secrets::compute_keyring_account(
+        &plan.destination,
+        LocalSecretsNamespace::GatewayOAuth,
+    );
+    let config = r#"[model_providers.gateway.gateway_oauth]
+authorization_url = "https://gateway.example/authorize"
+token_url = "https://gateway.example/token"
+client_id = "test-client"
+resource = "https://gateway.example/api"
+scopes = ["openid", "inference"]
+"#;
+    fs::write(source.join("config.toml"), config)?;
+    let document = config.parse::<toml_edit::DocumentMut>()?;
+    let names = super::credential_keys::gateway_secret_names(
+        document.as_table(),
+        &plan.source,
+        &plan.destination,
+    )?;
+    let (secret, destination_secret) = &names[0];
+    assert_ne!(secret, destination_secret);
+    let manager = SecretsManager::new_with_keyring_store_and_namespace(
+        plan.source.clone(),
+        SecretsBackendKind::Local,
+        store.clone(),
+        LocalSecretsNamespace::GatewayOAuth,
+    );
+    manager.set(&SecretScope::Global, secret, "gateway-token")?;
+    let passphrase = store.load("antex", &source_key)?.unwrap();
+    store.save("codex", &source_key, &passphrase)?;
+    store.delete("antex", &source_key)?;
+    let bytes = fs::read(source.join("secrets/gateway_oauth.age"))?;
+
+    // An abandoned preparation rolls back only the new destination credential.
+    let prepared = prepare_with_keyring(inspect(&source, &destination)?, store.clone()).await?;
+    assert_eq!(
+        store.load("antex", &destination_key)?,
+        Some(passphrase.clone())
+    );
+    drop(prepared);
+    assert_eq!(store.load("antex", &destination_key)?, None);
+    assert_eq!(store.load("codex", &source_key)?, Some(passphrase));
+
+    // Without the provider inputs its home-bound identity cannot be reconstructed.
+    // Fail safely rather than publish a home with silently unusable credentials.
+    fs::remove_file(source.join("config.toml"))?;
+    assert!(
+        prepare_with_keyring(inspect(&source, &destination)?, store.clone())
+            .await
+            .is_err()
+    );
+    assert_eq!(store.load("antex", &destination_key)?, None);
+    assert!(!destination.exists());
+    fs::write(source.join("config.toml"), config)?;
+
+    prepare_with_keyring(inspect(&source, &destination)?, store.clone())
+        .await?
+        .publish()?;
+    let manager = SecretsManager::new_with_keyring_store_and_namespace(
+        destination.clone(),
+        SecretsBackendKind::Local,
+        store,
+        LocalSecretsNamespace::GatewayOAuth,
+    );
+    assert_eq!(
+        manager.get(&SecretScope::Global, destination_secret)?,
+        Some("gateway-token".to_string())
+    );
+    assert_eq!(manager.get(&SecretScope::Global, secret)?, None);
+    assert_eq!(fs::read(source.join("secrets/gateway_oauth.age"))?, bytes);
+    Ok(())
+}
+
+#[tokio::test]
 async fn encrypted_auth_keeps_its_payload_under_the_new_namespace() -> anyhow::Result<()> {
     let root = tempdir()?;
     let source = root.path().join("source");

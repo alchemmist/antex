@@ -19,6 +19,7 @@ use antex_skills::LoadedSkills;
 use antex_skills::SkillMetadata;
 use antex_skills::SkillRootLoadRequest;
 use antex_utils_absolute_path::AbsolutePathBuf;
+use antex_utils_path_uri::PathUri;
 use anyhow::Result;
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
@@ -81,12 +82,18 @@ async fn curated_git_requirements_control_plugin_skills() -> Result<()> {
         )
         .await?;
         let config = PluginsConfigInput::new(
-            config_layer_stack,
+            config_layer_stack.clone(),
+            config_layer_stack
+                .effective_config()
+                .try_into::<antex_config::config_toml::ConfigToml>()
+                .unwrap()
+                .plugins,
             "openai".to_string(),
             /*plugins_enabled*/ true,
             /*remote_plugin_enabled*/ false,
             "https://chatgpt.com/backend-api/".to_string(),
             HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault),
+            /*product_sku*/ None,
         );
         let auth = if name == "openai-curated" {
             AntexAuth::create_dummy_chatgpt_auth_for_testing()
@@ -116,7 +123,9 @@ async fn curated_git_requirements_control_plugin_skills() -> Result<()> {
                     interface: None,
                     dependencies: None,
                     policy: None,
-                    path_to_skills_md: AbsolutePathBuf::try_from(fs::canonicalize(skill_path)?)?,
+                    path_to_skills_md: PathUri::from_abs_path(&AbsolutePathBuf::try_from(
+                        fs::canonicalize(skill_path)?,
+                    )?),
                     scope: SkillScope::User,
                     plugin_id: Some(plugin_id),
                     remote_plugin_id: None,

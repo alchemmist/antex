@@ -1,4 +1,6 @@
-use core_test_support::test_antex::local_selections;
+use antex_protocol::protocol::TurnEnvironmentRequest;
+use antex_protocol::protocol::TurnEnvironmentRequests;
+use core_test_support::test_antex::local_requests;
 use std::fs;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -24,8 +26,6 @@ use antex_protocol::protocol::AskForApproval;
 use antex_protocol::protocol::EnvironmentConfigState;
 use antex_protocol::protocol::EventMsg;
 use antex_protocol::protocol::ThreadSettingsOverrides;
-use antex_protocol::protocol::TurnEnvironmentSelection;
-use antex_protocol::protocol::TurnEnvironmentSelections;
 use antex_protocol::user_input::UserInput;
 use antex_skills_extension::SkillsExtensionConfig;
 use antex_skills_extension::install;
@@ -90,7 +90,7 @@ fn skills_extensions() -> Arc<ExtensionRegistry<Config>> {
         include_instructions: config.include_skill_instructions,
         max_context_tokens: config.skill_max_context_tokens,
         bundled_skills_enabled: config.bundled_skills_enabled(),
-        orchestrator_skills_enabled: config.orchestrator_skills_enabled,
+        cloud_skill_enabled: config.cloud_skill_enabled,
         shadow_selection_enabled: config.features.enabled(Feature::SkillSearch),
     });
     Arc::new(extensions.build())
@@ -226,9 +226,9 @@ async fn model_visible_environment_context_preserves_foreign_workspace_roots() -
             }])
             .with_thread_settings(ThreadSettingsOverrides {
                 permission_profile: Some(PermissionProfile::workspace_write()),
-                environments: Some(TurnEnvironmentSelections::new(
+                environments: Some(TurnEnvironmentRequests::new(
                     test.config.cwd.clone(),
-                    vec![TurnEnvironmentSelection {
+                    vec![TurnEnvironmentRequest {
                         environment_id: LOCAL_ENVIRONMENT_ID.to_string(),
                         cwd: PathUri::from_abs_path(&test.config.cwd),
                         workspace_roots: vec![foreign_root],
@@ -286,7 +286,7 @@ async fn snapshot_model_visible_layout_turn_overrides() -> Result<()> {
 
     let mut builder = test_antex()
         .with_extensions(skills_extensions())
-        .with_model("gpt-5.4")
+        .with_model("gpt-5.5")
         .with_config(|config| {
             config.update_plan_enabled = true;
         });
@@ -305,7 +305,7 @@ async fn snapshot_model_visible_layout_turn_overrides() -> Result<()> {
                 text_elements: Vec::new(),
             }])
             .with_thread_settings(ThreadSettingsOverrides {
-                environments: Some(local_selections(first_turn_cwd)),
+                environments: Some(local_requests(first_turn_cwd)),
                 approval_policy: Some(AskForApproval::Never),
                 sandbox_policy: Some(first_sandbox_policy),
                 permission_profile: first_permission_profile,
@@ -337,7 +337,7 @@ async fn snapshot_model_visible_layout_turn_overrides() -> Result<()> {
                 text_elements: Vec::new(),
             }])
             .with_thread_settings(ThreadSettingsOverrides {
-                environments: Some(local_selections(preturn_context_diff_cwd)),
+                environments: Some(local_requests(preturn_context_diff_cwd)),
                 approval_policy: Some(AskForApproval::OnRequest),
                 sandbox_policy: Some(second_sandbox_policy),
                 permission_profile: second_permission_profile,
@@ -399,7 +399,7 @@ async fn snapshot_model_visible_layout_cwd_change_refreshes_agents() -> Result<(
     let mut builder = test_antex()
         .with_config(|config| config.update_plan_enabled = true)
         .with_extensions(skills_extensions())
-        .with_model("gpt-5.4");
+        .with_model("gpt-5.5");
     let test = builder.build(&server).await?;
     let cwd_one = test.cwd_path().join("agents_one");
     let cwd_two = test.cwd_path().join("agents_two");
@@ -425,7 +425,7 @@ async fn snapshot_model_visible_layout_cwd_change_refreshes_agents() -> Result<(
                 text_elements: Vec::new(),
             }])
             .with_thread_settings(ThreadSettingsOverrides {
-                environments: Some(local_selections(cwd_one.clone())),
+                environments: Some(local_requests(cwd_one.clone())),
                 approval_policy: Some(AskForApproval::Never),
                 sandbox_policy: Some(first_sandbox_policy),
                 permission_profile: first_permission_profile,
@@ -455,7 +455,7 @@ async fn snapshot_model_visible_layout_cwd_change_refreshes_agents() -> Result<(
                 text_elements: Vec::new(),
             }])
             .with_thread_settings(ThreadSettingsOverrides {
-                environments: Some(local_selections(cwd_two)),
+                environments: Some(local_requests(cwd_two)),
                 approval_policy: Some(AskForApproval::Never),
                 sandbox_policy: Some(second_sandbox_policy),
                 permission_profile: second_permission_profile,
@@ -546,9 +546,9 @@ async fn snapshot_model_visible_layout_resume_with_personality_change() -> Resul
 
     let mut resume_builder = test_antex()
         .with_extensions(skills_extensions())
+        .with_model_info_override("gpt-5.4", |_| {})
         .with_config(|config| {
             config.update_plan_enabled = true;
-            config.model = Some("gpt-5.4".to_string());
             config.personality = Some(Personality::Pragmatic);
         });
     let resumed = resume_builder.restart(&server, &initial).await?;
@@ -567,7 +567,7 @@ async fn snapshot_model_visible_layout_resume_with_personality_change() -> Resul
                 text_elements: Vec::new(),
             }])
             .with_thread_settings(ThreadSettingsOverrides {
-                environments: Some(local_selections(resume_override_cwd)),
+                environments: Some(local_requests(resume_override_cwd)),
                 approval_policy: Some(AskForApproval::Never),
                 sandbox_policy: Some(sandbox_policy),
                 permission_profile,
@@ -654,9 +654,9 @@ async fn snapshot_model_visible_layout_resume_override_matches_rollout_model() -
 
     let mut resume_builder = test_antex()
         .with_extensions(skills_extensions())
+        .with_model_info_override("gpt-5.4", |_| {})
         .with_config(|config| {
             config.update_plan_enabled = true;
-            config.model = Some("gpt-5.4".to_string());
         });
     let resumed = resume_builder.restart(&server, &initial).await?;
     let resume_override_cwd = resumed.cwd_path().join(PRETURN_CONTEXT_DIFF_CWD);
@@ -665,7 +665,7 @@ async fn snapshot_model_visible_layout_resume_override_matches_rollout_model() -
     core_test_support::submit_thread_settings(
         &resumed.antex,
         ThreadSettingsOverrides {
-            environments: Some(local_selections(resume_override_cwd)),
+            environments: Some(local_requests(resume_override_cwd)),
             model: Some("gpt-5.2".to_string()),
             ..Default::default()
         },

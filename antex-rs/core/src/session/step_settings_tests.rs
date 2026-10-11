@@ -10,6 +10,7 @@ use antex_config::Sourced;
 use antex_features::Feature;
 use antex_models_manager::manager::StaticModelsManager;
 use antex_models_manager::model_info::model_info_from_slug;
+use antex_prompts::render_model_instructions;
 use antex_protocol::config_types::ModeKind;
 use antex_protocol::config_types::Settings;
 use antex_protocol::models::BaseInstructionsProvenance;
@@ -430,7 +431,6 @@ async fn model_resolution_preserves_startup_overrides_and_instruction_provenance
         .expect("test model should have instruction metadata");
     messages.instructions_template =
         Some("Catalog B.\n# Personality\nfixed\n# Rules\nKeep the rules.".to_string());
-    messages.instructions_variables = None;
     messages.auto_review = Some(auto_review);
     messages.guardian_v2 = Some(guardian_v2);
     let catalog = ModelsResponse {
@@ -475,7 +475,7 @@ async fn model_resolution_preserves_startup_overrides_and_instruction_provenance
             .await;
         assert_eq!(resolved, legacy);
         assert_eq!(
-            resolved.get_model_instructions(settings.personality),
+            render_model_instructions(&resolved),
             if explicit_instructions {
                 configured_instructions
             } else {

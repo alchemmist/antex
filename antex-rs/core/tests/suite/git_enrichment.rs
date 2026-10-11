@@ -408,7 +408,7 @@ async fn ephemeral_system_thread_prewarm_skips_and_turn_observes_fresh_state(
         .and_then(|connection| connection.get(2))
         .context("system turn follow-up request")?
         .body_json();
-    let antex_core::TurnInputSubmission::Started { turn_id } = submission else {
+    let antex_core::TurnInputSubmission::Started { turn_id, .. } = submission else {
         panic!("background input should start a turn");
     };
     assert_root_turn(&turn, Some(&turn_id))?;

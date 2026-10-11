@@ -18,6 +18,7 @@ antex-analytics = { workspace = true }
 antex-core = { workspace = true }
 antex-extension-api = { workspace = true }
 antex-otel = { workspace = true }
+antex-prompts = { workspace = true }
 antex-protocol = { workspace = true }
 antex-rollout = { workspace = true }
 antex-state = { workspace = true }

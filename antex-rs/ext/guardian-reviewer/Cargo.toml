@@ -20,6 +20,7 @@ antex-feedback = { workspace = true }
 antex-guardian-context = { workspace = true }
 antex-mcp = { workspace = true }
 antex-otel = { workspace = true }
+antex-prompts = { workspace = true }
 antex-protocol = { workspace = true }
 rand = { workspace = true }
 serde = { workspace = true }

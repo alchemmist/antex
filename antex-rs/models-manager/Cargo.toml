@@ -14,11 +14,11 @@ workspace = true
 
 [dependencies]
 chrono = { workspace = true, features = ["serde"] }
-antex-collaboration-mode-templates = { workspace = true }
 antex-http-client = { workspace = true }
 antex-login = { workspace = true }
 antex-otel = { workspace = true }
 antex-protocol = { workspace = true }
+antex-prompts = { workspace = true }
 antex-utils-output-truncation = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }

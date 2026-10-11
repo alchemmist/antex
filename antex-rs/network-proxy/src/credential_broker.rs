@@ -287,14 +287,14 @@ impl CredentialBroker {
             .then(|| active_credential_sources(&state, &HashMap::new()));
         if state.enabled != config.credential_broker
             || state.openai_api_host != config.credential_broker_openai_host
-            || state.allow_local_binding != config.allow_local_binding
+            || state.allow_local_binding != config.allow_local_binding()
             || state.configured_provider_configs != config.credential_providers
             || previous_context_sources.is_some()
         {
             state.config_revision += 1;
         }
         state.context.clone_from(&config.credential_broker_context);
-        state.allow_local_binding = config.allow_local_binding;
+        state.allow_local_binding = config.allow_local_binding();
         if state.enabled != config.credential_broker {
             state.enabled = config.credential_broker;
             state.credentials.clear();
@@ -1280,11 +1280,29 @@ impl CredentialBroker {
         headers: &mut HeaderMap,
         environment_id: Option<&str>,
     ) {
+        let state = self.read_state();
+        if !state.enabled {
+            return;
+        }
+
+        let credentials =
+            select_credentials(headers, destination, &state.credentials, environment_id);
+        for (credential, header_name, header_value) in credentials {
+            credential
+                .provider
+                .insert_request_header(headers, header_name, header_value);
+        }
+    }
+
+    pub(crate) fn request_matches_hooked_host_alias(
+        &self,
+        destination: &str,
+        headers: &HeaderMap,
+        hooked_hosts: &[String],
+        environment_id: Option<&str>,
+    ) -> bool {
         let request = if destination.contains("://") {
-            let Ok(request) = Url::parse(destination) else {
-                return;
-            };
-            Some(request)
+            Url::parse(destination).ok()
         } else {
             None
         };
@@ -1296,38 +1314,50 @@ impl CredentialBroker {
         );
         let state = self.read_state();
         if !state.enabled {
-            return;
+            return false;
         }
 
-        let credentials = select_credentials(
-            headers,
-            &normalized_host,
-            request.as_ref(),
-            &state.credentials,
-            environment_id,
-        );
-        if credentials.iter().any(|(credential, _, _)| {
-            matches!(
-                &credential.provider,
-                BrokeredCredentialProvider::Configured(_)
-            )
-        }) && let Some(request) = request.as_ref()
-        {
-            let Ok(raw_request) = destination.parse::<rama_http::Uri>() else {
-                return;
-            };
-            let raw_path = raw_request.path();
-            if raw_path != request.path()
-                || !crate::authorization_path::is_safe_for_authorization(raw_path)
-            {
-                return;
-            }
+        let selected_headers =
+            select_credentials(headers, destination, &state.credentials, environment_id)
+                .into_iter()
+                .map(|(_, name, _)| name)
+                .collect::<Vec<_>>();
+        if selected_headers.is_empty() {
+            return false;
         }
-        for (credential, header_name, header_value) in credentials {
-            credential
-                .provider
-                .insert_request_header(headers, header_name, header_value);
-        }
+        let matching_credentials = state
+            .credentials
+            .iter()
+            .filter(|credential| {
+                credential.belongs_to_environment(environment_id)
+                    && credential
+                        .host_bindings()
+                        .any(|binding| binding.matches_request(&normalized_host, request.as_ref()))
+            })
+            .collect::<Vec<_>>();
+
+        // Ambiguity removes the whole header, so every translation for a surviving header
+        // contributed through equivalent deduplication or Basic-field merging.
+        matching_credentials.iter().any(|credential| {
+            hooked_hosts.iter().any(|hooked_host| {
+                hooked_host != &normalized_host
+                    && credential
+                        .host_bindings()
+                        .any(|binding| binding.matches_hostname(hooked_host))
+            }) && matching_credentials.iter().any(|candidate| {
+                candidate.provider.same_provider(&credential.provider)
+                    && candidate.real_value == credential.real_value
+                    && credential
+                        .provider
+                        .translate_request_headers(
+                            headers,
+                            &candidate.dummy_value,
+                            &credential.real_value,
+                        )
+                        .iter()
+                        .any(|(name, _)| selected_headers.contains(name))
+            })
+        })
     }
 
     fn read_state(&self) -> std::sync::RwLockReadGuard<'_, CredentialBrokerState> {

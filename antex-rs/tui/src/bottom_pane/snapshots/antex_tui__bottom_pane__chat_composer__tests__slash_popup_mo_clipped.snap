@@ -1,0 +1,8 @@
+---
+source: tui/src/bottom_pane/chat_composer.rs
+assertion_line: 9443
+expression: terminal.backend()
+---
+"                                                            "
+" ┃ /mo                                                      "
+"                                                            "

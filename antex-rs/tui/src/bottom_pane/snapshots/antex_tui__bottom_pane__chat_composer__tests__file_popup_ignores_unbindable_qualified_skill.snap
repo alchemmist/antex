@@ -1,13 +1,14 @@
 ---
 source: tui/src/bottom_pane/chat_composer.rs
+assertion_line: 5274
 expression: terminal.backend()
 ---
+"                                                                                                    "
+"  loading...                                                                                        "
+"                                                                                                    "
 "                                                                                                    "
 " ┃ @src  $1plugin:d                                                                                 "
 " ┃                                                                                                  "
 " ┃                                                                                                  "
-" ┃                                                                                                  "
-" ┃                                                                                                  "
-" ┃                                                                                                  "
 "                                                                                                    "
-"  loading...                                                                                        "
+"                                                                                 100% context left  "

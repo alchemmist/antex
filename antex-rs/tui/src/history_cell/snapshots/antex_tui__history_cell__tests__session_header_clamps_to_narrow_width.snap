@@ -1,12 +1,9 @@
 ---
 source: tui/src/history_cell/tests.rs
-assertion_line: 1886
+assertion_line: 1963
 expression: "render_lines(&lines).join(\"\\n\")"
 ---
-╭──────────────────────────────────────────╮
-│ >_ Antex (vtest)                         │
-│                                          │
-│ model:       gpt-5.6-sol xhigh   fast  … │
-│ directory:   project                     │
-│ permissions: YOLO mode                   │
-╰──────────────────────────────────────────╯
+
+  >_ Antex (vtest)
+     project
+  permissions: YOLO mode

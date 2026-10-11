@@ -33,6 +33,8 @@ async fn reads_exact_system_prompt_and_model_visible_history() -> Result<()> {
             text: "Visible developer context".to_string(),
         }],
         phase: None,
+        encrypted_content: None,
+        status: None,
         internal_chat_message_metadata_passthrough: None,
     };
     let inject_id = app

@@ -47,6 +47,59 @@ pub(crate) fn mcp_keys(server: &str, url: &str, home: &Path) -> anyhow::Result<V
     Ok(keys)
 }
 
+/// Find configured gateway identities using the same home-bound hash as GatewayAuthManager.
+pub(crate) fn gateway_secret_names(
+    table: &dyn toml_edit::TableLike,
+    source: &Path,
+    destination: &Path,
+) -> anyhow::Result<Vec<(antex_secrets::SecretName, antex_secrets::SecretName)>> {
+    let mut names = Vec::new();
+    for (name, item) in table.iter() {
+        let Some(child) = item.as_table_like() else {
+            continue;
+        };
+        if name != "gateway_oauth" {
+            names.extend(gateway_secret_names(child, source, destination)?);
+            continue;
+        }
+        let required = |key| {
+            child
+                .get(key)
+                .and_then(toml_edit::Item::as_str)
+                .ok_or_else(|| anyhow::anyhow!("incomplete gateway OAuth configuration"))
+        };
+        let values = [
+            required("authorization_url")?,
+            required("token_url")?,
+            required("client_id")?,
+            child
+                .get("resource")
+                .and_then(toml_edit::Item::as_str)
+                .unwrap_or_default(),
+        ];
+        let scopes = child.get("scopes").and_then(toml_edit::Item::as_array);
+        let name_for_home = |home: &Path| -> anyhow::Result<antex_secrets::SecretName> {
+            let mut digest = Sha256::new();
+            digest.update(home.to_string_lossy().as_bytes());
+            digest.update([0]);
+            for value in values {
+                digest.update(value.as_bytes());
+                digest.update([0]);
+            }
+            for scope in scopes.into_iter().flatten() {
+                let value = scope
+                    .as_str()
+                    .ok_or_else(|| anyhow::anyhow!("invalid gateway OAuth scope"))?;
+                digest.update(value.as_bytes());
+                digest.update([0]);
+            }
+            antex_secrets::SecretName::new(&format!("PROVIDER_OAUTH_{:X}", digest.finalize()))
+        };
+        names.push((name_for_home(source)?, name_for_home(destination)?));
+    }
+    Ok(names)
+}
+
 pub(crate) fn mcp_secret_name(key: &str) -> anyhow::Result<antex_secrets::SecretName> {
     let digest = format!("{:X}", Sha256::digest(key.as_bytes()));
     antex_secrets::SecretName::new(&format!("MCP_OAUTH_{}", &digest[..32]))

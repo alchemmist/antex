@@ -11,6 +11,7 @@ use antex_extension_api::ThreadStartInput;
 use antex_extension_api::ToolCall;
 use antex_extension_api::ToolContributor;
 use antex_extension_api::ToolExecutor;
+use antex_http_client::HttpClientFactory;
 use antex_login::AuthManager;
 use antex_model_provider::create_model_provider;
 use antex_model_provider_info::ModelProviderInfo;
@@ -30,6 +31,7 @@ type SaveRootResolver = dyn Fn(&Config) -> Option<AbsolutePathBuf> + Send + Sync
 #[derive(Clone)]
 struct ImageGenerationExtensionConfig {
     available: bool,
+    http_client_factory: HttpClientFactory,
     provider: ModelProviderInfo,
     save_root: Option<AbsolutePathBuf>,
 }
@@ -41,6 +43,7 @@ impl ImageGenerationExtensionConfig {
             available: config.model_provider.is_openai()
                 || config.model_provider.requires_openai_auth
                 || config.model_provider.uses_openai_actor_authorization(),
+            http_client_factory: config.http_client_factory(),
             provider: config.model_provider.clone(),
             save_root: resolve_save_root(config),
         }
@@ -97,6 +100,7 @@ impl ToolContributor for ImageGenerationExtension {
         vec![Arc::new(ImageGenerationTool::new(
             AntexImagesBackend::new(
                 create_model_provider(config.provider.clone(), Some(self.auth_manager.clone())),
+                config.http_client_factory.clone(),
                 thread_store
                     .get::<ThreadOriginator>()
                     .map(|originator| originator.0.clone()),

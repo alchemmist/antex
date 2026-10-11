@@ -24,6 +24,7 @@ antex-http-client = { workspace = true }
 antex-login = { workspace = true }
 antex-model-provider = { workspace = true }
 antex-protocol = { workspace = true }
+tokio = { workspace = true, features = ["time"] }
 
 [dev-dependencies]
 pretty_assertions = "1"

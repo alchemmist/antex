@@ -5,13 +5,13 @@ use super::prepare_from_package;
 use super::validate_package;
 use crate::settings::DaemonSettings;
 use pretty_assertions::assert_eq;
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::path::PathBuf;
 
 fn daemon(home: &std::path::Path) -> crate::Daemon {
     let state = home.join("app-server-daemon");
     crate::Daemon {
+        log_diagnostics: false,
         socket_path: state.join("app-server.sock"),
         pid_file: state.join("app-server.pid"),
         update_pid_file: state.join("app-server-updater.pid"),
@@ -27,28 +27,17 @@ fn package(root: &Path, version: &str) -> PathBuf {
         std::fs::create_dir_all(root.join(dir)).expect("package directory");
     }
     let bin = root.join("bin/antex");
-    std::fs::write(&bin, format!("#!/bin/sh\necho 'codex {version}'\n")).expect("codex executable");
-    for file in [
-        "bin/antex-code-mode-host",
-        "antex-path/rg",
-        "antex-resources/nested/runtime",
-    ] {
-        std::fs::write(root.join(file), b"runtime").expect("package file");
-        if file != "antex-resources/nested/runtime" {
-            std::fs::set_permissions(root.join(file), std::fs::Permissions::from_mode(0o755))
-                .expect("executable helper");
-        }
+    antex_utils_cargo_bin::write_executable(&bin, &format!("#!/bin/sh\necho 'codex {version}'\n"))
+        .expect("codex executable");
+    for file in ["bin/antex-code-mode-host", "antex-path/rg"] {
+        antex_utils_cargo_bin::write_executable(&root.join(file), "runtime")
+            .expect("executable helper");
     }
+    std::fs::write(root.join("antex-resources/nested/runtime"), b"runtime").expect("package file");
     if cfg!(target_os = "linux") {
-        std::fs::write(root.join("antex-resources/bwrap"), b"runtime").expect("bwrap");
-        std::fs::set_permissions(
-            root.join("antex-resources/bwrap"),
-            std::fs::Permissions::from_mode(0o755),
-        )
-        .expect("executable bwrap");
+        antex_utils_cargo_bin::write_executable(&root.join("antex-resources/bwrap"), "runtime")
+            .expect("executable bwrap");
     }
-    std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755))
-        .expect("executable permission");
     std::fs::write(
         root.join("antex-package.json"),
         serde_json::json!({
@@ -152,7 +141,8 @@ async fn provisioned_macos_bundle_seeds_from_its_running_executable() {
     let temp = tempfile::TempDir::new().expect("temp");
     let source = temp.path().join("package");
     let launcher = package(&source, "0.1.0-internal-test.202609091200.1");
-    std::fs::write(&launcher, b"#!/bin/sh\necho antex 0.0.0\n").expect("launcher");
+    antex_utils_cargo_bin::write_executable(&launcher, "#!/bin/sh\necho codex 0.0.0\n")
+        .expect("launcher");
     let bundle = source.join("AntexCLI.app/Contents/MacOS/antex");
     std::fs::create_dir_all(bundle.parent().expect("bundle parent")).expect("bundle dir");
     std::fs::write(&bundle, b"provisioned executable").expect("bundle executable");

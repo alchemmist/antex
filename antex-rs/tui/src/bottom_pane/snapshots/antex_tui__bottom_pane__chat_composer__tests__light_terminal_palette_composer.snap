@@ -1,6 +1,6 @@
 ---
 source: tui/src/bottom_pane/chat_composer.rs
-assertion_line: 5274
+assertion_line: 5110
 expression: "format!(\"{buffer:?}\")"
 ---
 Buffer {
@@ -23,9 +23,10 @@ Buffer {
         x: 2, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 1, y: 3, fg: Cyan, bg: Reset, underline: Reset, modifier: BOLD,
         x: 2, y: 3, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
-        x: 2, y: 5, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 2, y: 5, fg: Rgb(110, 112, 108), bg: Reset, underline: Reset, modifier: BOLD,
+        x: 3, y: 5, fg: Rgb(118, 119, 117), bg: Reset, underline: Reset, modifier: NONE,
         x: 17, y: 5, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
-        x: 29, y: 5, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 29, y: 5, fg: Rgb(118, 119, 117), bg: Reset, underline: Reset, modifier: NONE,
         x: 46, y: 5, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
     ]
 }

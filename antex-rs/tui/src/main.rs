@@ -1,3 +1,7 @@
+// Release builds exceed rustc's default query depth when laying out the async
+// MessageProcessor::handle_initialized_client_request future.
+#![recursion_limit = "256"]
+
 use antex_arg0::Arg0DispatchPaths;
 use antex_arg0::arg0_dispatch_or_else;
 use antex_config::LoaderOverrides;

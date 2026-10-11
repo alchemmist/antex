@@ -1,6 +1,6 @@
 ---
 source: tui/src/chatwidget/tests/questions_tests.rs
-assertion_line: 267
+assertion_line: 614
 expression: "format!(\"OPEN\\n{open}\\n\\nONLY QUESTIONS\\n{completed}\")"
 ---
 OPEN
@@ -12,7 +12,7 @@ OPEN
 ONLY QUESTIONS
 • Queued follow-up inputs
   ? 2 questions
-    ⌥ + ↑ to answer
+    ⇧← to answer
 
  ┃ main draft
 

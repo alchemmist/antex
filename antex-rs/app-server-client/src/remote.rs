@@ -21,6 +21,7 @@ use crate::AppServerEvent;
 use crate::RequestResult;
 use crate::SHUTDOWN_TIMEOUT;
 use crate::TypedRequestError;
+use crate::decode_typed_response;
 use antex_app_server_protocol::ClientInfo;
 use antex_app_server_protocol::ClientNotification;
 use antex_app_server_protocol::ClientRequest;
@@ -92,6 +93,7 @@ pub struct RemoteAppServerConnectArgs {
 impl RemoteAppServerConnectArgs {
     pub(crate) fn initialize_params(&self) -> InitializeParams {
         let capabilities = InitializeCapabilities {
+            explicit_gateway_oauth: false,
             experimental_api: self.experimental_api,
             request_attestation: false,
             extensions: None,
@@ -540,21 +542,8 @@ impl RemoteAppServerClient {
         T: DeserializeOwned,
     {
         let method = request.method_name();
-        let response =
-            self.request(request)
-                .await
-                .map_err(|source| TypedRequestError::Transport {
-                    method: method.to_string(),
-                    source,
-                })?;
-        let result = response.map_err(|source| TypedRequestError::Server {
-            method: method.to_string(),
-            source,
-        })?;
-        serde_json::from_value(result).map_err(|source| TypedRequestError::Deserialize {
-            method: method.to_string(),
-            source,
-        })
+        let response = self.request(request).await;
+        decode_typed_response(method, response)
     }
 
     pub async fn notify(&self, notification: ClientNotification) -> IoResult<()> {
@@ -584,26 +573,9 @@ impl RemoteAppServerClient {
         request_id: RequestId,
         result: JsonRpcResult,
     ) -> IoResult<()> {
-        let (response_tx, response_rx) = oneshot::channel();
-        self.command_tx
-            .send(RemoteClientCommand::ResolveServerRequest {
-                request_id,
-                result,
-                response_tx,
-            })
+        self.request_handle()
+            .resolve_server_request(request_id, result)
             .await
-            .map_err(|_| {
-                IoError::new(
-                    ErrorKind::BrokenPipe,
-                    "remote app-server worker channel is closed",
-                )
-            })?;
-        response_rx.await.map_err(|_| {
-            IoError::new(
-                ErrorKind::BrokenPipe,
-                "remote app-server resolve channel is closed",
-            )
-        })?
     }
 
     pub async fn reject_server_request(
@@ -611,26 +583,9 @@ impl RemoteAppServerClient {
         request_id: RequestId,
         error: JSONRPCErrorError,
     ) -> IoResult<()> {
-        let (response_tx, response_rx) = oneshot::channel();
-        self.command_tx
-            .send(RemoteClientCommand::RejectServerRequest {
-                request_id,
-                error,
-                response_tx,
-            })
+        self.request_handle()
+            .reject_server_request(request_id, error)
             .await
-            .map_err(|_| {
-                IoError::new(
-                    ErrorKind::BrokenPipe,
-                    "remote app-server worker channel is closed",
-                )
-            })?;
-        response_rx.await.map_err(|_| {
-            IoError::new(
-                ErrorKind::BrokenPipe,
-                "remote app-server reject channel is closed",
-            )
-        })?
     }
 
     pub async fn next_event(&mut self) -> Option<AppServerEvent> {
@@ -669,6 +624,60 @@ impl RemoteAppServerClient {
 }
 
 impl RemoteAppServerRequestHandle {
+    pub(crate) async fn resolve_server_request(
+        &self,
+        request_id: RequestId,
+        result: JsonRpcResult,
+    ) -> IoResult<()> {
+        let (response_tx, response_rx) = oneshot::channel();
+        self.command_tx
+            .send(RemoteClientCommand::ResolveServerRequest {
+                request_id,
+                result,
+                response_tx,
+            })
+            .await
+            .map_err(|_| {
+                IoError::new(
+                    ErrorKind::BrokenPipe,
+                    "remote app-server worker channel is closed",
+                )
+            })?;
+        response_rx.await.map_err(|_| {
+            IoError::new(
+                ErrorKind::BrokenPipe,
+                "remote app-server resolve channel is closed",
+            )
+        })?
+    }
+
+    pub(crate) async fn reject_server_request(
+        &self,
+        request_id: RequestId,
+        error: JSONRPCErrorError,
+    ) -> IoResult<()> {
+        let (response_tx, response_rx) = oneshot::channel();
+        self.command_tx
+            .send(RemoteClientCommand::RejectServerRequest {
+                request_id,
+                error,
+                response_tx,
+            })
+            .await
+            .map_err(|_| {
+                IoError::new(
+                    ErrorKind::BrokenPipe,
+                    "remote app-server worker channel is closed",
+                )
+            })?;
+        response_rx.await.map_err(|_| {
+            IoError::new(
+                ErrorKind::BrokenPipe,
+                "remote app-server reject channel is closed",
+            )
+        })?
+    }
+
     pub async fn request(&self, request: ClientRequest) -> IoResult<RequestResult> {
         self.request_json_rpc(jsonrpc_request_from_client_request(request))
             .await
@@ -701,21 +710,8 @@ impl RemoteAppServerRequestHandle {
         T: DeserializeOwned,
     {
         let method = request.method_name();
-        let response =
-            self.request(request)
-                .await
-                .map_err(|source| TypedRequestError::Transport {
-                    method: method.to_string(),
-                    source,
-                })?;
-        let result = response.map_err(|source| TypedRequestError::Server {
-            method: method.to_string(),
-            source,
-        })?;
-        serde_json::from_value(result).map_err(|source| TypedRequestError::Deserialize {
-            method: method.to_string(),
-            source,
-        })
+        let response = self.request(request).await;
+        decode_typed_response(method, response)
     }
 }
 

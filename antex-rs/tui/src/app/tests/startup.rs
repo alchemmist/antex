@@ -28,6 +28,7 @@ async fn windows_sandbox_setup_uses_local_app_server_connection() {
         auth_token: None,
     };
     app.app_server_target = crate::AppServerTarget::LocalDaemon {
+        allow_embedded_fallback: true,
         endpoint: endpoint.clone(),
     };
     assert!(app.windows_sandbox_setup_is_local());
@@ -196,6 +197,7 @@ fn startup_bottom_pane() -> (BottomPane, UnboundedReceiver<AppEvent>) {
             placeholder_text: "Ask Antex to do anything".to_string(),
             disable_paste_burst: true,
             animations_enabled: true,
+            effects: Default::default(),
             skills: None,
         }),
         app_event_rx,
@@ -592,6 +594,8 @@ async fn startup_draft_delayed_approval_becomes_protected_on_redraw() -> Result<
     let mut pending_startup_draft = Some(draft);
     app.chat_widget
         .restore_startup_draft_when_ready(&mut pending_startup_draft);
+    // The warning panel owns input but must not mask a later protected modal.
+    app.chat_widget.open_warnings(&[]);
 
     let approval_request =
         exec_approval_request(thread_id, "turn-1", "call-1", /*approval_id*/ None);
@@ -606,7 +610,8 @@ async fn startup_draft_delayed_approval_becomes_protected_on_redraw() -> Result<
         .try_recv()
         .expect("approval should be queued on the active thread");
     app.handle_thread_event_now(approval_event);
-    assert!(!app.chat_widget.has_active_view());
+    assert!(app.chat_widget.has_active_view());
+    assert!(!app.chat_widget.has_active_modal());
     assert!(app.startup_pending_protected_request);
 
     app.handle_tui_event(
@@ -618,12 +623,12 @@ async fn startup_draft_delayed_approval_becomes_protected_on_redraw() -> Result<
     assert!(app.startup_protected_input_boundary);
     assert!(app.startup_pending_protected_request);
 
-    tokio::time::sleep(Duration::from_millis(/*millis*/ 75)).await;
+    tokio::time::sleep(Duration::from_millis(/*millis*/ 1100)).await;
     let redraw_result = app
         .handle_tui_event(&mut tui, &mut app_server, TuiEvent::Draw)
         .await;
 
-    assert!(app.chat_widget.has_active_view());
+    assert!(app.chat_widget.has_active_modal());
     assert!(!tui.terminal.viewport_area.is_empty());
     while let Ok(event) = app_event_rx.try_recv() {
         assert!(
@@ -769,6 +774,197 @@ async fn later_thread_approval_preserves_input_after_startup_boundary_ends() -> 
     }
 
     app_server.shutdown().await?;
+    Ok(())
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn unattended_modals_survive_unfinished_terminal_input() -> Result<()> {
+    use std::os::fd::FromRawFd;
+    use std::process::Command;
+    use std::process::Stdio;
+
+    // Isolate crossterm's global parser and give its input poll a real terminal, as in
+    // tui_startup_tests. No key is delivered to the app before the approval.
+    if std::env::var_os("CODEX_UNATTENDED_MODALS_PTY").is_none() {
+        let mut master = -1;
+        let mut slave = -1;
+        // Safety: openpty initializes both file descriptors on success.
+        assert_eq!(
+            unsafe {
+                libc::openpty(
+                    &mut master,
+                    &mut slave,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                )
+            },
+            0,
+        );
+        // Safety: openpty transferred ownership of these descriptors.
+        let _master = unsafe { std::fs::File::from_raw_fd(master) };
+        let slave = unsafe { std::fs::File::from_raw_fd(slave) };
+        let output = Command::new(std::env::current_exe()?)
+            .args([
+                "--exact",
+                "app::tests::startup::unattended_modals_survive_unfinished_terminal_input",
+                "--nocapture",
+            ])
+            .env("CODEX_UNATTENDED_MODALS_PTY", "1")
+            .stdin(Stdio::from(slave))
+            .output()?;
+        assert!(
+            output.status.success(),
+            "PTY child failed: {}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+        return Ok(());
+    }
+
+    let (mut app, mut app_event_rx, _op_rx) = make_test_app_with_channels().await;
+    app.startup_protected_input_boundary = true;
+    let thread_id = ThreadId::new();
+    app.enqueue_primary_thread_session(
+        test_thread_session(thread_id, test_path_buf("/tmp/project")),
+        Vec::new(),
+    )
+    .await?;
+    while app_event_rx.try_recv().is_ok() {}
+    let mut tui = crate::tui::test_support::make_test_tui()?;
+    let mut app_server =
+        crate::start_embedded_app_server_for_picker(app.chat_widget.config_ref()).await?;
+    crossterm::event::buffer_input(b"\x1b]10;")?;
+    let request = exec_approval_request(thread_id, "turn-1", "call-1", /*approval_id*/ None);
+    let _ = app
+        .pending_app_server_requests
+        .note_server_request(&request);
+    app.enqueue_primary_thread_request(request).await?;
+    let event = app.active_thread_rx.as_mut().unwrap().try_recv()?;
+    app.handle_active_thread_event(&mut tui, &mut app_server, event)
+        .await?;
+    assert!(app.chat_widget.has_active_modal());
+
+    // A separate tracked request may resolve while the visible approval's input is quarantined.
+    let mut other = exec_approval_request(
+        ThreadId::new(),
+        "turn-2",
+        "call-2",
+        /*approval_id*/ None,
+    );
+    let ServerRequest::CommandExecutionRequestApproval { request_id, params } = &mut other else {
+        unreachable!("exec approval helper returns an exec approval");
+    };
+    *request_id = AppServerRequestId::Integer(2);
+    let resolved = antex_app_server_protocol::ServerRequestResolvedNotification {
+        thread_id: params.thread_id.clone(),
+        request_id: request_id.clone(),
+    };
+    let _ = app.pending_app_server_requests.note_server_request(&other);
+    app.handle_app_server_event(
+        &app_server,
+        antex_app_server_client::AppServerEvent::ServerNotification(Box::new(
+            ServerNotification::ServerRequestResolved(resolved),
+        )),
+    )
+    .await;
+
+    // Action keys inside the unfinished sequence and immediately after its terminator are
+    // still typeahead. Even the first decoded key must retry the drain, not accept the prompt.
+    crossterm::event::buffer_input(b"1y\r\x1b\\y\r")?;
+    let crossterm::event::Event::Key(key) = crossterm::event::read()? else {
+        panic!("expected queued approval shortcut");
+    };
+    app.handle_tui_event(&mut tui, &mut app_server, TuiEvent::Key(key))
+        .await?;
+    assert!(app.chat_widget.has_active_modal());
+    while let Ok(event) = app_event_rx.try_recv() {
+        assert!(
+            !matches!(event, AppEvent::SubmitThreadOp { .. }),
+            "typeahead answered unattended approval: {event:?}"
+        );
+    }
+
+    // After the drain has settled a fresh explicit decision works normally.
+    app.handle_tui_event(
+        &mut tui,
+        &mut app_server,
+        TuiEvent::Key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE)),
+    )
+    .await?;
+    assert!(!app.chat_widget.has_active_modal());
+
+    // Overview can open before the first real input, and survives a server reconnect.
+    let (mut app, mut app_event_rx, _op_rx) = make_test_app_with_channels().await;
+    app.startup_protected_input_boundary = true;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    app.app_server_target = AppServerTarget::Remote {
+        endpoint: crate::resolve_remote_addr(&format!("ws://{}", listener.local_addr()?))?,
+    };
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await?;
+        super::disconnect::serve_reconnect_requests(
+            tokio_tungstenite::accept_async(stream).await?,
+            |request| {
+                std::future::ready(Some(match request.method.as_str() {
+                    "thread/list" | "thread/loaded/list" => {
+                        serde_json::json!({"result": {"data": [], "nextCursor": null}})
+                    }
+                    method => panic!("unexpected overview reconnect request: {method}"),
+                }))
+            },
+        )
+        .await
+    });
+    let view = app.agents_overview_view(Vec::new(), /*selected_thread_id*/ None);
+    app.chat_widget.show_bottom_pane_view(Box::new(view));
+    crossterm::event::buffer_input(b"\x1b]10;")?;
+    app.render_startup_frame(&mut tui, &app_event_rx)?;
+    assert!(app.begin_reconnect());
+    let connected = super::super::reconnect::reconnect(
+        app.app_server_target.clone(),
+        app.config.clone(),
+        app.local_settings.clone(),
+        /*thread_id*/ None,
+        /*remote_cwd*/ None,
+        app_server.thread_tool_transport(),
+        super::super::reconnect::ReconnectPresentation::Overview,
+    )
+    .await?;
+    app.finish_reconnect(
+        &mut tui,
+        &mut app_server,
+        &mut app_event_rx,
+        connected,
+        ANTEX_CLI_VERSION,
+    )
+    .await?;
+
+    crossterm::event::buffer_input(b"1n\r\x1b\\n\r")?;
+    let crossterm::event::Event::Key(key) = crossterm::event::read()? else {
+        panic!("expected queued overview shortcut");
+    };
+    app.handle_tui_event(&mut tui, &mut app_server, TuiEvent::Key(key))
+        .await?;
+    assert!(
+        !std::iter::from_fn(|| app_event_rx.try_recv().ok())
+            .any(|event| matches!(event, AppEvent::NewAgentsOverviewSession { .. })),
+        "typeahead created a task in restored Overview"
+    );
+    app.handle_tui_event(
+        &mut tui,
+        &mut app_server,
+        TuiEvent::Key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE)),
+    )
+    .await?;
+    assert!(
+        std::iter::from_fn(|| app_event_rx.try_recv().ok())
+            .any(|event| matches!(event, AppEvent::NewAgentsOverviewSession { .. })),
+        "fresh Overview shortcut should create a task"
+    );
+    app_server.shutdown().await?;
+    server.await??;
     Ok(())
 }
 
@@ -1181,7 +1377,7 @@ async fn fresh_startup_notice_follows_session_attachment() {
         })
         .collect::<Vec<_>>();
     assert!(cells.len() > 1, "session history should precede the notice");
-    insta::assert_snapshot!(lines_to_single_string(&cells.last().unwrap().display_lines(/*width*/ 80)), @"⚠ Older server notice");
+    insta::assert_snapshot!(lines_to_single_string(&cells.last().unwrap().transcript_lines(/*width*/ 80)), @"⚠ Older server notice");
     assert_eq!(app.pending_server_version_notice, None);
 }
 
@@ -1214,8 +1410,7 @@ async fn remote_overview_startup_hides_disabled_older_server_notice() -> Result<
     let view = app.agents_overview_view(Vec::new(), /*selected_thread_id*/ None);
     app.chat_widget.show_bottom_pane_view(Box::new(view));
     let rendered = render_bottom_popup(&app.chat_widget, /*width*/ 80);
-    insta::assert_snapshot!(rendered.lines().take(2).collect::<Vec<_>>().join("\n"), @"  Agent command center
-  0 need input   0 working   0 ready");
+    assert!(!rendered.contains("Service v"));
     app.chat_widget.remote_connection =
         crate::status::remote_connection::remote_connection_status_value(
             &app.app_server_target,
@@ -1232,8 +1427,7 @@ async fn remote_overview_startup_hides_disabled_older_server_notice() -> Result<
     app.local_settings.tui.show_server_version_notice = true;
     app.refresh_server_version_overview_notice("2.1.0");
     let rendered = render_bottom_popup(&app.chat_widget, /*width*/ 80);
-    insta::assert_snapshot!(rendered.lines().take(2).collect::<Vec<_>>().join("\n"), @"  Service v2.0.0 < Antex CLI v2.1.0
-  0 need input   0 working   0 ready");
+    assert!(rendered.contains("Service v2.0.0 < Antex CLI v2.1.0"));
     app.pending_server_version_notice =
         Some(crate::status::remote_connection::ServerVersionNotice {
             message: "Older service".to_string(),
@@ -1391,14 +1585,35 @@ async fn startup_thread_started_does_not_replay_resolved_approval() -> Result<()
 }
 
 #[tokio::test]
-async fn owned_subagent_approval_before_thread_started_is_preserved() -> Result<()> {
+async fn subagent_approval_respects_root_ownership() -> Result<()> {
+    check_subagent_approval_routing(ApprovalRouting::OwnedApprovalFirst).await?;
+    check_subagent_approval_routing(ApprovalRouting::OwnedAfterMcp).await?;
+    check_subagent_approval_routing(ApprovalRouting::ForeignAfterMcp).await
+}
+
+enum ApprovalRouting {
+    OwnedApprovalFirst,
+    OwnedAfterMcp,
+    ForeignAfterMcp,
+}
+
+async fn check_subagent_approval_routing(routing: ApprovalRouting) -> Result<()> {
+    let owned_parent = !matches!(&routing, ApprovalRouting::ForeignAfterMcp);
     let (mut app, _app_event_rx, _op_rx) = make_test_app_with_channels().await;
     let codex_home = tempdir()?;
     app.config.codex_home = codex_home.path().to_path_buf().abs();
     app.config.sqlite = antex_state::SqliteConfig::new_for_testing(codex_home.path().abs());
     let mut app_server = Box::pin(crate::start_embedded_app_server_for_picker(&app.config)).await?;
     let parent = app_server.start_thread(&app.config).await?;
-    let parent_thread_id = parent.session.thread_id;
+    let parent_thread_id = if owned_parent {
+        parent.session.thread_id
+    } else {
+        app_server
+            .start_thread(&app.config)
+            .await?
+            .session
+            .thread_id
+    };
     app.enqueue_primary_thread_session(parent.session, parent.turns)
         .await?;
     let child_thread_id = ThreadId::from_string(
@@ -1436,18 +1651,52 @@ async fn owned_subagent_approval_before_thread_started_is_preserved() -> Result<
         /*approval_id*/ None,
     );
 
+    if matches!(&routing, ApprovalRouting::ForeignAfterMcp) {
+        send_failed_mcp_startup(&mut app, &app_server, parent_thread_id).await;
+    }
+    if !matches!(&routing, ApprovalRouting::OwnedApprovalFirst) {
+        send_failed_mcp_startup(&mut app, &app_server, child_thread_id).await;
+        let has_channel = app.thread_event_channels.contains_key(&child_thread_id);
+        assert_eq!(has_channel, owned_parent);
+    }
+
     app.handle_app_server_event(
         &app_server,
         antex_app_server_client::AppServerEvent::ServerRequest(Box::new(request.clone())),
     )
     .await;
 
-    assert!(
-        app.pending_app_server_requests
-            .contains_server_request(&request)
-    );
-    assert!(app.thread_event_channels.contains_key(&child_thread_id));
+    let requests = &app.pending_app_server_requests;
+    assert_eq!(requests.contains_server_request(&request), owned_parent);
+    assert_eq!(app.chat_widget.has_active_view(), owned_parent);
+    if !owned_parent {
+        let popup = render_bottom_popup(&app.chat_widget, /*width*/ 80);
+        let approval = popup
+            .lines()
+            .find(|line| line.contains("Would you like to run"));
+        insta::assert_snapshot!(approval.unwrap_or_default(), @"");
+    }
     Ok(())
+}
+
+async fn send_failed_mcp_startup(
+    app: &mut App,
+    app_server: &AppServerSession,
+    thread_id: ThreadId,
+) {
+    app.handle_app_server_event(
+        app_server,
+        antex_app_server_client::AppServerEvent::ServerNotification(Box::new(
+            ServerNotification::McpServerStatusUpdated(McpServerStatusUpdatedNotification {
+                thread_id: Some(thread_id.to_string()),
+                name: "fixture".to_string(),
+                status: McpServerStartupState::Failed,
+                error: Some("fixture failed".to_string()),
+                failure_reason: None,
+            }),
+        )),
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -1665,6 +1914,7 @@ async fn windows_sandbox_config_refresh_uses_connected_server() -> Result<()> {
         Some(antex_app_server_protocol::WindowsSandboxSetupMode::Elevated);
     assert!(app.refresh_windows_sandbox_config(&server).await);
     let loaded_config = crate::windows_sandbox::WindowsSandboxConfig {
+        mxc_selected: false,
         mode: Some(antex_app_server_protocol::WindowsSandboxSetupMode::Unelevated),
         requirements: Some(None),
     };

@@ -1,9 +1,19 @@
+//! Turn lifecycle inputs and scheduling phases for host-owned contributors.
+
 use antex_protocol::config_types::CollaborationMode;
+use antex_protocol::error::CodexErrorDetails;
 use antex_protocol::protocol::CodexErrorInfo;
 use antex_protocol::protocol::TokenUsage;
 use antex_protocol::protocol::TurnAbortReason;
 
 use crate::ExtensionData;
+
+/// Runs before task registration or during cancellable regular-task startup.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TurnStartPhase {
+    BeforeTaskRegistration,
+    RegularTaskStart,
+}
 
 /// Input supplied when the host starts a turn.
 pub struct TurnStartInput<'a> {
@@ -12,7 +22,9 @@ pub struct TurnStartInput<'a> {
     /// Effective collaboration mode for this turn.
     pub collaboration_mode: &'a CollaborationMode,
     /// Total token usage snapshot captured when the turn started.
-    pub token_usage_at_turn_start: &'a TokenUsage,
+    /// Present before task registration; absent during regular-task preparation.
+    /// Token-accounting contributors must remain in `BeforeTaskRegistration`.
+    pub token_usage_at_turn_start: Option<&'a TokenUsage>,
     /// Store scoped to the host session runtime.
     pub session_store: &'a ExtensionData,
     /// Store scoped to this thread runtime.
@@ -49,6 +61,8 @@ pub struct TurnErrorInput<'a> {
     pub turn_id: &'a str,
     /// Error surfaced by the host for this turn.
     pub error: CodexErrorInfo,
+    /// Original error details, including backend metadata omitted from the public category.
+    pub error_details: &'a CodexErrorDetails,
     /// Store scoped to the host session runtime.
     pub session_store: &'a ExtensionData,
     /// Store scoped to this thread runtime.

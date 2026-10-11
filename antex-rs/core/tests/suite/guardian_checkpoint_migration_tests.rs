@@ -1,14 +1,19 @@
-//! Old encrypted checkpoints keep legacy review while newly captured answers survive migration.
+//! Checkpoint replay preserves retained evidence across migration and independent review rollback.
+//! A retired managed opt-out cannot disable capture or later checkpoint promotion.
 
+use antex_protocol::protocol::TurnEnvironmentSelection;
 use std::sync::Arc;
 
+use antex_config::test_support::CloudConfigBundleFixture;
 use antex_core::AntexThread;
 use antex_core::StartThreadOptions;
 use antex_core::TurnInputRequest;
 use antex_core::config::Constrained;
 use antex_core::context::GuardianContextMode;
 use antex_features::Feature;
+use antex_history::AntexHarnessMetadata;
 use antex_history::InitialHistory;
+use antex_history::ResponseItemEnvelope;
 use antex_history::ResumedHistory;
 use antex_history::RolloutItem;
 use antex_history::VerifiedAnswer;
@@ -19,11 +24,13 @@ use antex_protocol::protocol::AskForApproval;
 use antex_protocol::protocol::EventMsg;
 use antex_protocol::protocol::Op;
 use antex_protocol::protocol::ThreadHistoryMode;
+use antex_protocol::protocol::ThreadRolledBackEvent;
 use antex_protocol::protocol::ThreadSettingsOverrides;
 use antex_protocol::user_input::UserInput;
 use antex_thread_store::LoadThreadHistoryParams;
 use anyhow::Result;
 use core_test_support::responses;
+use core_test_support::skip_if_no_network;
 use core_test_support::test_antex::TestAntex;
 use core_test_support::test_antex::test_antex;
 use core_test_support::wait_for_event_match;
@@ -44,7 +51,7 @@ async fn saved_history(test: &TestAntex, thread: &AntexThread) -> Result<Vec<Rol
     Ok(test
         .thread_store
         .load_latest_model_context(LoadThreadHistoryParams {
-            thread_id: thread.session_configured().thread_id,
+            thread_id: thread.startup_metadata().thread_id,
             include_archived: false,
         })
         .await?
@@ -56,19 +63,25 @@ pub(super) async fn resume(
     thread: &AntexThread,
     history: Vec<RolloutItem>,
 ) -> Result<Arc<AntexThread>> {
-    let thread_id = thread.session_configured().thread_id;
+    let thread_id = thread.startup_metadata().thread_id;
     let environments = thread.environment_selections().await;
     let model = thread.config_snapshot().await.model;
     thread.shutdown_and_wait().await?;
     test.thread_manager.remove_thread(&thread_id).await;
     let mut config = test.config.clone();
     config.model = Some(model);
-    config.features.enable(Feature::GuardianThreadContext)?;
+
     Ok(test
         .thread_manager
         .start_thread(StartThreadOptions {
-            environments: Some(environments),
+            environments: Some(
+                environments
+                    .into_iter()
+                    .map(TurnEnvironmentSelection::into_request)
+                    .collect(),
+            ),
             initial_history: InitialHistory::Resumed(ResumedHistory {
+                history_revision: None,
                 conversation_id: thread_id,
                 history: Arc::new(history),
                 rollout_path: None,
@@ -79,11 +92,103 @@ pub(super) async fn resume(
         .thread)
 }
 
+#[test_case::test_case("local")]
+#[test_case::test_case("remote")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn independent_history_resume_filters_rolled_back_sources(compaction: &str) -> Result<()> {
+    skip_if_no_network!(Ok(()));
+    let server = responses::start_mock_server().await;
+    let local = compaction == "local";
+    let test = test_antex()
+        .with_history_mode(ThreadHistoryMode::Paginated)
+        .with_auth(AntexAuth::create_dummy_chatgpt_auth_for_testing())
+        .with_config(move |config| {
+            config
+                .features
+                .disable(Feature::TokenBudget)
+                .expect("use summary compaction");
+            if local {
+                config.model_provider.name = "Local compaction test".to_owned();
+            }
+            config
+                .features
+                .disable(Feature::GuardianReuseParentCompaction)
+                .expect("retain independent review history");
+        })
+        .build_with_auto_env(&server)
+        .await?;
+    // The assistant source was accepted after the queued input but persisted before it.
+    let history = [
+        ("user", "Staging only.", 0),
+        ("assistant", "Deploy staging?", 2),
+        ("user", "Also run tests.", 1),
+    ].map(|(role, text, order)| Ok(RolloutItem::ResponseItem(ResponseItemEnvelope {
+        item: serde_json::from_value(json!({
+            "type": "message", "id": format!("msg_{order}"), "role": role,
+            "content": [{"type": if role == "user" { "input_text" } else { "output_text" }, "text": text}]
+        }))?,
+        metadata: Some(AntexHarnessMetadata { user_input_order: Some(order), ..Default::default() }),
+    }))).into_iter().collect::<Result<Vec<_>>>()?;
+    let RolloutItem::ResponseItem(original) = &history[0] else {
+        unreachable!()
+    };
+    let original = original.item.clone();
+    test.antex.ensure_rollout_materialized().await;
+    test.antex.append_rollout_items(&history).await?;
+    let thread = resume(&test, &test.antex, history).await?;
+    let summary = if local {
+        responses::ev_assistant_message("summary", "Synthetic parent summary")
+    } else {
+        json!({"type": "response.output_item.done", "item": {
+            "type": "compaction", "id": "checkpoint", "encrypted_content": "Synthetic parent summary"
+        }})
+    };
+    let mock = responses::mount_sse_once(
+        &server,
+        responses::sse(vec![summary, responses::ev_completed("compacted")]),
+    )
+    .await;
+    thread.submit(Op::Compact).await?;
+    finish_turn(&thread).await;
+    mock.single_request();
+    let snapshot = thread.conversation_history_snapshot().await;
+    assert!(
+        !serde_json::to_string(&snapshot.review_items().collect::<Vec<_>>())?
+            .contains("Synthetic parent summary")
+    );
+    // Paginated replay starts at the compacted window, where the queued assistant
+    // source is gone. Its ordering must survive in the separate Guardian checkpoint.
+    let mut history = saved_history(&test, &thread).await?;
+    let rollback = RolloutItem::EventMsg(EventMsg::ThreadRolledBack(ThreadRolledBackEvent {
+        num_turns: 1,
+    }));
+    thread
+        .append_rollout_items(std::slice::from_ref(&rollback))
+        .await?;
+    history.push(rollback);
+    let thread = resume(&test, &thread, history).await?;
+    let snapshot = thread.conversation_history_snapshot().await;
+    assert_eq!(
+        snapshot.review_items().cloned().collect::<Vec<_>>(),
+        vec![original]
+    );
+    thread.shutdown_and_wait().await?;
+    Ok(())
+}
+
 pub(super) async fn migration_scenario() -> Result<Vec<responses::ResponsesRequest>> {
     let server = responses::start_mock_server().await;
     let test = test_antex()
         .with_history_mode(ThreadHistoryMode::Paginated)
         .with_auth(AntexAuth::create_dummy_chatgpt_auth_for_testing())
+        .with_cloud_config_bundle(
+            CloudConfigBundleFixture::loader_with_enterprise_requirement(
+                r#"
+[features]
+"guardianv2.thread_context" = false
+"#,
+            ),
+        )
         .with_model_info_override("gpt-5.5", |model| {
             model.comp_hash = Some("previous-model".to_owned());
             model.auto_review_model_override = Some(model.slug.clone());
@@ -98,10 +203,6 @@ pub(super) async fn migration_scenario() -> Result<Vec<responses::ResponsesReque
                 .features
                 .disable(Feature::TokenBudget)
                 .expect("disable token budget");
-            config
-                .features
-                .disable(Feature::GuardianReuseParentCompaction)
-                .expect("use the selected reviewer");
             config
                 .features
                 .enable(Feature::DefaultModeRequestUserInput)
@@ -145,6 +246,10 @@ pub(super) async fn migration_scenario() -> Result<Vec<responses::ResponsesReque
         &server,
         vec![
             responses::sse(vec![
+                responses::ev_assistant_message(
+                    "ordinary-question",
+                    "May I publish after these checks?",
+                ),
                 responses::ev_function_call(
                     "ask",
                     "request_user_input",
@@ -218,7 +323,9 @@ pub(super) async fn migration_scenario() -> Result<Vec<responses::ResponsesReque
     assert_eq!(
         (
             GuardianContextMode::from_history(after.as_ref()),
-            after.latest_compaction_model_hash()
+            after
+                .latest_compaction()
+                .and_then(|checkpoint| checkpoint.model_hash)
         ),
         (GuardianContextMode::Legacy, Some("previous-model")),
     );
@@ -287,6 +394,17 @@ pub(super) async fn migration_scenario() -> Result<Vec<responses::ResponsesReque
     // The answer has survived suffix replay, both compactions, and checkpoint replay.
     let thread = resume(&test, &thread, after_compaction).await?;
     let history = thread.conversation_history_snapshot().await;
+    assert!(
+        history
+            .retained_context()
+            .expect("retained context")
+            .ordered_entries()
+            .any(|(_, entry)| {
+                matches!(entry, antex_history::RetainedContextEntry::AssistantMessage(message)
+            if message.message_id.as_deref() == Some("ordinary-question")
+                && message.text == "May I publish after these checks?")
+            })
+    );
     let answers = history
         .retained_context()
         .expect("retained answer evidence")
@@ -295,7 +413,9 @@ pub(super) async fn migration_scenario() -> Result<Vec<responses::ResponsesReque
     assert_eq!(
         (
             GuardianContextMode::from_history(history.as_ref()),
-            history.latest_compaction_model_hash(),
+            history
+                .latest_compaction()
+                .and_then(|checkpoint| checkpoint.model_hash),
             answers,
         ),
         (

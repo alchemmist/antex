@@ -67,7 +67,6 @@ async fn fast_selection_updates_the_captured_live_turn_and_future_settings() -> 
                 summary: None,
                 service_tier: Some(Some(tier.to_string())),
                 collaboration_mode: None,
-                personality: None,
             };
             app.sync_override_turn_context_settings(&mut session, thread_id, &op)
                 .await;

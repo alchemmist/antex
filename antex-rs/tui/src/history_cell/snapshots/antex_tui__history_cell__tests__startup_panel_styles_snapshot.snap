@@ -1,6 +1,6 @@
 ---
 source: tui/src/history_cell/tests.rs
-assertion_line: 791
+assertion_line: 853
 expression: rendered
 ---
 Cockpit:
@@ -28,12 +28,9 @@ Minimal:
    ▀▀▀ ▀▀▀
 ---
 Classic:
-╭─────────────────────────────────────────────────╮
-│ >_ Antex (vtest)                                │
-│                                                 │
-│ model:       gpt-5.6-sol low   /model to change │
-│ directory:   /tmp/project                       │
-│ permissions: YOLO mode                          │
-╰─────────────────────────────────────────────────╯
+
+  >_ Antex (vtest)
+     /tmp/project
+  permissions: YOLO mode
 ---
 Hidden:

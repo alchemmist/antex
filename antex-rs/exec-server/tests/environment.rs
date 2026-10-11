@@ -11,11 +11,19 @@ use antex_exec_server::ExecutorCapabilityDiscoveryCache;
 use antex_exec_server::REMOTE_ENVIRONMENT_ID;
 use antex_exec_server::SelectedCapabilityRootsStatus;
 use antex_exec_server_protocol::CAPABILITY_ROOTS_DISCOVER_METHOD;
+use antex_exec_server_protocol::CapabilityRootDiscoverRequest;
+use antex_exec_server_protocol::CapabilityRootsDiscoverParams;
+use antex_file_system::FileSystemSandboxContext;
 use antex_http_client::HttpClientFactory;
 use antex_http_client::OutboundProxyPolicy;
 use antex_http_client::cache_system_proxy_route_for_test;
 use antex_protocol::capabilities::CapabilityRootLocation;
 use antex_protocol::capabilities::SelectedCapabilityRoot;
+use antex_protocol::models::PermissionProfile;
+use antex_protocol::permissions::FileSystemAccessMode;
+use antex_protocol::permissions::FileSystemSandboxEntry;
+use antex_protocol::permissions::FileSystemSandboxPolicy;
+use antex_protocol::permissions::NetworkSandboxPolicy;
 use antex_utils_path_uri::PathUri;
 use anyhow::Context;
 use common::exec_server::exec_server;
@@ -104,6 +112,138 @@ async fn prepared_remote_environment_uses_configured_system_proxy() -> anyhow::R
         .await
         .context("prepared remote environment did not initialize through the system proxy")??;
 
+    Ok(())
+}
+
+/// Older discovery executors receive direct-read contexts unchanged but never receive restricted reads.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn capability_discovery_without_sandbox_support_only_sends_full_disk_reads()
+-> anyhow::Result<()> {
+    let server = exec_server().await?;
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let proxy_url = format!("ws://{}", listener.local_addr()?);
+    let upstream_url = server.websocket_url().to_string();
+    let (requests_tx, mut requests_rx) = tokio::sync::mpsc::unbounded_channel();
+    let _proxy = AbortOnDropHandle::new(tokio::spawn(async move {
+        let (stream, _) = listener.accept().await?;
+        let mut downstream = accept_async(stream).await?;
+        let (mut upstream, _) = connect_async(&upstream_url).await?;
+        loop {
+            tokio::select! {
+                message = downstream.next() => {
+                    let Some(message) = message.transpose()? else { break };
+                    if let Message::Text(text) = &message {
+                        let request: serde_json::Value = serde_json::from_str(text.as_ref())?;
+                        if request.get("method").and_then(serde_json::Value::as_str)
+                            == Some(CAPABILITY_ROOTS_DISCOVER_METHOD)
+                        {
+                            requests_tx.send(request)?;
+                        }
+                    }
+                    upstream.send(message).await?;
+                }
+                message = upstream.next() => {
+                    let Some(mut message) = message.transpose()? else { break };
+                    if let Message::Text(text) = &message {
+                        let mut response: serde_json::Value = serde_json::from_str(text.as_ref())?;
+                        for pointer in [
+                            "/result/environmentInfo/capabilities/capabilityDiscoverySandbox",
+                            "/result/capabilities/capabilityDiscoverySandbox",
+                        ] {
+                            if let Some(capability) = response.pointer_mut(pointer) {
+                                *capability = false.into();
+                            }
+                        }
+                        message = Message::Text(response.to_string().into());
+                    }
+                    downstream.send(message).await?;
+                }
+            }
+        }
+        Ok::<(), anyhow::Error>(())
+    }));
+    let manager =
+        EnvironmentManager::create_for_tests(Some(proxy_url), /*local_runtime_paths*/ None).await;
+    let environment = manager
+        .default_environment()
+        .context("remote environment")?;
+    assert!(
+        !environment
+            .info()
+            .await?
+            .capabilities
+            .capability_discovery_sandbox
+    );
+
+    let workspace = tempfile::tempdir()?;
+    let cwd = PathUri::from_host_native_path(workspace.path())?;
+    let full_read = FileSystemSandboxContext::from_permission_profile(
+        PermissionProfile::read_only(),
+        cwd.clone(),
+    );
+    let request = CapabilityRootDiscoverRequest {
+        id: "root".to_string(),
+        path: cwd.clone(),
+        sandbox: Some(full_read),
+    };
+    let unrestricted = CapabilityRootDiscoverRequest {
+        id: "unrestricted".to_string(),
+        path: cwd.clone(),
+        sandbox: Some(FileSystemSandboxContext::from_permission_profile(
+            PermissionProfile::Disabled,
+            cwd.clone(),
+        )),
+    };
+    let response = environment
+        .discover_capability_roots(CapabilityRootsDiscoverParams {
+            roots: vec![request.clone(), unrestricted.clone()],
+        })
+        .await?;
+    assert_eq!(
+        response
+            .roots
+            .iter()
+            .map(|root| (root.id.as_str(), &root.error))
+            .collect::<Vec<_>>(),
+        vec![("root", &None), ("unrestricted", &None)]
+    );
+    let sent = timeout(Duration::from_secs(5), requests_rx.recv())
+        .await?
+        .context("discovery request")?;
+    let sent: CapabilityRootsDiscoverParams = serde_json::from_value(sent["params"].clone())?;
+    assert_eq!(sent.roots, vec![request.clone(), unrestricted]);
+
+    let restricted = FileSystemSandboxContext::from_permission_profile(
+        PermissionProfile::from_runtime_permissions(
+            &FileSystemSandboxPolicy::restricted(vec![FileSystemSandboxEntry::new(
+                cwd.clone().into(),
+                FileSystemAccessMode::Read,
+            )]),
+            NetworkSandboxPolicy::Restricted,
+        ),
+        cwd,
+    );
+    let error = environment
+        .discover_capability_roots(CapabilityRootsDiscoverParams {
+            roots: vec![
+                request.clone(),
+                CapabilityRootDiscoverRequest {
+                    sandbox: Some(restricted),
+                    ..request
+                },
+            ],
+        })
+        .await
+        .expect_err("restricted reads must not fall back to old discovery");
+    assert!(
+        error
+            .to_string()
+            .contains("exec-server does not support sandboxed capability discovery")
+    );
+    assert_eq!(
+        requests_rx.try_recv(),
+        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+    );
     Ok(())
 }
 
@@ -308,6 +448,55 @@ async fn capability_discovery_retries_after_executor_reconnects() -> anyhow::Res
         .as_ref()
         .map_err(|error| anyhow::anyhow!("{error}"))?;
 
+    assert_eq!(discovery.id, "recovering-skill");
+    assert!(cache.take_recovered_discovery());
+    assert!(!cache.take_recovered_discovery());
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn capability_discovery_retries_after_application_network_policy_recovers()
+-> anyhow::Result<()> {
+    let server = exec_server().await?;
+    let controller = antex_http_client::NetworkPolicyController::default();
+    let policy = controller.policy();
+    let manager = Arc::new(EnvironmentManager::without_environments(
+        HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault)
+            .with_network_policy(policy.clone()),
+    ));
+    manager.upsert_environment(
+        "recovering".to_string(),
+        server.websocket_url().to_string(),
+        /*connect_timeout*/ None,
+    )?;
+    let cache = ExecutorCapabilityDiscoveryCache::new(manager);
+    let skill_root = tempfile::tempdir()?;
+    let selected_roots = vec![SelectedCapabilityRoot {
+        id: "recovering-skill".to_string(),
+        location: CapabilityRootLocation::Environment {
+            environment_id: "recovering".to_string(),
+            path: PathUri::from_host_native_path(skill_root.path())?,
+        },
+    }];
+
+    let failed = cache.snapshot(&selected_roots, &HashMap::new()).await;
+    let error = failed.roots()[0].result.as_ref().unwrap_err();
+    assert!(error.contains("application network policy"), "{error}");
+    assert!(!cache.take_recovered_discovery());
+
+    controller.publish(
+        policy.revision(),
+        antex_http_client::DestinationPolicy::Unrestricted,
+    );
+    let recovered = timeout(
+        Duration::from_secs(/*secs*/ 10),
+        cache.snapshot(&selected_roots, &HashMap::new()),
+    )
+    .await?;
+    let discovery = recovered.roots()[0]
+        .result
+        .as_ref()
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
     assert_eq!(discovery.id, "recovering-skill");
     assert!(cache.take_recovered_discovery());
     assert!(!cache.take_recovered_discovery());

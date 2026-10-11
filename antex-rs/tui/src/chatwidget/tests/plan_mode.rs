@@ -17,6 +17,7 @@ fn paste_hidden_plan_shell_payload(chat: &mut ChatWidget) -> String {
 
 fn plan_test_session(thread_id: ThreadId) -> crate::session_state::ThreadSessionState {
     crate::session_state::ThreadSessionState {
+        daybreak_enabled: false,
         windows_sandbox_host: crate::app::WindowsSandboxHost::Local,
         thread_id,
         forked_from_id: None,
@@ -34,7 +35,6 @@ fn plan_test_session(thread_id: ThreadId) -> crate::session_state::ThreadSession
         instruction_source_paths: Vec::new(),
         reasoning_effort: Some(ReasoningEffortConfig::default()),
         collaboration_mode: None,
-        personality: None,
         message_history: None,
         network_proxy: None,
         rollout_path: None,
@@ -95,6 +95,136 @@ async fn plan_draft_footer_narrow_snapshot() {
 }
 
 #[tokio::test]
+async fn plan_implementation_popup_snapshot() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5")).await;
+    chat.on_plan_item_completed("- Step 1\n- Step 2\n".to_string());
+    chat.open_plan_implementation_prompt();
+
+    let popup = render_bottom_popup(&chat, /*width*/ 80);
+    assert_chatwidget_snapshot!("plan_implementation_popup", popup);
+}
+
+#[tokio::test]
+async fn plan_implementation_popup_context_usage_snapshot() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5")).await;
+    chat.set_token_info(Some(make_token_info(
+        /*total_tokens*/ 90_000, /*context_window*/ 100_000,
+    )));
+    chat.on_plan_item_completed("- Step 1\n- Step 2\n".to_string());
+    chat.open_plan_implementation_prompt();
+
+    let popup = render_bottom_popup(&chat, /*width*/ 80);
+    assert_chatwidget_snapshot!("plan_implementation_popup_context_usage", popup);
+}
+
+#[tokio::test]
+async fn plan_implementation_popup_yes_emits_submit_message_event() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5")).await;
+    chat.open_plan_implementation_prompt();
+
+    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+
+    assert_matches!(rx.try_recv(), Ok(AppEvent::FollowTranscript));
+    let event = rx.try_recv().expect("expected AppEvent");
+    let AppEvent::SubmitUserMessageWithMode {
+        text,
+        collaboration_mode,
+    } = event
+    else {
+        panic!("expected SubmitUserMessageWithMode, got {event:?}");
+    };
+    assert_eq!(
+        text,
+        plan_implementation::PLAN_IMPLEMENTATION_CODING_MESSAGE
+    );
+    assert_eq!(collaboration_mode.mode, Some(ModeKind::Default));
+}
+
+#[tokio::test]
+async fn plan_implementation_popup_clear_context_emits_clear_submit_event() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5")).await;
+    let plan_markdown = "- Step 1\n- Step 2\n";
+    chat.on_plan_item_completed(plan_markdown.to_string());
+    let _ = drain_insert_history(&mut rx);
+    chat.open_plan_implementation_prompt();
+
+    chat.handle_key_event(KeyEvent::from(KeyCode::Down));
+    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+
+    let event = rx.try_recv().expect("expected AppEvent");
+    let AppEvent::ClearUiAndSubmitUserMessage { text } = event else {
+        panic!("expected ClearUiAndSubmitUserMessage, got {event:?}");
+    };
+    assert_eq!(
+        text,
+        "A previous agent produced the plan below to accomplish the user's task. \
+        Implement the plan in a fresh context. Treat the plan as the source of \
+        user intent, re-read files as needed, and carry the work through \
+        implementation and verification.\n\n- Step 1\n- Step 2\n"
+    );
+}
+
+#[tokio::test]
+async fn plan_implementation_clear_context_requires_default_mode_and_plan() {
+    let (chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5")).await;
+    let default_mask = collaboration_modes::default_mode_mask(chat.model_catalog.as_ref())
+        .expect("expected default collaboration mode");
+
+    let params = plan_implementation::selection_view_params(
+        /*default_mask*/ None,
+        Some("- Step\n"),
+        /*clear_context_usage_label*/ None,
+    );
+    assert_eq!(
+        params.items[1].disabled_reason.as_deref(),
+        Some(plan_implementation::PLAN_IMPLEMENTATION_DEFAULT_UNAVAILABLE)
+    );
+
+    let params = plan_implementation::selection_view_params(
+        Some(default_mask.clone()),
+        /*plan_markdown*/ None,
+        /*clear_context_usage_label*/ None,
+    );
+    assert_eq!(
+        params.items[1].disabled_reason.as_deref(),
+        Some(plan_implementation::PLAN_IMPLEMENTATION_NO_APPROVED_PLAN)
+    );
+
+    let params = plan_implementation::selection_view_params(
+        Some(default_mask.clone()),
+        Some("  \n"),
+        /*clear_context_usage_label*/ None,
+    );
+    assert_eq!(
+        params.items[1].disabled_reason.as_deref(),
+        Some(plan_implementation::PLAN_IMPLEMENTATION_NO_APPROVED_PLAN)
+    );
+
+    let params = plan_implementation::selection_view_params(
+        Some(default_mask.clone()),
+        Some("- Step\n"),
+        /*clear_context_usage_label*/ None,
+    );
+    assert_eq!(params.items[1].disabled_reason, None);
+    assert!(!params.items[1].actions.is_empty());
+
+    assert_eq!(
+        params.items[1].description.as_deref(),
+        Some("Fresh thread with this plan")
+    );
+
+    let params = plan_implementation::selection_view_params(
+        Some(default_mask),
+        Some("- Step\n"),
+        Some("89% used"),
+    );
+    assert_eq!(
+        params.items[1].description.as_deref(),
+        Some("Start a fresh thread (current context: 89% used)")
+    );
+}
+
+#[tokio::test]
 async fn submit_user_message_with_mode_sets_coding_collaboration_mode() {
     let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(Some("gpt-5")).await;
     chat.thread_id = Some(ThreadId::new());
@@ -111,7 +241,6 @@ async fn submit_user_message_with_mode_sets_coding_collaboration_mode() {
                     mode: ModeKind::Default,
                     ..
                 }),
-            personality: None,
             ..
         } => {}
         other => {
@@ -455,7 +584,7 @@ fn plan_mode_prompt_notification_uses_dedicated_type_name() {
 #[tokio::test]
 async fn open_plan_reasoning_scope_prompt_sets_pending_notification() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.5")).await;
-    chat.config.tui_notifications.notifications =
+    chat.local_settings.tui.notification_settings.notifications =
         Notifications::Custom(vec!["plan-mode-prompt".to_string()]);
 
     chat.open_plan_reasoning_scope_prompt("gpt-5.5".to_string(), Some(ReasoningEffortConfig::High));
@@ -501,7 +630,7 @@ async fn request_user_input_notification_overrides_pending_agent_turn_complete_n
 #[tokio::test]
 async fn handle_request_user_input_sets_pending_notification() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.5")).await;
-    chat.config.tui_notifications.notifications =
+    chat.local_settings.tui.notification_settings.notifications =
         Notifications::Custom(vec!["plan-mode-prompt".to_string()]);
 
     chat.handle_request_user_input_now(ToolRequestUserInputParams {
@@ -540,10 +669,15 @@ async fn plan_reasoning_scope_popup_mentions_selected_reasoning() {
 
     let popup = render_bottom_popup(&chat, /*width*/ 100);
     assert!(popup.contains("Choose where to apply medium reasoning."));
-    assert!(popup.contains("Always use medium reasoning in Plan mode."));
+    assert!(popup.contains("Always use medium reasoning in Plan mode"));
     assert!(popup.contains("Apply to Plan mode override"));
     assert!(popup.contains("Apply to conversation and Plan override"));
-    assert!(popup.contains("user-chosen Plan override (low)"));
+    assert!(
+        popup
+            .split_whitespace()
+            .collect::<String>()
+            .contains("user-chosenPlanoverride(low)")
+    );
 }
 
 #[tokio::test]
@@ -555,7 +689,12 @@ async fn plan_reasoning_scope_popup_mentions_built_in_plan_default_when_no_overr
     );
 
     let popup = render_bottom_popup(&chat, /*width*/ 100);
-    assert!(popup.contains("built-in Plan default (medium)"));
+    assert!(
+        popup
+            .split_whitespace()
+            .collect::<String>()
+            .contains("built-inPlandefault(medium)")
+    );
 }
 
 #[tokio::test]
@@ -652,7 +791,6 @@ async fn submit_user_message_with_mode_allows_same_mode_during_running_turn() {
                     mode: ModeKind::Plan,
                     ..
                 }),
-            personality: None,
             ..
         } => {}
         other => {
@@ -682,7 +820,6 @@ async fn submit_user_message_with_mode_submits_when_plan_stream_is_not_active() 
     match next_submit_op(&mut op_rx) {
         Op::UserTurn {
             collaboration_mode: Some(CollaborationMode { mode, .. }),
-            personality: None,
             ..
         } => assert_eq!(mode, expected_mode),
         other => {
@@ -702,6 +839,7 @@ async fn plan_implementation_popup_skips_replayed_turn_complete() {
     chat.replay_thread_turns(
         vec![AppServerTurn {
             id: "turn-1".to_string(),
+            root_turn_id: None,
             items_view: antex_app_server_protocol::TurnItemsView::Full,
             items: vec![AppServerThreadItem::AgentMessage {
                 id: "msg-plan".to_string(),
@@ -742,6 +880,7 @@ async fn plan_implementation_popup_stays_hidden_after_replay_and_live_completion
     chat.replay_thread_turns(
         vec![AppServerTurn {
             id: "turn-1".to_string(),
+            root_turn_id: None,
             items_view: antex_app_server_protocol::TurnItemsView::Full,
             items: vec![AppServerThreadItem::AgentMessage {
                 id: "msg-plan-replay".to_string(),
@@ -1045,6 +1184,7 @@ async fn submit_user_message_queues_while_compaction_turn_is_running() {
             thread_id: thread_id.to_string(),
             turn: AppServerTurn {
                 id: "turn-1".to_string(),
+                root_turn_id: None,
                 items_view: antex_app_server_protocol::TurnItemsView::Full,
                 items: Vec::new(),
                 status: AppServerTurnStatus::InProgress,
@@ -1090,6 +1230,7 @@ async fn submit_user_message_queues_while_compaction_turn_is_running() {
             thread_id: thread_id.to_string(),
             turn: AppServerTurn {
                 id: "turn-1".to_string(),
+                root_turn_id: None,
                 items_view: antex_app_server_protocol::TurnItemsView::Full,
                 items: Vec::new(),
                 status: AppServerTurnStatus::Completed,
@@ -1120,6 +1261,7 @@ async fn submit_user_message_emits_structured_plugin_mentions_from_bindings() {
     let thread_id = ThreadId::new();
     let rollout_file = NamedTempFile::new().unwrap();
     let configured = crate::session_state::ThreadSessionState {
+        daybreak_enabled: false,
         windows_sandbox_host: crate::app::WindowsSandboxHost::Local,
         thread_id,
         forked_from_id: None,
@@ -1137,7 +1279,6 @@ async fn submit_user_message_emits_structured_plugin_mentions_from_bindings() {
         instruction_source_paths: Vec::new(),
         reasoning_effort: Some(ReasoningEffortConfig::default()),
         collaboration_mode: None,
-        personality: None,
         message_history: None,
         network_proxy: None,
         rollout_path: Some(rollout_file.path().to_path_buf()),
@@ -1720,7 +1861,7 @@ async fn approved_plan_update_renders_persistent_bottom_panel() {
 
     ┃ Ask Antex to do anything
 
-     gpt-5.6-sol default · /tmp/project
+     GPT-5.6-Sol default · /tmp/project
     ");
 }
 

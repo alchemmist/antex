@@ -1,13 +1,10 @@
 ---
 source: tui/src/history_cell/tests.rs
-assertion_line: 726
+assertion_line: 789
 expression: rendered
 ---
-╭─────────────────────────────────────╮
-│ >_ Antex (v0.153.4)                 │
-│                                     │
-│ model:     gpt-5   /model to change │
-│ directory: /tmp/project             │
-╰─────────────────────────────────────╯
+
+  >_ Antex (v0.153.4)
+     /tmp/project
 
   Tip: Model just became available

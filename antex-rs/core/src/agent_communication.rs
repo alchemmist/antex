@@ -1,6 +1,9 @@
 use antex_protocol::ThreadId;
 use antex_protocol::protocol::InterAgentCommunication;
 
+pub(crate) static PENDING_MAILBOX_MESSAGES: antex_diagnostics::Gauge =
+    antex_diagnostics::Gauge::new("core.mailbox.pending");
+
 const AGENT_COMMUNICATION_TARGET: &str = "antex_otel.agent_communication";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

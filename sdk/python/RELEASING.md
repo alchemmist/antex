@@ -21,8 +21,8 @@ and verifies the same tag, commit, and required assets again. Existing
 PyPI uploads are accepted, and verification still requires the complete release.
 Use a new version if already-published package contents need to change.
 
-Before enabling publication, configure both `openai-codex` and
-`openai-codex-cli-bin` on PyPI to trust owner `openai`, repository `codex`, workflow
+Before enabling publication, configure both `antex-sdk` and
+`antex-cli-bin` on PyPI to trust owner `alchemmist`, repository `antex`, workflow
 `python-sdk-cli-release.yml`, environment `pypi`. The GitHub environment must permit
 this workflow on the default branch, which is the ref used by `workflow_run` and
 manual dispatch even though the build checks out the release commit. These PyPI

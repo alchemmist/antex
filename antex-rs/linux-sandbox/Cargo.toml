@@ -36,8 +36,8 @@ sha2 = { workspace = true }
 url = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
-antex-utils-cargo-bin = { workspace = true }
 antex-core = { workspace = true }
+antex-utils-cargo-bin = { workspace = true }
 pretty_assertions = { workspace = true }
 tempfile = { workspace = true }
 test-case = "3.3.1"

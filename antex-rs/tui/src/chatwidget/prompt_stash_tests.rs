@@ -54,13 +54,16 @@ async fn prompt_stash_survives_chatwidget_recreation() {
         .stashed_composer
         .clone()
         .expect("in-memory stash");
-    let codex_home = first_chat.config.codex_home.clone();
+    let codex_home = first_chat.local_settings.codex_home.clone();
+    // Keep the fixture home alive across dropping and recreating the widget.
+    let home_guard = first_chat.test_antex_home.take();
     let stash_path = first_chat.prompt_stash_path(thread_id);
     assert!(stash_path.exists());
     drop(first_chat);
 
     let (mut resumed_chat, _sender, _rx, _op_rx) = make_chatwidget_manual_with_sender().await;
-    resumed_chat.config.codex_home = codex_home;
+    resumed_chat.local_settings.codex_home = codex_home;
+    resumed_chat.test_antex_home = home_guard;
     resumed_chat.thread_id = Some(thread_id);
     resumed_chat
         .restore_persisted_prompt_stash(thread_id)
@@ -101,11 +104,13 @@ async fn persisted_prompt_stash_roundtrips_full_state() {
         .persist_prompt_stash()
         .expect("persist full stash state");
 
-    let codex_home = first_chat.config.codex_home.clone();
+    let codex_home = first_chat.local_settings.codex_home.clone();
+    let home_guard = first_chat.test_antex_home.take();
     drop(first_chat);
 
     let (mut resumed_chat, _sender, _rx, _op_rx) = make_chatwidget_manual_with_sender().await;
-    resumed_chat.config.codex_home = codex_home;
+    resumed_chat.local_settings.codex_home = codex_home;
+    resumed_chat.test_antex_home = home_guard;
     resumed_chat.thread_id = Some(thread_id);
     resumed_chat
         .restore_persisted_prompt_stash(thread_id)

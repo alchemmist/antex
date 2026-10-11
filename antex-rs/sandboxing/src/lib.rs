@@ -2,8 +2,10 @@
 mod bwrap;
 mod denial;
 pub mod landlock;
+mod linux_pid_namespace;
 mod manager;
 pub mod policy_transforms;
+mod sandbox_integrity;
 #[cfg(target_os = "macos")]
 pub mod seatbelt;
 mod spawn;
@@ -18,11 +20,16 @@ pub use antex_mxc_sandbox::is_available as windows_mxc_available;
 pub use antex_mxc_sandbox::run_main as run_windows_mxc_main;
 pub use antex_windows_sandbox::WindowsSandboxProxySettingsMode;
 #[cfg(target_os = "linux")]
+pub use bwrap::find_executable_in_search_paths;
+#[cfg(target_os = "linux")]
+pub use bwrap::find_pre_sandbox_executable_in_path;
+#[cfg(target_os = "linux")]
 pub use bwrap::find_system_bwrap_in_path;
 #[cfg(target_os = "linux")]
 pub use bwrap::system_bwrap_warning;
 pub use denial::is_likely_executor_managed_sandbox_denied;
 pub use denial::is_likely_sandbox_denied;
+pub use linux_pid_namespace::LinuxSandboxPidNamespace;
 pub use manager::SandboxCommand;
 pub use manager::SandboxDirectSpawnTransformRequest;
 pub use manager::SandboxExecRequest;
@@ -34,6 +41,9 @@ pub use manager::SandboxablePreference;
 pub use manager::compatibility_sandbox_policy_for_permission_profile;
 pub use manager::get_platform_sandbox;
 pub use manager::with_managed_mitm_ca_readable_root;
+pub use sandbox_integrity::FileContentsChecker;
+pub use sandbox_integrity::IntegrityFinding;
+pub use sandbox_integrity::IntegrityFindingDetails;
 pub use spawn::SpawnRequest;
 pub use spawn::WindowsSandboxSpawnRequest;
 pub use spawn::spawn_process;
@@ -57,6 +67,7 @@ use antex_protocol::error::CodexErr;
 #[cfg(not(target_os = "linux"))]
 pub fn system_bwrap_warning(
     _permission_profile: &antex_protocol::models::PermissionProfile,
+    _sandbox_policy_cwd: &std::path::Path,
 ) -> Option<String> {
     None
 }

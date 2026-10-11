@@ -1,13 +1,17 @@
 use antex_app_server_protocol::ThreadResumeParams;
 use antex_app_server_protocol::ThreadResumeResponse;
+use antex_app_server_protocol::ThreadSettingsUpdatedNotification;
 use antex_app_server_protocol::ThreadStartParams;
 use antex_app_server_protocol::ThreadStartResponse;
 use antex_app_server_protocol::TurnStartParams;
 use antex_app_server_protocol::TurnStartResponse;
 use antex_app_server_protocol::UserInput;
+use antex_models_manager::model_info::model_info_from_slug;
+use antex_protocol::openai_models::ApplyPatchToolType;
 use anyhow::Result;
 use app_test_support::MockResponsesConfig;
 use app_test_support::TestAppServer;
+use app_test_support::write_models_cache_with_models;
 use core_test_support::responses;
 use core_test_support::skip_if_no_network;
 use pretty_assertions::assert_eq;
@@ -29,6 +33,11 @@ async fn agent_directory_change_survives_app_server_restart_without_cwd_override
         .with_model("gpt-5.4")
         .with_sandbox_mode("danger-full-access")
         .write(home.path())?;
+    // The restart must retain a model catalog that advertises the custom patch tool
+    // emitted by this fixture; unknown-model fallback metadata does not enable it.
+    let mut model = model_info_from_slug("gpt-5.4");
+    model.apply_patch_tool_type = Some(ApplyPatchToolType::Freeform);
+    write_models_cache_with_models(home.path(), vec![model]).await?;
     let response = responses::mount_sse_sequence(&server, vec![
         responses::sse(vec![
             responses::ev_response_created("change-directory"),
@@ -74,6 +83,17 @@ async fn agent_directory_change_survives_app_server_restart_without_cwd_override
         first.read_response(turn_id),
     )
     .await??;
+    let updated: ThreadSettingsUpdatedNotification = timeout(
+        Duration::from_secs(/*secs*/ 60),
+        first.read_notification("thread/settings/updated"),
+    )
+    .await??;
+    assert_eq!(updated.thread_id, started.thread.id);
+    assert_eq!(updated.thread_settings.cwd.as_path(), destination.as_path());
+    assert_eq!(
+        updated.thread_settings.runtime_workspace_roots,
+        Some(started.runtime_workspace_roots.clone())
+    );
     timeout(
         Duration::from_secs(/*secs*/ 60),
         first.read_stream_until_notification_message("turn/completed"),

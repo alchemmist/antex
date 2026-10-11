@@ -14,6 +14,8 @@ fn summarizes_context_items_and_limits_developer_labels() {
         items.push(message("developer", &format!("section {index}\nbody")));
     }
     items.push(ResponseItem::FunctionCall {
+        encrypted_content: None,
+        status: None,
         id: None,
         name: "shell".to_string(),
         namespace: None,
@@ -38,6 +40,22 @@ fn summarizes_context_items_and_limits_developer_labels() {
             "section 3",
             "section 4"
         ]
+    );
+}
+
+#[test]
+fn output_text_metadata_does_not_change_context_labels() {
+    let content = [ContentItem::OutputText {
+        text: "\n# Developer context\nDetails".to_string(),
+        annotations: Some(vec![
+            serde_json::json!({"type": "url_citation", "url": "https://example.com"}),
+        ]),
+        logprobs: Some(Vec::new()),
+    }];
+
+    assert_eq!(
+        message_label(&content),
+        Some("# Developer context".to_string())
     );
 }
 
@@ -143,6 +161,8 @@ Context
 
 fn message(role: &str, text: &str) -> ResponseItem {
     ResponseItem::Message {
+        encrypted_content: None,
+        status: None,
         id: None,
         role: role.to_string(),
         content: vec![ContentItem::InputText {

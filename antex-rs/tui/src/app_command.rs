@@ -9,12 +9,12 @@ use antex_app_server_protocol::RequestId as AppServerRequestId;
 use antex_app_server_protocol::ReviewTarget;
 use antex_app_server_protocol::ToolRequestUserInputResponse;
 use antex_app_server_protocol::UserInput;
+use antex_app_server_protocol::UserVerificationErrorDetails;
 use antex_app_server_protocol::UserVerificationProof;
 use antex_config::types::ApprovalsReviewer;
 use antex_protocol::ThreadId;
 use antex_protocol::approvals::GuardianAssessmentEvent;
 use antex_protocol::config_types::CollaborationMode;
-use antex_protocol::config_types::Personality;
 use antex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
 use antex_protocol::config_types::SubagentSpawnPolicy;
 use antex_protocol::models::ActivePermissionProfile;
@@ -131,7 +131,6 @@ pub(crate) enum AppCommand {
         final_output_json_schema: Option<Value>,
         subagent_spawn_policy: SubagentSpawnPolicy,
         collaboration_mode: Option<CollaborationMode>,
-        personality: Option<Personality>,
     },
     OverrideTurnContext {
         cwd: Option<PathBuf>,
@@ -144,7 +143,6 @@ pub(crate) enum AppCommand {
         summary: Option<ReasoningSummaryConfig>,
         service_tier: Option<Option<String>>,
         collaboration_mode: Option<CollaborationMode>,
-        personality: Option<Personality>,
     },
     ExecApproval {
         id: String,
@@ -201,6 +199,16 @@ pub(crate) enum UserVerificationResponse {
         proof: UserVerificationProof,
     },
     Cancel,
+    Failed {
+        error: UserVerificationErrorDetails,
+    },
+}
+
+/// Carries only a safe display message and the closed native error category.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct UserVerificationFailure {
+    pub(crate) message: &'static str,
+    pub(crate) details: UserVerificationErrorDetails,
 }
 
 impl AppCommand {
@@ -230,7 +238,6 @@ impl AppCommand {
         final_output_json_schema: Option<Value>,
         subagent_spawn_policy: SubagentSpawnPolicy,
         collaboration_mode: Option<CollaborationMode>,
-        personality: Option<Personality>,
     ) -> Self {
         Self::UserTurn {
             client_user_message_id,
@@ -246,7 +253,6 @@ impl AppCommand {
             final_output_json_schema,
             subagent_spawn_policy,
             collaboration_mode,
-            personality,
         }
     }
 
@@ -262,7 +268,6 @@ impl AppCommand {
         summary: Option<ReasoningSummaryConfig>,
         service_tier: Option<Option<String>>,
         collaboration_mode: Option<CollaborationMode>,
-        personality: Option<Personality>,
     ) -> Self {
         Self::OverrideTurnContext {
             cwd,
@@ -275,7 +280,6 @@ impl AppCommand {
             summary,
             service_tier,
             collaboration_mode,
-            personality,
         }
     }
 

@@ -1,18 +1,8 @@
-use antex_code_mode::ImageDetailVisibility;
-use antex_code_mode::ToolDefinition as CodeModeToolDefinition;
 use antex_tools::FreeformTool;
 use antex_tools::FreeformToolFormat;
 use antex_tools::ToolSpec;
-use std::collections::BTreeMap;
 
-pub(crate) fn create_code_mode_tool(
-    enabled_tools: &[CodeModeToolDefinition],
-    deferred_tools: &[CodeModeToolDefinition],
-    namespace_descriptions: &BTreeMap<String, antex_code_mode::ToolNamespaceDescription>,
-    default_exec_yield_time_ms: u64,
-    code_mode_only: bool,
-    image_detail_visibility: ImageDetailVisibility,
-) -> ToolSpec {
+pub(crate) fn create_code_mode_tool(description: String) -> ToolSpec {
     const CODE_MODE_FREEFORM_GRAMMAR: &str = r#"
 start: pragma_source | plain_source
 pragma_source: PRAGMA_LINE NEWLINE SOURCE
@@ -25,14 +15,7 @@ SOURCE: /[\s\S]+/
 
     ToolSpec::Freeform(FreeformTool {
         name: antex_code_mode::PUBLIC_TOOL_NAME.to_string(),
-        description: antex_code_mode::build_exec_tool_description(
-            enabled_tools,
-            deferred_tools,
-            namespace_descriptions,
-            default_exec_yield_time_ms,
-            code_mode_only,
-            image_detail_visibility,
-        ),
+        description,
         defer_loading: None,
         format: FreeformToolFormat {
             r#type: "grammar".to_string(),
@@ -45,39 +28,15 @@ SOURCE: /[\s\S]+/
 #[cfg(test)]
 mod tests {
     use super::*;
-    use antex_tools::ToolName;
     use pretty_assertions::assert_eq;
 
     #[test]
     fn create_code_mode_tool_matches_expected_spec() {
-        let enabled_tools = vec![antex_code_mode::ToolDefinition {
-            name: "update_plan".to_string(),
-            tool_name: ToolName::plain("update_plan"),
-            description: "Update the plan".to_string(),
-            kind: antex_code_mode::CodeModeToolKind::Function,
-            input_schema: None,
-            output_schema: None,
-        }];
-
         assert_eq!(
-            create_code_mode_tool(
-                &enabled_tools,
-                &[],
-                &BTreeMap::new(),
-                antex_code_mode::DEFAULT_EXEC_YIELD_TIME_MS,
-                /*code_mode_only*/ true,
-                ImageDetailVisibility::Visible,
-            ),
+            create_code_mode_tool("Run JavaScript code.".to_string()),
             ToolSpec::Freeform(FreeformTool {
                 name: antex_code_mode::PUBLIC_TOOL_NAME.to_string(),
-                description: antex_code_mode::build_exec_tool_description(
-                    &enabled_tools,
-                    &[],
-                    &BTreeMap::new(),
-                    antex_code_mode::DEFAULT_EXEC_YIELD_TIME_MS,
-                    /*code_mode_only*/ true,
-                    ImageDetailVisibility::Visible,
-                ),
+                description: "Run JavaScript code.".to_string(),
                 defer_loading: None,
                 format: FreeformToolFormat {
                     r#type: "grammar".to_string(),
