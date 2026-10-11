@@ -18,6 +18,7 @@ class VoiceSmokeTests(unittest.TestCase):
         recognize_voice,
         exit_before_startup=False,
         deny_group_signal=False,
+        model_display="GPT-6-Astra",
     ):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -35,10 +36,13 @@ class VoiceSmokeTests(unittest.TestCase):
                     else ""
                 )
                 + ("sys.exit(2)\n" if exit_before_startup else "")
-                + 'print("gpt-6-astra", flush=True)\n'
+                + f"print({model_display!r}, flush=True)\n"
                 + "command = sys.stdin.readline().strip()\n"
                 + 'assert command == "/voice settings", command\n'
                 + (
+                    'print("Voice settings: Set sound devices; Choose a voice", flush=True)\n'
+                    "choice = sys.stdin.readline().strip()\n"
+                    'assert choice == "\\x1b[B", repr(choice)\n'
                     'print("Select voice for the next voice conversation", flush=True)\n'
                     if recognize_voice
                     else "print(\"Unrecognized command '/voice'\", flush=True)\n"
@@ -99,6 +103,13 @@ class VoiceSmokeTests(unittest.TestCase):
         )
         self.assertNotEqual(code, 0)
         self.assertIn("did not open the voice picker", stderr)
+
+    def test_picker_passes_with_lowercase_model_display(self):
+        code, stdout, stderr = self.run_probe(
+            ignore_term=False, recognize_voice=True, model_display="gpt-6-astra"
+        )
+        self.assertEqual(code, 0, stderr)
+        self.assertIn("voice picker", stdout)
 
     def test_picker_passes_with_normal_termination(self):
         code, stdout, stderr = self.run_probe(ignore_term=False, recognize_voice=True)

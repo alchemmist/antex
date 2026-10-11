@@ -44,6 +44,7 @@ def smoke(binary):
         pending = b""
         ready_at = None
         submitted = False
+        selected_voice = False
         enter_at = None
         deadline = time.monotonic() + 30
         try:
@@ -64,7 +65,7 @@ def smoke(binary):
                         os.write(terminal, b"\x1b[1;1R")
                     pending = pending[-8:]
                 plain = re.sub(rb"\x1b\[[0-?]*[ -/]*[@-~]", b"", bytes(output))
-                if ready_at is None and b"gpt-6-astra" in plain:
+                if ready_at is None and b"gpt-6-astra" in plain.lower():
                     ready_at = time.monotonic()
                 if (
                     ready_at is not None
@@ -77,6 +78,13 @@ def smoke(binary):
                 if enter_at is not None and time.monotonic() >= enter_at:
                     os.write(terminal, b"\r")
                     enter_at = None
+                if (
+                    not selected_voice
+                    and b"Voice settings" in plain
+                    and b"Choose a voice" in plain
+                ):
+                    os.write(terminal, b"\x1b[B\r")
+                    selected_voice = True
                 if b"Unrecognized command '/voice'" in plain:
                     raise RuntimeError("installed TUI does not recognize /voice")
                 if b"Select voice" in plain and b"next voice conversation" in plain:
