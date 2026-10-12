@@ -23,6 +23,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     env:
+      ANTEX_REPO_ROOT: ${{ github.workspace }}
       CARGO_INCREMENTAL: "0"
       CARGO_PROFILE_RELEASE_DEBUG: "0"
       CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO: "off"
