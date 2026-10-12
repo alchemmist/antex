@@ -29,6 +29,9 @@ use tokio::sync::Notify;
 use super::MAX_VERIFIED_ACCESS_RESPONSE_BYTES;
 use super::TrustedAccessContext;
 
+#[path = "trusted_access_request_auth_tests.rs"]
+mod request_auth_tests;
+
 struct RecordingHttpClient {
     requests: Mutex<Vec<HttpRequestParams>>,
     status: u16,

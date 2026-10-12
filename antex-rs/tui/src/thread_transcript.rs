@@ -259,7 +259,6 @@ fn item_to_cells(
                 item.text_elements()
             };
             cells.push(Arc::new(UserHistoryCell {
-                spoken: false,
                 message: reply_text.unwrap_or(message),
                 text_elements,
                 local_image_paths: item.local_image_paths(),

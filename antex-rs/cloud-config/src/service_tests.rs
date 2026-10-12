@@ -1,4 +1,9 @@
 use super::*;
+
+#[path = "cloud_auth_compat_tests.rs"]
+mod cloud_auth_compat_tests;
+#[path = "cloud_auth_resolution_tests.rs"]
+mod cloud_auth_resolution_tests;
 use crate::backend::BundleClient;
 use crate::backend::BundleRequestError;
 use crate::backend::RetryableFailureKind;

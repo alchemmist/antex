@@ -1633,5 +1633,6 @@ fn build_tokens(access_token: &str, refresh_token: &str) -> TokenData {
         access_token: access_token.to_string(),
         refresh_token: refresh_token.to_string(),
         account_id: Some("account-id".to_string()),
+        direct: None,
     }
 }

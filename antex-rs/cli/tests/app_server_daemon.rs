@@ -23,7 +23,9 @@ struct TestDaemon {
 
 impl TestDaemon {
     fn new() -> Result<Self> {
-        let home = tempfile::Builder::new().tempdir_in("/tmp")?;
+        // Keep Unix socket paths short without copying full debug packages into
+        // the potentially small /tmp tmpfs used by Linux hosts.
+        let home = tempfile::Builder::new().tempdir_in("/var/tmp")?;
         let codex = antex_utils_cargo_bin::cargo_bin("antex")?;
         let antex_source = std::fs::canonicalize(&codex)?;
         let target = if cfg!(target_os = "macos") {

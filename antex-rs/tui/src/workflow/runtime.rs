@@ -100,7 +100,7 @@ impl Runtime {
         control: &mut watch::Receiver<WorkflowControl>,
     ) -> Result<Value, String> {
         self.run
-            .set_status(WorkflowRunStatus::Running, None)
+            .set_status(WorkflowRunStatus::Running, /*error*/ None)
             .await?;
         let mut child = Command::new(python_program())
             .arg("-u")
@@ -493,7 +493,7 @@ impl Runtime {
     async fn finish_completed(&mut self, result: Value) {
         let _ = self
             .run
-            .set_status(WorkflowRunStatus::Completed, None)
+            .set_status(WorkflowRunStatus::Completed, /*error*/ None)
             .await;
         self.send(WorkflowUpdate::Completed {
             run_id: self.run.run_id.clone(),

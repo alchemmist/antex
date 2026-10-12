@@ -52,6 +52,11 @@ pub enum ProviderAccount {
         email: Option<String>,
         plan_type: PlanType,
     },
+    /// A ChatGPT subscription grant for the public API, without Codex backend access.
+    ChatgptDirect {
+        email: Option<String>,
+        plan_type: Option<PlanType>,
+    },
     AmazonBedrock {
         uses_antex_managed_credentials: bool,
     },

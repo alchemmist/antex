@@ -62,6 +62,7 @@ pub enum ToolDecisionSource {
 pub enum TelemetryAuthMode {
     ApiKey,
     Chatgpt,
+    ChatgptDirect,
 }
 
 impl From<AuthMode> for TelemetryAuthMode {
@@ -70,6 +71,7 @@ impl From<AuthMode> for TelemetryAuthMode {
             AuthMode::ApiKey | AuthMode::BedrockApiKey | AuthMode::BedrockAccessKeys => {
                 Self::ApiKey
             }
+            AuthMode::ChatgptDirect => Self::ChatgptDirect,
             AuthMode::Chatgpt
             | AuthMode::ChatgptAuthTokens
             | AuthMode::Headers

@@ -46,6 +46,10 @@ pub(crate) mod task_usage;
 mod thread_usage;
 pub(crate) mod turn_usage;
 
+#[cfg(test)]
+#[path = "request_auth_tests.rs"]
+mod request_auth_tests;
+
 pub use chatgpt_turn_cost::ChatgptThreadTurnCosts;
 pub use chatgpt_turn_cost::ChatgptTurnCost;
 pub use thread_usage::ThreadUsage;
@@ -298,7 +302,8 @@ impl Client {
         method: &str,
         url: &str,
     ) -> Result<(String, String)> {
-        let res = req.send().await?;
+        let headers = self.auth_provider.resolve_auth_headers().await?;
+        let res = req.headers(headers).send().await?;
         let status = res.status();
         let ct = res
             .headers()
@@ -319,7 +324,12 @@ impl Client {
         method: &str,
         url: &str,
     ) -> std::result::Result<(String, String), RequestError> {
-        let res = req.send().await?;
+        let headers = self
+            .auth_provider
+            .resolve_auth_headers()
+            .await
+            .map_err(|error| RequestError::Other(error.into()))?;
+        let res = req.headers(headers).send().await?;
         let status = res.status();
         let content_type = res
             .headers()

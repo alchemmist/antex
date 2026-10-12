@@ -122,7 +122,7 @@ impl TaskPlan {
             }
         }
         (max_capacity > 0).then(|| VisibleWindow {
-            range: self.visible_range(1),
+            range: self.visible_range(/*capacity*/ 1),
             hidden_before: false,
             hidden_after: false,
         })

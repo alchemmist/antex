@@ -679,7 +679,24 @@ async fn startup_reads_server_defaults_before_starting_thread() -> Result<()> {
         ),
         (&serde_json::Value::Null, &serde_json::Value::Null),
     );
-    tokio::time::timeout(Duration::from_secs(/*secs*/ 15), proxy).await???;
+    // The recorder observes thread/start before awaiting the embedded response. This
+    // deadline covers that pending work and proxy teardown, not startup ordering.
+    tokio::time::timeout(Duration::from_secs(/*secs*/ 15), proxy)
+        .await
+        .map_err(|error| {
+            let recorded = requests.lock().expect("request recorder lock");
+            let count = recorded.len();
+            let latest_methods = recorded
+                .iter()
+                .rev()
+                .take(32)
+                .map(|request| request.method.chars().take(128).collect::<String>())
+                .collect::<Vec<_>>();
+            color_eyre::eyre::eyre!(
+                "{error}: recording proxy did not finish after startup ordering assertions passed; \
+                 requests={count}; latest methods first={latest_methods:?}"
+            )
+        })???;
     Ok(())
 }
 

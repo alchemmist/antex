@@ -26,6 +26,11 @@ pub enum AuthMode {
     ApiKey,
     /// ChatGPT OAuth managed by Antex (tokens persisted and refreshed by Antex).
     Chatgpt,
+    /// Public ChatGPT subscription OAuth for the direct OpenAI Responses API.
+    #[serde(rename = "chatgptDirect")]
+    #[ts(rename = "chatgptDirect")]
+    #[strum(serialize = "chatgptDirect")]
+    ChatgptDirect,
     /// [UNSTABLE] FOR OPENAI INTERNAL USE ONLY - DO NOT USE.
     ///
     /// ChatGPT auth tokens are supplied by an external host app and are only
@@ -65,7 +70,10 @@ impl AuthMode {
     /// Returns whether this mode represents an authenticated human ChatGPT account.
     pub fn has_chatgpt_account(self) -> bool {
         match self {
-            Self::Chatgpt | Self::ChatgptAuthTokens | Self::PersonalAccessToken => true,
+            Self::Chatgpt
+            | Self::ChatgptDirect
+            | Self::ChatgptAuthTokens
+            | Self::PersonalAccessToken => true,
             Self::ApiKey
             | Self::Headers
             | Self::AgentIdentity
@@ -82,10 +90,16 @@ impl AuthMode {
             | Self::Headers
             | Self::AgentIdentity
             | Self::PersonalAccessToken => true,
-            Self::ApiKey | Self::BedrockApiKey | Self::BedrockAccessKeys => false,
+            Self::ApiKey | Self::ChatgptDirect | Self::BedrockApiKey | Self::BedrockAccessKeys => {
+                false
+            }
         }
     }
 }
+
+#[cfg(test)]
+#[path = "direct_auth_tests.rs"]
+mod direct_auth_tests;
 
 macro_rules! experimental_reason_expr {
     // If a request variant is explicitly marked experimental, that reason wins.

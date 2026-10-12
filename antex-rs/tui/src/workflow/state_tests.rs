@@ -24,7 +24,7 @@ async fn creates_checkpoints_and_lists_resumable_runs() {
     run.checkpoint(json!({"completed": 7}))
         .await
         .expect("checkpoint");
-    run.set_status(WorkflowRunStatus::Paused, None)
+    run.set_status(WorkflowRunStatus::Paused, /*error*/ None)
         .await
         .expect("pause");
 

@@ -11,6 +11,9 @@ pub fn models_cache_entry(
     auth: Option<&AntexAuth>,
     models: Vec<ModelInfo>,
 ) -> ModelsCacheEntry {
+    // The supplied login is ambient. Like request-time discovery, providers
+    // with their own credentials or no auth must not key the cache by it.
+    let auth = auth.filter(|_| crate::request_auth::uses_manager(provider_info));
     ModelsCacheEntry {
         fetched_at: std::time::SystemTime::now().into(),
         etag: None,
@@ -21,3 +24,7 @@ pub fn models_cache_entry(
 }
 
 pub use crate::shared_state::test_support::seed_gateway_auth;
+
+#[cfg(test)]
+#[path = "test_support_tests.rs"]
+mod tests;

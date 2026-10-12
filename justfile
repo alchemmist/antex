@@ -164,7 +164,7 @@ bazel-clippy:
 [no-cd]
 [unix]
 bazel-argument-comment-lint:
-    bazel build --config=argument-comment-lint -- $({{ justfile_directory() }}/tools/argument-comment-lint/list-bazel-targets.sh)
+    bazel_targets="$({{ justfile_directory() }}/tools/argument-comment-lint/list-bazel-targets.sh)" && bazel build --config=argument-comment-lint -- ${bazel_targets}
 
 build-for-release:
     bazel build //antex-rs/cli:release_binaries
@@ -186,7 +186,7 @@ write-hooks-schema:
 [unix]
 argument-comment-lint *args:
     if [ "$#" -eq 0 ]; then \
-      bazel build --config=argument-comment-lint -- $({{ justfile_directory() }}/tools/argument-comment-lint/list-bazel-targets.sh); \
+      bazel_targets="$({{ justfile_directory() }}/tools/argument-comment-lint/list-bazel-targets.sh)" && bazel build --config=argument-comment-lint -- ${bazel_targets}; \
     else \
       {{ justfile_directory() }}/tools/argument-comment-lint/run-prebuilt-linter.py "$@"; \
     fi

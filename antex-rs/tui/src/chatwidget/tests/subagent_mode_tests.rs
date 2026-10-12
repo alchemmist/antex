@@ -4,7 +4,7 @@ use pretty_assertions::assert_eq;
 
 #[tokio::test]
 async fn subagent_mode_survives_resume_and_persists_off() {
-    let (mut original, _rx, _ops) = make_chatwidget_manual(None).await;
+    let (mut original, _rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
     let session = configured_thread_session(ThreadId::new());
     original.handle_thread_session(session.clone());
     original.dispatch_command(SlashCommand::MultiAgents);
@@ -12,7 +12,7 @@ async fn subagent_mode_survives_resume_and_persists_off() {
     let _home_guard = original.test_antex_home.take();
     drop(original);
 
-    let (mut resumed, _rx, mut ops) = make_chatwidget_manual(None).await;
+    let (mut resumed, _rx, mut ops) = make_chatwidget_manual(/*model_override*/ None).await;
     resumed.local_settings = settings.clone();
     resumed.handle_thread_session(session.clone());
     assert_eq!(
@@ -21,7 +21,7 @@ async fn subagent_mode_survives_resume_and_persists_off() {
     );
     assert_chatwidget_snapshot!(
         "subagent_mode_after_resume",
-        render_bottom_popup(&resumed, 80)
+        render_bottom_popup(&resumed, /*width*/ 80)
     );
     resumed
         .bottom_pane
@@ -37,7 +37,7 @@ async fn subagent_mode_survives_resume_and_persists_off() {
     resumed.dispatch_command(SlashCommand::MultiAgents);
     drop(resumed);
 
-    let (mut disabled, _rx, _ops) = make_chatwidget_manual(None).await;
+    let (mut disabled, _rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
     disabled.local_settings = settings;
     disabled.handle_thread_session(session);
     assert_eq!(
@@ -48,7 +48,7 @@ async fn subagent_mode_survives_resume_and_persists_off() {
 
 #[tokio::test]
 async fn subagent_mode_enabled_before_thread_start_is_saved() {
-    let (mut original, _rx, _ops) = make_chatwidget_manual(None).await;
+    let (mut original, _rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
     original.dispatch_command(SlashCommand::MultiAgents);
     let session = configured_thread_session(ThreadId::new());
     original.handle_thread_session(session.clone());
@@ -56,7 +56,7 @@ async fn subagent_mode_enabled_before_thread_start_is_saved() {
     let _home_guard = original.test_antex_home.take();
     drop(original);
 
-    let (mut resumed, _rx, _ops) = make_chatwidget_manual(None).await;
+    let (mut resumed, _rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
     resumed.local_settings = settings;
     resumed.handle_thread_session(session);
     assert_eq!(
@@ -72,11 +72,11 @@ async fn subagent_mode_enabled_before_thread_start_is_saved() {
 
 #[tokio::test]
 async fn subagent_mode_reload_observes_disable_in_another_client() {
-    let (mut original, _rx, _ops) = make_chatwidget_manual(None).await;
+    let (mut original, _rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
     let session = configured_thread_session(ThreadId::new());
     original.handle_thread_session(session.clone());
     original.dispatch_command(SlashCommand::MultiAgents);
-    let (mut other, _rx, _ops) = make_chatwidget_manual(None).await;
+    let (mut other, _rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
     other.local_settings = original.local_settings.clone();
     other.handle_thread_session(session.clone());
     other.dispatch_command(SlashCommand::MultiAgents);

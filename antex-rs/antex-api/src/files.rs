@@ -152,7 +152,7 @@ where
         "file_size": file_size_bytes,
         "use_case": OPENAI_FILE_USE_CASE,
     });
-    let request = authorized_request(client_pool, auth, Method::POST, &create_url);
+    let request = authorized_request(client_pool, auth, Method::POST, &create_url).await?;
     let create_request = match hosted_upload {
         Some(context) => serde_json::json!({
             "file_name": file_name.as_str(),
@@ -364,6 +364,7 @@ where
     let finalize_started_at = Instant::now();
     loop {
         let finalize_response = authorized_request(client_pool, auth, Method::POST, &finalize_url)
+            .await?
             .json(&finalize_request)
             .send()
             .await
@@ -430,19 +431,26 @@ where
     }
 }
 
-fn authorized_request(
+async fn authorized_request(
     client_pool: &RouteAwareClientPool,
     auth: &dyn AuthProvider,
     method: Method,
     url: &str,
-) -> RequestBuilder {
-    let mut headers = http::HeaderMap::new();
-    auth.add_auth_headers(&mut headers);
+) -> Result<RequestBuilder, OpenAiFileError> {
+    let headers = auth
+        .resolve_auth_headers()
+        .await
+        .map_err(|_| OpenAiFileError::Request {
+            url: url.to_string(),
+            source: RouteAwareRequestError::Build(
+                "failed to resolve file upload authentication".to_string(),
+            ),
+        })?;
 
-    client_pool
+    Ok(client_pool
         .request(method, url)
         .timeout(OPENAI_FILE_REQUEST_TIMEOUT)
-        .headers(headers)
+        .headers(headers))
 }
 
 fn upload_response_header(response: &HttpResponse, header: &str) -> String {

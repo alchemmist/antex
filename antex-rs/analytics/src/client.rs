@@ -965,7 +965,9 @@ async fn send_track_events(
         return;
     }
 
-    let Some((auth, http_client_factory)) = auth_manager.auth_with_http_client_factory().await
+    let Ok(Some((auth, http_client_factory))) = auth_manager
+        .auth_for_request_with_http_client_factory()
+        .await
     else {
         return;
     };

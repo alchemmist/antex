@@ -11,13 +11,16 @@
 //! The model-facing local-path schema is owned by `antex-mcp` alongside MCP tool inventory, so this
 //! module only handles uploading the files and rewriting the execution-time arguments.
 
+mod upload_auth;
+pub(crate) use upload_auth::BoundUploadAuth;
+
 use crate::session::session::Session;
 use crate::session::step_context::StepContext;
+use antex_api::AuthProvider;
 use antex_api::HostedFileUploadContext;
 use antex_api::OPENAI_FILE_UPLOAD_LIMIT_BYTES;
 use antex_api::upload_openai_file;
 use antex_exec_server::GetMetadataOptions;
-use antex_login::AntexAuth;
 use antex_protocol::permissions::FileSystemAccessMode;
 use antex_sandboxing::policy_transforms::effective_file_system_sandbox_policy;
 use serde_json::Value as JsonValue;
@@ -34,6 +37,7 @@ pub(crate) async fn rewrite_mcp_tool_arguments_for_openai_files(
     step_context: &StepContext,
     arguments_value: Option<JsonValue>,
     openai_file_input_optional_fields: Option<&HashMap<String, Vec<String>>>,
+    upload_auth: Option<&dyn AuthProvider>,
     hosted_upload: Option<&HostedFileUploadContext>,
 ) -> Result<Option<JsonValue>, String> {
     let Some(openai_file_input_optional_fields) = openai_file_input_optional_fields else {
@@ -46,7 +50,6 @@ pub(crate) async fn rewrite_mcp_tool_arguments_for_openai_files(
     let Some(arguments) = arguments_value.as_object() else {
         return Ok(Some(arguments_value));
     };
-    let auth = sess.services.auth_manager.auth().await;
     let mut rewritten_arguments = arguments.clone();
 
     for (field_name, optional_fields) in openai_file_input_optional_fields {
@@ -56,7 +59,7 @@ pub(crate) async fn rewrite_mcp_tool_arguments_for_openai_files(
         let Some(uploaded_value) = rewrite_argument_value_for_openai_files(
             sess,
             step_context,
-            auth.as_ref(),
+            upload_auth,
             field_name,
             optional_fields,
             value,
@@ -79,7 +82,7 @@ pub(crate) async fn rewrite_mcp_tool_arguments_for_openai_files(
 async fn rewrite_argument_value_for_openai_files(
     sess: &Session,
     step_context: &StepContext,
-    auth: Option<&AntexAuth>,
+    upload_auth: Option<&dyn AuthProvider>,
     field_name: &str,
     optional_fields: &[String],
     value: &JsonValue,
@@ -90,7 +93,7 @@ async fn rewrite_argument_value_for_openai_files(
             let rewritten = build_uploaded_argument_value(
                 sess,
                 step_context,
-                auth,
+                upload_auth,
                 FileArgumentLocation {
                     field_name,
                     index: None,
@@ -111,7 +114,7 @@ async fn rewrite_argument_value_for_openai_files(
                 let rewritten = build_uploaded_argument_value(
                     sess,
                     step_context,
-                    auth,
+                    upload_auth,
                     FileArgumentLocation {
                         field_name,
                         index: Some(index),
@@ -132,7 +135,7 @@ async fn rewrite_argument_value_for_openai_files(
 async fn build_uploaded_argument_value(
     sess: &Session,
     step_context: &StepContext,
-    auth: Option<&AntexAuth>,
+    upload_auth: Option<&dyn AuthProvider>,
     argument: FileArgumentLocation<'_>,
     optional_fields: &[String],
     file_path: &str,
@@ -145,12 +148,15 @@ async fn build_uploaded_argument_value(
         }
         None => format!("failed to upload `{file_path}` for `{field_name}`: {error}"),
     };
-    let Some(auth) = auth else {
+    // Only backend-capable authority is exposed by the prepared binding. Never
+    // select credentials from the global login or the tool server after approval.
+    let Some(upload_auth) = upload_auth else {
         return Err("ChatGPT auth is required to upload files for Codex Apps tools".to_string());
     };
-    if !auth.uses_antex_backend() {
-        return Err("ChatGPT auth is required to upload files for Codex Apps tools".to_string());
-    }
+    upload_auth
+        .resolve_auth_headers()
+        .await
+        .map_err(|_| "failed to resolve file upload authentication".to_string())?;
     let turn_context = &step_context.turn;
     let Some(turn_environment) = step_context.environments.primary() else {
         return Err(contextualize_error(
@@ -236,10 +242,11 @@ async fn build_uploaded_argument_value(
             }
         }
     };
-    let upload_auth = antex_model_provider::auth_provider_from_auth(auth);
+    // The files API resolves this same fallible provider again after filesystem
+    // awaits and on every create/finalize attempt, including subsequent files.
     let uploaded = upload_openai_file(
         turn_context.config.chatgpt_base_url.trim_end_matches('/'),
-        upload_auth.as_ref(),
+        upload_auth,
         &sess.services.openai_file_upload_client_pool,
         file_name,
         metadata.size,
@@ -279,6 +286,7 @@ mod tests {
     use crate::environment_selection::TurnEnvironmentState;
     use crate::session::tests::make_session_and_context;
     use crate::session::turn_context::TurnContext;
+    use antex_login::AntexAuth;
     use antex_utils_absolute_path::AbsolutePathBuf;
     use antex_utils_path_uri::PathUri;
     use pretty_assertions::assert_eq;
@@ -311,6 +319,7 @@ mod tests {
             &step_context,
             arguments.clone(),
             /*openai_file_input_optional_fields*/ None,
+            /*upload_auth*/ None,
             /*hosted_upload*/ None,
         )
         .await
@@ -413,7 +422,7 @@ mod tests {
         let rewritten = build_uploaded_argument_value(
             &session,
             &step_context,
-            Some(&auth),
+            Some(antex_model_provider::auth_provider_from_auth(&auth).as_ref()),
             FileArgumentLocation {
                 field_name: "file",
                 index: None,
@@ -451,7 +460,7 @@ mod tests {
         let error = build_uploaded_argument_value(
             &session,
             &step_context,
-            Some(&auth),
+            Some(antex_model_provider::auth_provider_from_auth(&auth).as_ref()),
             FileArgumentLocation {
                 field_name: "file",
                 index: None,
@@ -528,7 +537,7 @@ mod tests {
         let rewritten = rewrite_argument_value_for_openai_files(
             &session,
             &step_context,
-            Some(&auth),
+            Some(antex_model_provider::auth_provider_from_auth(&auth).as_ref()),
             "file",
             &[],
             &serde_json::json!("file_report.csv"),
@@ -642,7 +651,7 @@ mod tests {
         let rewritten = rewrite_argument_value_for_openai_files(
             &session,
             &step_context,
-            Some(&auth),
+            Some(antex_model_provider::auth_provider_from_auth(&auth).as_ref()),
             "files",
             &[],
             &serde_json::json!(["one.csv", "two.csv"]),
@@ -680,6 +689,17 @@ mod tests {
                 "file": "/definitely/missing/file.csv",
             })),
             Some(&HashMap::from([("file".to_string(), Vec::new())])),
+            Some(
+                antex_model_provider::auth_provider_from_auth_manager(
+                    Arc::clone(&session.services.auth_manager),
+                    &session
+                        .services
+                        .auth_manager
+                        .auth_cached()
+                        .expect("test auth"),
+                )
+                .as_ref(),
+            ),
             /*hosted_upload*/ None,
         )
         .await

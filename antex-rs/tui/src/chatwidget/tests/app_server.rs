@@ -2133,7 +2133,7 @@ async fn live_app_server_thread_closed_requests_immediate_exit() {
 #[tokio::test]
 async fn thread_settings_preserve_authoritative_workspace_roots_when_cwd_changes() {
     for roots in [vec![test_path_buf("/tmp/original").abs()], Vec::new()] {
-        let (mut chat, _rx, _op_rx) = make_chatwidget_manual(None).await;
+        let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
         let thread_id = ThreadId::new();
         chat.thread_id = Some(thread_id);
         chat.config.cwd = test_path_buf("/tmp/original").abs();
@@ -2153,7 +2153,7 @@ async fn thread_settings_preserve_authoritative_workspace_roots_when_cwd_changes
 
 #[tokio::test]
 async fn legacy_thread_settings_retarget_implicit_workspace_root() {
-    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(None).await;
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     let thread_id = ThreadId::new();
     chat.thread_id = Some(thread_id);
     chat.config.cwd = test_path_buf("/tmp/original").abs();

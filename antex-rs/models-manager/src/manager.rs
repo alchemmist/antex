@@ -52,6 +52,12 @@ pub trait ModelsEndpointClient: fmt::Debug + Send + Sync {
     /// Returns whether the currently resolved auth can use Antex backend-only models.
     fn uses_antex_backend(&self) -> ModelsEndpointFuture<'_, bool>;
 
+    /// Returns whether the current effective credentials use the public direct subscription route.
+    /// Ambient first-party credentials must not affect unrelated custom providers.
+    fn uses_chatgpt_direct(&self) -> bool {
+        false
+    }
+
     /// Returns whether this provider supports an authoritative catalog with OpenAI API keys.
     fn supports_api_key_models(&self) -> bool {
         false
@@ -428,6 +434,11 @@ impl ModelsManager for OpenAiModelsManager {
 
     fn get_remote_models(&self) -> ModelsManagerFuture<'_, Vec<ModelInfo>> {
         Box::pin(async move {
+            if self.uses_chatgpt_direct() {
+                return public_responses_models(
+                    crate::bundled_models_response().unwrap_or_default().models,
+                );
+            }
             let entry = self.remote_models.read().await;
             if !self.api_key_discovery_disabled()
                 && entry.identity.is_some()
@@ -441,6 +452,11 @@ impl ModelsManager for OpenAiModelsManager {
     }
 
     fn try_get_remote_models(&self) -> Result<Vec<ModelInfo>, TryLockError> {
+        if self.uses_chatgpt_direct() {
+            return Ok(public_responses_models(
+                crate::bundled_models_response().unwrap_or_default().models,
+            ));
+        }
         let entry = self.remote_models.try_read()?;
         Ok(
             if !self.api_key_discovery_disabled()
@@ -672,7 +688,14 @@ impl OpenAiModelsManager {
                 .is_some_and(|auth_manager| auth_manager.auth_mode() == Some(AuthMode::ApiKey))
     }
 
+    fn uses_chatgpt_direct(&self) -> bool {
+        self.endpoint_client.uses_chatgpt_direct()
+    }
+
     async fn should_refresh_models(&self) -> bool {
+        if self.uses_chatgpt_direct() {
+            return false;
+        }
         self.endpoint_client.uses_antex_backend().await
             || self.endpoint_client.has_command_auth()
             || self.supports_api_key_discovery()
@@ -836,6 +859,15 @@ impl ModelsManager for StaticModelsManager {
     ) -> ModelsManagerFuture<'_, ()> {
         Box::pin(async {})
     }
+}
+
+// Bundled Codex metadata remains useful for the public API, but its transport dialect does not.
+fn public_responses_models(mut models: Vec<ModelInfo>) -> Vec<ModelInfo> {
+    for model in &mut models {
+        model.use_responses_lite = false;
+        model.supports_reasoning_effort_updates = false;
+    }
+    models
 }
 
 fn load_remote_models_from_file() -> Result<Vec<ModelInfo>, std::io::Error> {

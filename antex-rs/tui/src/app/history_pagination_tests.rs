@@ -52,7 +52,6 @@ fn overlapping_history_keeps_live_turn_state_and_newer_items() {
 
 fn user_cell(message: &str) -> Arc<dyn HistoryCell> {
     Arc::new(UserHistoryCell {
-        spoken: false,
         message: message.to_string(),
         text_elements: Vec::new(),
         local_image_paths: Vec::new(),

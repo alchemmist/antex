@@ -5,7 +5,7 @@ expression: rendered
 ---
 /status
 
-  >_ Antex (v0.153.4)
+  >_ Antex (v0.162.1)
 
   Model:           gpt-5.6-sol (reasoning none, summaries auto)
   Model provider:  server-ollama

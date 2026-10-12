@@ -15,6 +15,7 @@ use core_test_support::streaming_sse::StreamingSseChunk;
 use core_test_support::streaming_sse::start_streaming_sse_server;
 use core_test_support::test_antex::test_antex;
 use core_test_support::wait_for_event;
+use core_test_support::wait_for_submission_barrier;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
 use serde_json::json;
@@ -133,13 +134,7 @@ async fn mailbox_preemption_preserves_response_when_deferred(
             .await?;
     }
     // The barrier confirms that both messages were queued before finishing the item.
-    test.antex
-        .submit(Op::RealtimeConversationListVoices)
-        .await?;
-    wait_for_event(&test.antex, |event| {
-        matches!(event, EventMsg::RealtimeConversationListVoicesResponse(_))
-    })
-    .await;
+    wait_for_submission_barrier(&test.antex).await?;
     release.send(()).expect("release response");
     wait_for_event(&test.antex, |event| {
         matches!(event, EventMsg::TurnComplete(_))

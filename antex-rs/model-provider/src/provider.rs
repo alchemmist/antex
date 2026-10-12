@@ -111,6 +111,12 @@ pub trait ModelProvider: fmt::Debug + Send + Sync {
 
     /// Returns whether the resolved Responses provider may receive internal tool metadata.
     fn include_internal_metadata(&self, provider: &Provider) -> bool {
+        if self
+            .info()
+            .uses_chatgpt_direct(self.auth_manager().and_then(|manager| manager.auth_mode()))
+        {
+            return false;
+        }
         self.info().include_internal_metadata
             || url::Url::parse(&provider.base_url).ok().is_some_and(|url| {
                 url.scheme() == "https"
@@ -188,8 +194,32 @@ pub trait ModelProvider: fmt::Debug + Send + Sync {
         Box::pin(async { Ok(ProviderUnauthorizedRecovery::NotConfigured) })
     }
 
-    /// Returns the current provider-scoped auth value, if one is configured.
+    /// Legacy best-effort account/status lookup. May retain cached credentials
+    /// after a source failure; not suitable for request or authorization decisions.
     fn auth(&self) -> ModelProviderFuture<'_, Option<AntexAuth>>;
+
+    /// Resolves credentials for a request. Failed active resolution is not absence.
+    /// The default uses an exposed authoritative manager and propagates its error
+    /// without falling back to `auth()`. Without a manager, the legacy fallback is
+    /// only valid for infallible/static auth. Implementations with a hidden fallible
+    /// credential store MUST override this method and propagate resolution errors,
+    /// even when that store retains a last-known account for `auth()`.
+    fn auth_for_request(
+        &self,
+    ) -> ModelProviderFuture<'_, antex_protocol::error::Result<Option<AntexAuth>>> {
+        Box::pin(async move {
+            if !crate::request_auth::uses_manager(self.info()) {
+                return Ok(None);
+            }
+            match self.auth_manager() {
+                Some(manager) => manager
+                    .auth_for_request()
+                    .await
+                    .map_err(crate::request_auth::request_error),
+                None => Ok(self.auth().await),
+            }
+        })
+    }
 
     /// Returns the current app-visible account state for this provider.
     fn account_state(&self) -> ProviderAccountResult;
@@ -202,7 +232,7 @@ pub trait ModelProvider: fmt::Debug + Send + Sync {
     /// Returns provider configuration adapted for the API client.
     fn api_provider(&self) -> ModelProviderFuture<'_, antex_protocol::error::Result<Provider>> {
         Box::pin(async move {
-            let auth = self.auth().await;
+            let auth = self.auth_for_request().await?;
             self.info()
                 .to_api_provider(auth.as_ref().map(AntexAuth::auth_mode))
         })
@@ -218,11 +248,23 @@ pub trait ModelProvider: fmt::Debug + Send + Sync {
         routing_context: &'a WorkspaceRoutingContext,
     ) -> ModelProviderFuture<'a, antex_protocol::error::Result<ResolvedResponsesProvider>> {
         Box::pin(async move {
+            let owner = self
+                .auth_manager()
+                .map(|manager| manager.unauthorized_recovery());
             let mut provider = self.api_provider().await?;
-            let mut redirect_policy = ClientRedirectPolicy::Default;
-            if provider_uses_first_party_auth_path(self.info())
+            let auth = self.auth_for_request().await?;
+            let direct = self
+                .info()
+                .uses_chatgpt_direct(auth.as_ref().map(AntexAuth::auth_mode));
+            let mut redirect_policy = if direct {
+                ClientRedirectPolicy::Reject
+            } else {
+                ClientRedirectPolicy::Default
+            };
+            if !direct
+                && provider_uses_first_party_auth_path(self.info())
                 && self.info().supports_antex_backend_routes()
-                && let Some(auth) = self.auth().await.filter(AntexAuth::is_chatgpt_auth)
+                && let Some(auth) = auth.filter(AntexAuth::is_chatgpt_auth)
                 && let Some(auth_manager) = self.auth_manager()
             {
                 let mut previously_routed = routing_context.previously_routed.lock().await;
@@ -243,6 +285,13 @@ pub trait ModelProvider: fmt::Debug + Send + Sync {
                     *previously_routed = true;
                 }
             }
+            // Routing may await host code which replaces or invalidates auth.
+            self.auth_for_request().await?;
+            if let Some(owner) = owner {
+                owner
+                    .ensure_same_owner()
+                    .map_err(crate::request_auth::request_error)?;
+            }
             Ok(ResolvedResponsesProvider {
                 provider,
                 redirect_policy,
@@ -262,7 +311,7 @@ pub trait ModelProvider: fmt::Debug + Send + Sync {
         &self,
     ) -> ModelProviderFuture<'_, antex_protocol::error::Result<SharedAuthProvider>> {
         Box::pin(async move {
-            let auth = self.auth().await;
+            let auth = self.auth_for_request().await?;
             resolve_provider_auth(auth.as_ref(), self.info())
         })
     }
@@ -276,9 +325,23 @@ pub trait ModelProvider: fmt::Debug + Send + Sync {
             if !provider_uses_first_party_auth_path(self.info()) {
                 return self.api_auth().await.map(ResolvedProviderAuth::new);
             }
-            let auth = self.auth().await;
-            resolve_provider_auth_for_scope(self.auth_manager(), auth.as_ref(), self.info(), scope)
-                .await
+            let owner = self
+                .auth_manager()
+                .map(|manager| manager.unauthorized_recovery());
+            let auth = self.auth_for_request().await?;
+            let resolved = resolve_provider_auth_for_scope(
+                self.auth_manager(),
+                auth.as_ref(),
+                self.info(),
+                scope,
+            )
+            .await?;
+            if let Some(owner) = owner {
+                owner
+                    .ensure_same_owner()
+                    .map_err(crate::request_auth::request_error)?;
+            }
+            Ok(resolved)
         })
     }
 
@@ -426,7 +489,17 @@ impl ModelProvider for ConfiguredModelProvider {
     }
 
     fn capabilities(&self) -> ProviderCapabilities {
-        ProviderCapabilities::from_config(&self.info)
+        let mut capabilities = ProviderCapabilities::from_config(&self.info);
+        if self.info.uses_chatgpt_direct(
+            self.auth_manager
+                .as_ref()
+                .and_then(|manager| manager.auth_mode()),
+        ) {
+            // The subscription grant is documented for Responses, not the Codex compact endpoint.
+            capabilities.remote_compaction =
+                antex_model_provider_info::RemoteCompactionSupport::Unsupported;
+        }
+        capabilities
     }
 
     fn approval_review_preferred_model(&self) -> &'static str {
@@ -434,7 +507,9 @@ impl ModelProvider for ConfiguredModelProvider {
             .auth_manager
             .as_ref()
             .and_then(|auth_manager| auth_manager.auth_cached())
-            .is_some_and(|auth| auth.is_api_key_auth())
+            .is_some_and(|auth| {
+                auth.is_api_key_auth() || matches!(auth, AntexAuth::ChatgptDirect(_))
+            })
         {
             API_KEY_APPROVAL_REVIEW_PREFERRED_MODEL
         } else {
@@ -443,7 +518,9 @@ impl ModelProvider for ConfiguredModelProvider {
     }
 
     fn auth_manager(&self) -> Option<Arc<AuthManager>> {
-        self.auth_manager.clone()
+        self.auth_manager
+            .clone()
+            .filter(|_| crate::request_auth::uses_manager(&self.info))
     }
 
     fn gateway_auth_manager(&self) -> std::io::Result<Option<Arc<GatewayAuthManager>>> {
@@ -457,7 +534,7 @@ impl ModelProvider for ConfiguredModelProvider {
         self.auth_manager
             .as_ref()
             .and_then(|auth_manager| auth_manager.auth_cached())
-            .is_some_and(|auth| auth.is_chatgpt_auth())
+            .is_some_and(|auth| auth.uses_antex_backend() && auth.is_chatgpt_auth())
     }
 
     fn auth(&self) -> ModelProviderFuture<'_, Option<AntexAuth>> {
@@ -473,15 +550,35 @@ impl ModelProvider for ConfiguredModelProvider {
         &self,
     ) -> ModelProviderFuture<'_, antex_protocol::error::Result<SharedAuthProvider>> {
         Box::pin(async move {
-            let auth = self.auth().await;
-            let primary = resolve_provider_auth(auth.as_ref(), &self.info)?;
-            Ok(compose_auth(
+            let owner = self
+                .auth_manager()
+                .map(|manager| manager.unauthorized_recovery());
+            let auth = self.auth_for_request().await?;
+            let primary = if self
+                .info
+                .uses_chatgpt_direct(auth.as_ref().map(AntexAuth::auth_mode))
+                && let Some(auth) = auth.as_ref()
+            {
+                self.info.to_api_provider(Some(auth.auth_mode()))?;
+                Arc::new(crate::chatgpt_direct::DirectAuthProvider::new(
+                    auth.clone(),
+                    self.auth_manager.clone(),
+                )) as SharedAuthProvider
+            } else {
+                resolve_provider_auth(auth.as_ref(), &self.info)?
+            };
+            let resolved = compose_auth(
                 &self.info,
                 self.gateway_auth_manager.as_ref(),
                 ResolvedProviderAuth::new(primary),
             )
-            .await?
-            .auth)
+            .await?;
+            if let Some(owner) = owner {
+                owner
+                    .ensure_same_owner()
+                    .map_err(crate::request_auth::request_error)?;
+            }
+            Ok(resolved.auth)
         })
     }
 
@@ -490,8 +587,11 @@ impl ModelProvider for ConfiguredModelProvider {
         scope: ProviderAuthScope,
     ) -> ModelProviderFuture<'_, antex_protocol::error::Result<ResolvedProviderAuth>> {
         Box::pin(async move {
+            let owner = self
+                .auth_manager()
+                .map(|manager| manager.unauthorized_recovery());
             let resolved = if provider_uses_first_party_auth_path(&self.info) {
-                let auth = self.auth().await;
+                let auth = self.auth_for_request().await?;
                 resolve_provider_auth_for_scope(
                     self.auth_manager.clone(),
                     auth.as_ref(),
@@ -500,10 +600,17 @@ impl ModelProvider for ConfiguredModelProvider {
                 )
                 .await?
             } else {
-                let auth = self.auth().await;
+                let auth = self.auth_for_request().await?;
                 ResolvedProviderAuth::new(resolve_provider_auth(auth.as_ref(), &self.info)?)
             };
-            compose_auth(&self.info, self.gateway_auth_manager.as_ref(), resolved).await
+            let resolved =
+                compose_auth(&self.info, self.gateway_auth_manager.as_ref(), resolved).await?;
+            if let Some(owner) = owner {
+                owner
+                    .ensure_same_owner()
+                    .map_err(crate::request_auth::request_error)?;
+            }
+            Ok(resolved)
         })
     }
 
@@ -523,6 +630,10 @@ impl ModelProvider for ConfiguredModelProvider {
                 })
                 .map(|auth| match &auth {
                     AntexAuth::ApiKey(_) => Ok(ProviderAccount::ApiKey),
+                    AntexAuth::ChatgptDirect(_) => Ok(ProviderAccount::ChatgptDirect {
+                        email: auth.get_account_email(),
+                        plan_type: auth.account_plan_type(),
+                    }),
                     AntexAuth::BedrockApiKey(_) | AntexAuth::BedrockAccessKeys(_) => {
                         Err(ProviderAccountError::UnsupportedBedrockApiKeyAuth)
                     }

@@ -7,7 +7,13 @@ pub use auth::WorkspaceRoutingRequest;
 pub use auth::WorkspaceRoutingResolver;
 pub use auth::WorkspaceRoutingSession;
 
+mod atomic_file;
 mod callback_params;
+mod direct_identity;
+mod direct_oauth;
+mod direct_refresh_error;
+mod direct_server;
+pub use direct_server::run_direct_login_server;
 mod device_code_auth;
 mod gateway_auth;
 mod oauth;

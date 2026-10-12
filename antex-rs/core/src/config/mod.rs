@@ -1071,6 +1071,8 @@ pub struct Config {
     /// Bounded, product-owned metadata attached to every Responses API request.
     pub responses_api_metadata: BTreeMap<String, String>,
 
+    // Legacy voice settings are loaded only for configuration compatibility.
+    // No runtime consumes these fields; voice mode has been removed.
     /// Machine-local realtime audio device preferences used by realtime voice.
     pub realtime_audio: RealtimeAudioConfig,
 

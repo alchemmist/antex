@@ -3,6 +3,7 @@
 
 mod connection_pool;
 mod execution;
+mod request_owner;
 
 use super::request::PreparedRequest;
 use connection_pool::ConnectionPool;
@@ -161,19 +162,6 @@ impl LunaSampler {
         self.connections.prewarm().await;
     }
 
-    fn auth_owner_generation(&self) -> Option<u64> {
-        self.config
-            .provider
-            .auth_manager()
-            .filter(|_| self.config.provider.info().auth.is_none())
-            .map(|manager| {
-                manager
-                    .auth_change_state_receiver()
-                    .borrow()
-                    .owner_generation
-            })
-    }
-
     // Normalize new evidence while preserving the retained prefix and its item IDs.
     pub(super) fn prepare_input(
         request: &LunaSamplingRequest,
@@ -227,7 +215,7 @@ impl LunaSampler {
         &self,
         request: &LunaSamplingRequest,
         input: Vec<ResponseItem>,
-        auth_owner_generation: Option<u64>,
+        owner: Arc<request_owner::RequestOwner>,
     ) -> execution::SamplingExecution {
         let api_request = ResponsesApiRequest {
             model: MODEL.to_owned(),
@@ -251,7 +239,7 @@ impl LunaSampler {
             access_programs: None,
         };
         execution::SamplingExecution {
-            auth_owner_generation,
+            owner,
             cyber_access_program: antex_guardian_reviewer::guardian_cyber_access_program(
                 request.cyber_access_program,
             ),
@@ -271,7 +259,7 @@ impl LunaSampler {
         &self,
         mut request: LunaSamplingRequest,
     ) -> Result<String, LunaSamplerError> {
-        let auth_owner_generation = self.auth_owner_generation();
+        let owner = request_owner::RequestOwner::capture(&self.config.provider);
         if request.parent_compaction.is_some()
             && !self.supports_parent_compaction(request.parent_compaction_hash.as_deref())
         {
@@ -317,7 +305,7 @@ impl LunaSampler {
                 scored: Arc::clone(&scored),
             });
         }
-        self.execution(&request, input, auth_owner_generation)
+        self.execution(&request, input, owner)
             .run(execution::SamplingMode::Snapshot { superseded, scored })
             .await
     }
@@ -332,7 +320,7 @@ impl LunaSampler {
         prepared: PreparedRequest<'_>,
         ready: oneshot::Sender<Result<String, LunaSamplerError>>,
     ) -> Option<Vec<ResponseItemEnvelope>> {
-        let auth_owner_generation = self.auth_owner_generation();
+        let owner = request_owner::RequestOwner::capture(&self.config.provider);
         let mut completion = execution::RetainedCompletion {
             ready: Some(ready),
             output: Some(Vec::new()),
@@ -349,7 +337,7 @@ impl LunaSampler {
             .into_iter()
             .map(|envelope| (envelope.item, envelope.metadata))
             .unzip();
-        let mut execution = self.execution(prepared.sampling, input, auth_owner_generation);
+        let mut execution = self.execution(prepared.sampling, input, owner);
         execution.request.include = vec!["reasoning.encrypted_content".to_owned()];
         let result = execution
             .run(execution::SamplingMode::Retained(&mut completion))

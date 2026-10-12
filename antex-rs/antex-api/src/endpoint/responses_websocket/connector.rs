@@ -35,7 +35,12 @@ impl ResponsesWebsocketClient {
             .map_err(|err| ApiError::Stream(format!("failed to build websocket URL: {err}")))?;
         let mut headers =
             merge_request_headers(&self.provider.headers, extra_headers, default_headers);
-        self.auth.add_auth_headers(&mut headers);
+        headers.extend(
+            self.auth
+                .resolve_auth_headers()
+                .await
+                .map_err(antex_http_client::TransportError::from)?,
+        );
         let (stream, _status, server_reasoning_included, server_model) =
             connect_websocket(ws_url, headers, connector, turn_state).await?;
         Ok(ResponsesWebsocketConnection::new(

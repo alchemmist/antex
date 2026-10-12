@@ -81,8 +81,6 @@
 //antex-rs/code-mode:code-mode-unit-tests	49
 //antex-rs/antex-api:codex-api-clients-test-windows-cross	75
 //antex-rs/antex-api:codex-api-models_integration-test-windows-cross	66
-//antex-rs/antex-api:codex-api-realtime_websocket_e2e-test-windows-cross	63
-//antex-rs/antex-api:codex-api-realtime_websocket_tls-test-windows-cross	66
 //antex-rs/antex-api:codex-api-sse_end_to_end-test-windows-cross	48
 //antex-rs/antex-api:codex-api-unit-tests	60
 //antex-rs/antex-home:codex-home-unit-tests	13

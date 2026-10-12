@@ -5,7 +5,6 @@ use http::header::HeaderMap;
 
 use antex_core::config::Config;
 use antex_http_client::HttpClientFactory;
-use antex_http_client::OutboundProxyPolicy;
 use antex_login::AuthManager;
 use std::sync::Arc;
 
@@ -78,39 +77,21 @@ pub(crate) fn validate_chatgpt_base_url(input: &str) -> anyhow::Result<String> {
 
 pub async fn load_auth_manager(
     chatgpt_base_url: Option<String>,
-) -> (Option<Arc<AuthManager>>, HttpClientFactory) {
+) -> anyhow::Result<(Arc<AuthManager>, HttpClientFactory)> {
     // TODO: pass in cli overrides once cloud tasks properly support them.
-    let config = match Config::load_with_cli_overrides(Vec::new()).await {
-        Ok(config) => config,
-        Err(error) => {
-            append_error_log(format!(
-                "failed to load auth config; using transport-default proxy handling: {error}"
-            ));
-            let http_client_factory = HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault);
-            return (None, http_client_factory);
-        }
-    };
+    let config = Config::load_with_cli_overrides(Vec::new()).await?;
     let http_client_factory = config.http_client_factory();
     let mut auth_config = config.auth_config();
     auth_config.chatgpt_base_url = chatgpt_base_url.or(Some(config.chatgpt_base_url.clone()));
-    let auth_manager = match AuthManager::shared_from_auth_config(
-        auth_config,
-        /*enable_antex_api_key_env*/ false,
-    )
-    .await
-    {
-        Ok(auth_manager) => auth_manager,
-        Err(error) => {
-            append_error_log(format!("failed to load auth: {error}"));
-            return (None, http_client_factory);
-        }
-    };
-    (Some(auth_manager), http_client_factory)
+    let auth_manager =
+        AuthManager::shared_from_auth_config(auth_config, /*enable_antex_api_key_env*/ false)
+            .await?;
+    Ok((auth_manager, http_client_factory))
 }
 
 /// Build headers for ChatGPT-backed requests: `User-Agent`, optional `Authorization`,
 /// and optional `ChatGPT-Account-Id`.
-pub async fn build_chatgpt_headers() -> HeaderMap {
+pub async fn build_chatgpt_headers() -> anyhow::Result<HeaderMap> {
     use http::header::HeaderValue;
     use http::header::USER_AGENT;
 
@@ -121,13 +102,13 @@ pub async fn build_chatgpt_headers() -> HeaderMap {
         USER_AGENT,
         HeaderValue::from_str(&ua).unwrap_or(HeaderValue::from_static("antex-cli")),
     );
-    if let Some(am) = load_auth_manager(/*chatgpt_base_url*/ None).await.0
-        && let Some(auth) = am.auth().await
+    let (auth_manager, _) = load_auth_manager(/*chatgpt_base_url*/ None).await?;
+    if let Some(auth) = auth_manager.auth_for_request().await?
         && auth.uses_antex_backend()
     {
         headers.extend(antex_model_provider::auth_provider_from_auth(&auth).to_auth_headers());
     }
-    headers
+    Ok(headers)
 }
 
 /// Construct a browser-friendly task URL for the given backend base URL.

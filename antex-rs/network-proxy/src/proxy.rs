@@ -2256,7 +2256,7 @@ mod tests {
         };
         let proxy = NetworkProxy::builder()
             .state(Arc::new(network_proxy_state_for_policy(config.clone())))
-            .managed_by_antex(/*managed_by_codex*/ false)
+            .managed_by_antex(/*managed_by_antex*/ false)
             .build()
             .await?;
 

@@ -98,6 +98,7 @@ async fn login_with_bedrock_api_key_replaces_openai_auth() -> anyhow::Result<()>
     assert_eq!(auth_manager.auth_mode(), Some(AuthMode::BedrockApiKey));
     assert_eq!(
         auth_manager.auth_cached().and_then(|auth| match auth {
+            AntexAuth::ChatgptDirect(_) => None,
             AntexAuth::BedrockApiKey(auth) => Some(auth),
             AntexAuth::ApiKey(_)
             | AntexAuth::Chatgpt(_)
@@ -169,6 +170,7 @@ async fn access_keys_auth_round_trips_and_logs_out() -> anyhow::Result<()> {
     assert_eq!(auth_manager.auth_mode(), Some(AuthMode::BedrockAccessKeys));
     assert_eq!(
         auth_manager.auth_cached().and_then(|auth| match auth {
+            AntexAuth::ChatgptDirect(_) => None,
             AntexAuth::BedrockAccessKeys(auth) => Some(auth),
             AntexAuth::ApiKey(_)
             | AntexAuth::Chatgpt(_)
@@ -224,7 +226,8 @@ async fn bedrock_only_auth_storage_creates_primary_auth() -> anyhow::Result<()> 
             | AntexAuth::Headers(_)
             | AntexAuth::AgentIdentity(_)
             | AntexAuth::PersonalAccessToken(_)
-            | AntexAuth::BedrockAccessKeys(_) => None,
+            | AntexAuth::BedrockAccessKeys(_)
+            | AntexAuth::ChatgptDirect(_) => None,
         }),
         Some(bedrock_auth())
     );

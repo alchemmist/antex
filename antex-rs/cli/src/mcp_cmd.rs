@@ -638,7 +638,7 @@ async fn run_logout(config: &Config, logout_args: LogoutArgs) -> Result<()> {
     if matches!(server.auth, McpServerAuth::EmaAuth) {
         let auth_manager =
             AuthManager::shared_from_config(config, /*enable_antex_api_key_env*/ true).await?;
-        let auth = auth_manager.auth().await;
+        let auth = auth_manager.auth_for_request().await?;
         let scope = ema_auth_scope(auth.as_ref())
             .context("Sign in to your Codex account before removing enterprise authorization")?;
         // Cleanup must remain available even when this server is no longer eligible
@@ -691,7 +691,7 @@ async fn run_list(config: &Config, list_args: ListArgs) -> Result<()> {
     let mcp_manager = load_mcp_manager(config).await?;
     let auth_manager =
         AuthManager::shared_from_config(config, /*enable_antex_api_key_env*/ true).await?;
-    let auth = auth_manager.auth().await;
+    let auth = auth_manager.auth_for_request().await?;
     let mcp_servers = mcp_manager.configured_servers(config).await;
     let effective_mcp_servers = mcp_manager.effective_servers(config, auth.as_ref()).await;
 

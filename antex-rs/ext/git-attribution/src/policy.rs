@@ -63,7 +63,8 @@ pub(super) async fn resolve_attribution_policy(
                 auth_recovery = auth_manager.unauthorized_recovery();
                 recovery_generation = auth_generation_at_start;
             }
-            let auth = auth_manager.auth().await;
+            // Resolution failure leaves policy unknown/retryable, not disabled.
+            let auth = auth_manager.auth_for_request().await.ok()?;
             if auth_generation(auth_manager) != auth_generation_at_start {
                 continue;
             }

@@ -35,6 +35,18 @@ pub enum Account {
         plan_type: PlanType,
     },
 
+    /// ChatGPT subscription access to the public API, not the Codex backend.
+    #[serde(rename = "chatgptDirect", rename_all = "camelCase")]
+    #[ts(rename = "chatgptDirect", rename_all = "camelCase")]
+    ChatgptDirect {
+        #[schemars(
+            required,
+            schema_with = "crate::protocol::serde_helpers::nullable_string_schema"
+        )]
+        email: Option<String>,
+        plan_type: Option<PlanType>,
+    },
+
     #[serde(rename = "amazonBedrock", rename_all = "camelCase")]
     #[ts(rename = "amazonBedrock", rename_all = "camelCase")]
     AmazonBedrock {
@@ -50,6 +62,9 @@ impl From<ProviderAccount> for Account {
         match account {
             ProviderAccount::ApiKey => Self::ApiKey {},
             ProviderAccount::Chatgpt { email, plan_type } => Self::Chatgpt { email, plan_type },
+            ProviderAccount::ChatgptDirect { email, plan_type } => {
+                Self::ChatgptDirect { email, plan_type }
+            }
             ProviderAccount::AmazonBedrock {
                 uses_antex_managed_credentials,
             } => Self::AmazonBedrock {
@@ -84,6 +99,10 @@ pub enum LoginAccountParams {
         #[ts(optional = nullable)]
         app_brand: Option<LoginAppBrand>,
     },
+    /// Sign in with a ChatGPT subscription for direct OpenAI API access.
+    #[serde(rename = "chatgptDirect")]
+    #[ts(rename = "chatgptDirect")]
+    ChatgptDirect,
     #[serde(rename = "chatgptDeviceCode")]
     #[ts(rename = "chatgptDeviceCode")]
     ChatgptDeviceCode,

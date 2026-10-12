@@ -9,7 +9,7 @@
 //! search, or blocking view. The app reads clipboard text asynchronously and delivers a normal
 //! paste only while the same thread, draft, and cursor remain eligible. Intervening input or focus
 //! loss cancels the pending paste; a late clipboard result cannot overwrite newer input.
-//! The live voice strip renders after effort ignition, followed by the Astra sparkle when eligible.
+//! The Astra sparkle renders after effort ignition when eligible.
 //! Sparkles blend against either an explicit RGB fill or the probed terminal background, leaving
 //! the terminal-owned composer background and cyan prompt rail unchanged.
 //! Owned transcripts keep persistent status below the composer and hints on a separate final row.
@@ -206,7 +206,7 @@
 //! erases a held slash also clears the tracked command. An empty main-composer `Esc`
 //! can stop the active flourish. Once shown, it fades out by 15 seconds; command entry, popups, and
 //! focus loss hide the field without restarting that deadline. Rendering runs after the textarea,
-//! placeholder, effort ignition, and voice strip, and draws only in eligible blank cells without
+//! placeholder and effort ignition, and draws only in eligible blank cells without
 //! overwriting the placeholder or normal cursor. Hidden frames do not schedule animation redraws;
 //! motion settings, the starfield preference, and true-color support also gate the effect.
 //!
@@ -354,7 +354,6 @@ use super::skill_popup::MentionItem;
 use super::skill_popup::SkillPopup;
 use super::slash_commands::ServiceTierCommand;
 use super::slash_commands::SlashCommandItem;
-use super::voice_strip::VoiceStrip;
 use crate::history_cell::sanitize_user_text;
 use crate::key_hint::KeyBindingListExt;
 use crate::keymap::EditorKeymap;
@@ -619,7 +618,6 @@ pub(crate) struct ChatComposer {
     effort_tier: Option<EffortTier>,
     effort_animation_style: Option<IgnitionStyle>,
     effort_ignition: Option<EffortIgnition>,
-    voice_strip: Option<VoiceStrip>,
     effort_status_line_transition: Option<EffortStatusLineTransition>,
     effort_observed: bool,
     luna_reserve_active: bool,
@@ -646,7 +644,6 @@ pub(crate) struct ChatComposer {
     service_tier_commands: Vec<ServiceTierCommand>,
     mentions_v2_enabled: bool,
     goal_command_enabled: bool,
-    voice_command_enabled: bool,
     worktrees_enabled: bool,
     windows_degraded_sandbox_active: bool,
     side_conversation_active: bool,
@@ -788,7 +785,6 @@ impl ChatComposer {
                     .primary_hint(KeymapContext::Chat, "decrease_reasoning_effort"),
                 reasoning_up_key: default_keymap
                     .primary_hint(KeymapContext::Chat, "increase_reasoning_effort"),
-                toggle_voice_key: default_keymap.primary_hint(KeymapContext::Chat, "toggle_voice"),
             },
             prompt_stashed: false,
             has_focus: has_input_focus,
@@ -797,7 +793,6 @@ impl ChatComposer {
             effort_tier: None,
             effort_animation_style: None,
             effort_ignition: None,
-            voice_strip: None,
             effort_status_line_transition: None,
             effort_observed: false,
             luna_reserve_active: false,
@@ -820,7 +815,6 @@ impl ChatComposer {
             service_tier_commands: Vec::new(),
             mentions_v2_enabled: false,
             goal_command_enabled: false,
-            voice_command_enabled: false,
             worktrees_enabled: false,
             windows_degraded_sandbox_active: false,
             side_conversation_active: false,
@@ -1027,10 +1021,6 @@ impl ChatComposer {
         self.goal_command_enabled = enabled;
     }
 
-    pub fn set_voice_command_enabled(&mut self, enabled: bool) {
-        self.voice_command_enabled = enabled;
-    }
-
     /// Refresh the event destination when a retained editor survives reconnection.
     #[allow(dead_code, reason = "Used by later layers of the TUI refresh stack.")]
     pub(crate) fn set_app_event_sender(&mut self, app_event_tx: AppEventSender) {
@@ -1079,7 +1069,6 @@ impl ChatComposer {
             keymap.primary_hint(KeymapContext::Chat, "decrease_reasoning_effort");
         self.footer.reasoning_up_key =
             keymap.primary_hint(KeymapContext::Chat, "increase_reasoning_effort");
-        self.footer.toggle_voice_key = keymap.primary_hint(KeymapContext::Chat, "toggle_voice");
     }
 
     /// Return the contexts whose handlers can consume the next composer key.
@@ -5005,7 +4994,6 @@ impl ChatComposer {
             }
         }
         drop(state);
-        self.render_voice_strip(composer_rect, buf);
         self.render_sparkle(
             composer_rect,
             textarea_rect,

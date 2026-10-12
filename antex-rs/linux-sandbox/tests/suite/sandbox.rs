@@ -1117,7 +1117,9 @@ async fn sandbox_keeps_parent_repo_discovery_while_blocking_child_metadata() {
         return;
     }
 
-    let tmpdir = tempfile::tempdir().expect("tempdir");
+    // The forged TMPDIR sibling must be writable through the profile's /tmp rule.
+    // An ambient TMPDIR elsewhere would fail attack setup before testing metadata protection.
+    let tmpdir = tempfile::tempdir_in("/tmp").expect("tempdir under the writable /tmp rule");
     let repo = tmpdir.path().join("repo");
     let subdir = repo.join("sub");
     let real_tmp = tmpdir.path().join("real-tmp");

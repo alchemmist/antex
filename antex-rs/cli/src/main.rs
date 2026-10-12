@@ -11,6 +11,7 @@ use antex_cli::run_login_status;
 use antex_cli::run_login_with_access_token;
 use antex_cli::run_login_with_api_key;
 use antex_cli::run_login_with_chatgpt;
+use antex_cli::run_login_with_chatgpt_direct;
 use antex_cli::run_login_with_device_code;
 use antex_cli::run_logout;
 use antex_cloud_tasks::Cli as CloudTasksCli;
@@ -542,6 +543,11 @@ struct LoginCommand {
     )]
     api_key: Option<String>,
 
+    /// Sign in with a ChatGPT subscription for direct OpenAI API access (recommended).
+    #[arg(long, conflicts_with_all = ["with_api_key", "with_access_token", "api_key", "use_device_code", "issuer_base_url", "client_id"])]
+    chatgpt_direct: bool,
+
+    /// Sign in to legacy Codex using a device code.
     #[arg(long = "device-auth")]
     use_device_code: bool,
 
@@ -1614,6 +1620,8 @@ async fn cli_main(
                             "Choose one login credential source: --with-api-key or --with-access-token."
                         );
                         std::process::exit(1);
+                    } else if login_cli.chatgpt_direct {
+                        run_login_with_chatgpt_direct(login_cli.config_overrides).await;
                     } else if login_cli.use_device_code {
                         run_login_with_device_code(
                             login_cli.config_overrides,
@@ -2750,6 +2758,39 @@ mod tests {
     use antex_tui::TokenUsage;
     use assert_matches::assert_matches;
     use pretty_assertions::assert_eq;
+
+    #[test]
+    fn direct_subscription_login_is_explicit_and_rejects_mixed_credentials() {
+        let cli = MultitoolCli::try_parse_from(["antex", "login", "--chatgpt-direct"]).unwrap();
+        let Some(Subcommand::Login(login)) = cli.subcommand else {
+            panic!("expected login command");
+        };
+        assert!(login.chatgpt_direct);
+        let cli = MultitoolCli::try_parse_from(["antex", "login"]).unwrap();
+        let Some(Subcommand::Login(login)) = cli.subcommand else {
+            panic!("expected login command");
+        };
+        assert!(
+            !login.chatgpt_direct,
+            "legacy CLI callers must remain legacy"
+        );
+        for conflicting_args in [
+            vec!["--device-auth"],
+            vec!["--with-api-key"],
+            vec!["--with-access-token"],
+            vec!["--api-key", "ignored"],
+            vec!["--experimental_issuer", "https://example.invalid"],
+            vec!["--experimental_client-id", "other-client"],
+        ] {
+            let args = ["antex", "login", "--chatgpt-direct"]
+                .into_iter()
+                .chain(conflicting_args);
+            assert_eq!(
+                MultitoolCli::try_parse_from(args).unwrap_err().kind(),
+                clap::error::ErrorKind::ArgumentConflict,
+            );
+        }
+    }
 
     #[test]
     fn interactive_tui_future_stays_bounded() {

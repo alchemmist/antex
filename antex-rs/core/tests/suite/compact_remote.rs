@@ -16,13 +16,9 @@ use antex_protocol::AgentPath;
 use antex_protocol::models::ContentItem;
 use antex_protocol::models::ImageReference;
 use antex_protocol::models::ResponseItem;
-use antex_protocol::protocol::ConversationStartParams;
 use antex_protocol::protocol::EventMsg;
 use antex_protocol::protocol::InterAgentCommunication;
 use antex_protocol::protocol::Op;
-use antex_protocol::protocol::RealtimeConversationRealtimeEvent;
-use antex_protocol::protocol::RealtimeEvent;
-use antex_protocol::protocol::RealtimeOutputModality;
 use antex_protocol::protocol::ThreadHistoryMode;
 use antex_protocol::user_input::UserInput;
 use anyhow::Context;
@@ -39,7 +35,6 @@ use core_test_support::test_antex::TestAntexBuilder;
 use core_test_support::test_antex::TestAntexHarness;
 use core_test_support::test_antex::test_antex as base_test_antex;
 use core_test_support::wait_for_event;
-use core_test_support::wait_for_event_match;
 use core_test_support::wait_for_event_with_timeout;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
@@ -64,115 +59,6 @@ fn test_antex() -> TestAntexBuilder {
     base_test_antex().with_config(|config| {
         config.update_plan_enabled = true;
     })
-}
-
-fn remote_realtime_test_antex_builder(
-    realtime_server: &responses::WebSocketTestServer,
-) -> TestAntexBuilder {
-    let realtime_base_url = realtime_server.uri().to_string();
-    test_antex()
-        .with_auth(AntexAuth::from_api_key("dummy"))
-        .with_config(move |config| {
-            config.experimental_realtime_ws_base_url = Some(realtime_base_url);
-        })
-}
-
-async fn start_remote_realtime_server() -> responses::WebSocketTestServer {
-    start_websocket_server(vec![vec![
-        vec![json!({
-            "type": "session.updated",
-            "session": { "id": "sess_remote_compact", "instructions": "backend prompt" }
-        })],
-        // Keep the websocket open after startup so routed transcript items during the test do not
-        // exhaust the scripted responses and mark realtime inactive before the assertions run.
-        vec![],
-        vec![],
-        vec![],
-        vec![],
-        vec![],
-        vec![],
-        vec![],
-        vec![],
-    ]])
-    .await
-}
-
-async fn start_realtime_conversation(antex: &antex_core::AntexThread) -> Result<()> {
-    antex
-        .submit(Op::RealtimeConversationStart(ConversationStartParams {
-            client_managed_handoffs: false,
-            delegation_ack_filler: None,
-            flush_transcript_tail_on_session_end: false,
-            codex_responses_as_items: false,
-            codex_response_item_prefix: None,
-            codex_response_handoff_mode:
-                antex_protocol::protocol::CodexResponseHandoffMode::Thinking,
-            backend_reasoning_status: false,
-            codex_response_handoff_channel_prefixes: None,
-            model: None,
-            output_modality: RealtimeOutputModality::Audio,
-            include_startup_context: true,
-            initial_items: Vec::new(),
-            realtime_start_instructions: None,
-            realtime_end_instructions: None,
-            prompt: Some(Some("backend prompt".to_string())),
-            realtime_session_id: None,
-            transport: None,
-            version: None,
-            voice: None,
-        }))
-        .await?;
-
-    wait_for_event_match(antex, |msg| match msg {
-        EventMsg::RealtimeConversationStarted(started) => Some(Ok(started.clone())),
-        EventMsg::Error(err) => Some(Err(err.clone())),
-        _ => None,
-    })
-    .await
-    .expect("conversation start failed");
-
-    wait_for_event_match(antex, |msg| match msg {
-        EventMsg::RealtimeConversationRealtime(RealtimeConversationRealtimeEvent {
-            payload:
-                RealtimeEvent::SessionUpdated {
-                    realtime_session_id: session_id,
-                    ..
-                },
-        }) => Some(session_id.clone()),
-        _ => None,
-    })
-    .await;
-
-    Ok(())
-}
-
-async fn close_realtime_conversation(antex: &antex_core::AntexThread) -> Result<()> {
-    antex.submit(Op::RealtimeConversationClose).await?;
-    wait_for_event_match(antex, |msg| match msg {
-        EventMsg::RealtimeConversationClosed(closed) => Some(closed.clone()),
-        _ => None,
-    })
-    .await;
-    Ok(())
-}
-
-fn assert_request_contains_custom_realtime_start(
-    request: &responses::ResponsesRequest,
-    instructions: &str,
-) {
-    let body = request.body_json().to_string();
-    assert!(
-        body.contains("<realtime_conversation>"),
-        "expected request to preserve the realtime wrapper"
-    );
-    assert!(
-        body.contains(instructions),
-        "expected request to use custom realtime start instructions"
-    );
-    assert!(
-        !body.contains("Realtime conversation started."),
-        "expected request to replace the default realtime start instructions"
-    );
 }
 
 async fn wait_for_turn_complete(antex: &antex_core::AntexThread) {
@@ -1426,97 +1312,6 @@ async fn remote_compact_v2_rewrites_multiple_trailing_function_call_outputs(
         "expected all function call outputs after rewriting trailing outputs"
     );
 
-    Ok(())
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn active_realtime_refreshes_changed_start_instructions_only_after_compaction() -> Result<()>
-{
-    skip_if_no_network!(Ok(()));
-
-    let server = wiremock::MockServer::start().await;
-    let initial_realtime_server = start_remote_realtime_server().await;
-    let initial_instructions = "initial custom realtime start instructions";
-    let mut initial_builder = remote_realtime_test_antex_builder(&initial_realtime_server)
-        .with_config({
-            let initial_instructions = initial_instructions.to_string();
-            move |config| {
-                config.experimental_realtime_start_instructions = Some(initial_instructions);
-            }
-        });
-    let initial = initial_builder.build(&server).await?;
-    let home = initial.home.clone();
-    let rollout_path = initial
-        .session_configured
-        .rollout_path
-        .clone()
-        .expect("rollout path");
-    let responses_mock = responses::mount_sse_sequence(
-        &server,
-        vec![
-            responses::sse(vec![responses::ev_completed("r1")]),
-            responses::sse(vec![responses::ev_completed("r2")]),
-            responses::sse(vec![
-                json!({
-                    "type": "response.output_item.done",
-                    "item": {"type": "compaction", "encrypted_content": "realtime-summary"},
-                }),
-                responses::ev_completed("r-compact"),
-            ]),
-            responses::sse(vec![responses::ev_completed("r3")]),
-        ],
-    )
-    .await;
-
-    start_realtime_conversation(initial.antex.as_ref()).await?;
-    initial.submit_turn("USER_ONE").await?;
-    close_realtime_conversation(initial.antex.as_ref()).await?;
-    initial.antex.submit(Op::Shutdown).await?;
-    wait_for_event(&initial.antex, |ev| {
-        matches!(ev, EventMsg::ShutdownComplete)
-    })
-    .await;
-    initial_realtime_server.shutdown().await;
-
-    let resumed_realtime_server = start_remote_realtime_server().await;
-    let changed_instructions = "changed custom realtime start instructions";
-    let mut resume_builder = remote_realtime_test_antex_builder(&resumed_realtime_server)
-        .with_config({
-            let changed_instructions = changed_instructions.to_string();
-            move |config| {
-                config.experimental_realtime_start_instructions = Some(changed_instructions);
-            }
-        });
-    let resumed = resume_builder.resume(&server, home, rollout_path).await?;
-
-    start_realtime_conversation(resumed.antex.as_ref()).await?;
-    resumed.submit_turn("USER_TWO").await?;
-    resumed.antex.submit(Op::Compact).await?;
-    wait_for_turn_complete(&resumed.antex).await;
-    resumed.submit_turn("USER_THREE").await?;
-
-    let requests = responses_mock.requests();
-    assert_eq!(requests.len(), 4);
-    assert_request_contains_custom_realtime_start(&requests[0], initial_instructions);
-    let resumed_body = requests[1].body_json().to_string();
-    assert!(
-        resumed_body.contains(initial_instructions),
-        "expected resumed history to retain the original realtime instructions"
-    );
-    assert!(
-        !resumed_body.contains(changed_instructions),
-        "did not expect an active-to-active instruction change to emit a diff"
-    );
-    assert_eq!(requests[2].inputs_of_type("compaction_trigger").len(), 1);
-    assert_eq!(
-        requests[3].inputs_of_type("compaction")[0]["encrypted_content"],
-        "realtime-summary"
-    );
-    assert_request_contains_custom_realtime_start(&requests[3], changed_instructions);
-    assert!(!requests[3].body_contains_text(initial_instructions));
-
-    close_realtime_conversation(resumed.antex.as_ref()).await?;
-    resumed_realtime_server.shutdown().await;
     Ok(())
 }
 

@@ -6,7 +6,7 @@ use ratatui::style::Modifier;
 #[test]
 fn current_palette_uses_effective_terminal_color_level() {
     let theme =
-        crate::render::highlight::resolve_theme_by_name("ada", /*antex_home*/ None).unwrap();
+        crate::render::highlight::resolve_theme_by_name("ada", /*codex_home*/ None).unwrap();
     crate::render::highlight::set_syntax_theme(theme);
     crate::terminal_palette::with_test_default_colors(
         crate::terminal_probe::DefaultColors {

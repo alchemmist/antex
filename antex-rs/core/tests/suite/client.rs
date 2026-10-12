@@ -1627,11 +1627,8 @@ async fn provider_auth_command_recovers_after_initial_resolution_failure() {
     Mock::given(method("POST"))
         .and(path("/v1/responses"))
         .and(|request: &wiremock::Request| !request.headers.contains_key("authorization"))
-        .respond_with(move |_request: &wiremock::Request| {
-            std::fs::remove_file(&failure_marker).unwrap();
-            ResponseTemplate::new(401).set_body_string("unauthorized")
-        })
-        .expect(1)
+        .respond_with(ResponseTemplate::new(401).set_body_string("unauthorized"))
+        .expect(0)
         .mount(&server)
         .await;
     Mock::given(method("POST"))
@@ -1649,6 +1646,22 @@ async fn provider_auth_command_recovers_after_initial_resolution_failure() {
         .mount(&server)
         .await;
 
+    let mut provider =
+        ModelProviderInfo::create_openai_provider(Some(format!("{}/v1", server.uri())));
+    provider.name = "corp".into();
+    provider.auth = Some(auth_fixture.auth());
+    provider.requires_openai_auth = false;
+    provider.supports_websockets = false;
+    let error = try_send_request_with_provider(provider).await.unwrap_err();
+    assert!(error.to_string().contains("provider auth command"));
+    assert!(
+        server.received_requests().await.unwrap().is_empty(),
+        "failed credentials must not send the user's payload anonymously"
+    );
+
+    // Credentials becoming available permits a genuinely new operation, not
+    // an anonymous probe carrying the failed operation's payload.
+    std::fs::remove_file(&failure_marker).unwrap();
     send_provider_auth_request(&server, auth_fixture.auth()).await;
 }
 
@@ -1724,8 +1737,16 @@ async fn send_provider_auth_request(server: &MockServer, auth: ModelProviderAuth
     send_request_with_provider(provider).await;
 }
 
-#[expect(clippy::unwrap_used)]
 async fn send_request_with_provider(provider: ModelProviderInfo) {
+    try_send_request_with_provider(provider)
+        .await
+        .expect("responses stream to start");
+}
+
+#[expect(clippy::unwrap_used)]
+async fn try_send_request_with_provider(
+    provider: ModelProviderInfo,
+) -> antex_protocol::error::Result<()> {
     let preconnect = provider.supports_websockets;
     let codex_home = TempDir::new().unwrap();
     let mut config = load_default_config_for_test(&codex_home).await;
@@ -1813,14 +1834,14 @@ async fn send_request_with_provider(provider: ModelProviderInfo) {
             &responses_metadata,
             &antex_rollout_trace::InferenceTraceContext::disabled(),
         )
-        .await
-        .expect("responses stream to start");
+        .await?;
 
     while let Some(event) = stream.next().await {
         if let Ok(ResponseEvent::Completed { .. }) = event {
             break;
         }
     }
+    Ok(())
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

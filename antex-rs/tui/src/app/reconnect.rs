@@ -190,11 +190,6 @@ impl App {
             {
                 self.chat_widget.restore_user_message_to_composer(message);
             }
-            if let Some(owner) = self.background_voice.as_mut() {
-                owner.record_realtime_disconnect_failure();
-                owner.reset_realtime_conversation();
-            }
-            self.retire_background_voice();
             self.reconnect.offline = true;
             self.account_email_request_id = None;
             // Cached blank sessions are usable only while this connection owns a subscription.
@@ -522,9 +517,9 @@ impl App {
             bootstrap.status_account_display,
             bootstrap.plan_type,
             bootstrap.has_chatgpt_account,
-            matches!(bootstrap.auth_mode, Some(TelemetryAuthMode::Chatgpt)),
+            bootstrap.has_antex_backend_auth,
         );
-        if self.chat_widget.has_chatgpt_account() {
+        if self.chat_widget.has_antex_backend_auth() {
             crate::security_setup::prefetch(
                 &self.config,
                 app_server,

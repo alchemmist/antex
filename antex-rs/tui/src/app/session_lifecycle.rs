@@ -430,9 +430,6 @@ impl App {
         chat_widget.fork_in_progress = self.chat_widget.fork_in_progress;
         self.pending_right_click_paste = None;
         self.config_notification_test_pending = None;
-        if !self.chat_widget.realtime_conversation_is_running() {
-            self.retain_realtime_replay_state_before_replace();
-        }
         self.commit_animation = None;
         // Transfer the last-written terminal title to the replacement widget
         // so it knows what OSC title is currently displayed. Without this, the
@@ -468,11 +465,7 @@ impl App {
         }
         chat_widget.restore_kill_buffer_snapshot(self.chat_widget.take_kill_buffer_snapshot());
         crate::markdown_render::preferences::init(chat_widget.local_settings.tui.rendering);
-        let mut previous = std::mem::replace(&mut self.chat_widget, chat_widget);
-        if previous.realtime_conversation_is_running() {
-            previous.park_voice();
-            self.background_voice = Some(Box::new(previous));
-        }
+        self.chat_widget = chat_widget;
         self.sync_agent_status_ui();
     }
 
@@ -512,10 +505,20 @@ impl App {
             self.store_active_thread_receiver().await;
         }
 
-        // A tracked side thread stays loaded until it is explicitly discarded and already has a
-        // replay channel, so another liveness read cannot add anything before selection.
-        if !(self.side_threads.contains_key(&thread_id)
-            && self.thread_event_channels.contains_key(&thread_id)
+        // Side threads and overview-retained tasks keep their listeners until explicitly
+        // detached. Their live channels already own pending requests; do not replace that
+        // authoritative state with a metadata read before replaying the approval.
+        let retained_live_task = self
+            .agents_overview
+            .dispatched_requests
+            .contains_key(&thread_id)
+            && self
+                .thread_event_channels
+                .get(&thread_id)
+                .is_some_and(|channel| channel.attachment() == ThreadEventAttachment::Live);
+        if !(retained_live_task
+            || self.side_threads.contains_key(&thread_id)
+                && self.thread_event_channels.contains_key(&thread_id)
             || self
                 .refresh_agent_picker_thread_liveness(app_server, thread_id)
                 .await)
@@ -555,6 +558,28 @@ impl App {
                 "Agent thread {thread_id} is no longer available."
             ));
             return Ok(());
+        }
+        // Requests received while the task was in the overview may not be in its channel yet.
+        // Restore routing before replay for both retained channels and newly attached channels,
+        // without duplicating approvals already held in the retained replay buffer.
+        if !is_replay_only && let Some(channel) = self.thread_event_channels.get(&thread_id) {
+            let requests = self
+                .agents_overview
+                .dispatched_requests
+                .get_mut(&thread_id)
+                .map(std::mem::take)
+                .unwrap_or_default();
+            let mut store = channel.store.lock().await;
+            let mut pending = store.pending_replay_requests();
+            for request in requests {
+                let _ = self
+                    .pending_app_server_requests
+                    .note_server_request(&request);
+                if !pending.iter().any(|existing| existing.id() == request.id()) {
+                    pending.push(request.clone());
+                    store.push_request(request);
+                }
+            }
         }
         let previous_thread_id = self.active_thread_id;
         // Notifications already routed to the active channel must reach the old
@@ -734,30 +759,31 @@ impl App {
     }
 
     pub(super) async fn reset_thread_event_state(&mut self) {
-        let voice_owner = self.voice_owner_thread_id();
-        // Move retained tasks' approvals to background routing before clearing request bookkeeping.
+        // Only an actionable inbound request needs to keep its original live channel. Ordinary
+        // running tasks hand off input acknowledgments to the overview without a replay channel.
+        let mut pending_request_threads = HashSet::new();
         for (thread_id, requests) in &mut self.agents_overview.dispatched_requests {
             if let Some(channel) = self.thread_event_channels.get(thread_id) {
-                for request in channel.store.lock().await.pending_replay_requests() {
+                let store = channel.store.lock().await;
+                let pending = store.pending_replay_requests();
+                if channel.attachment() == ThreadEventAttachment::Live
+                    && store.side_parent_pending_status().is_some()
+                    && pending.iter().any(|request| {
+                        self.pending_app_server_requests
+                            .contains_server_request(request)
+                    })
+                {
+                    pending_request_threads.insert(*thread_id);
+                }
+                for request in pending {
                     if !requests.iter().any(|pending| pending.id() == request.id()) {
                         requests.push(request);
                     }
                 }
             }
         }
-        if voice_owner.is_some() {
-            for (thread_id, channel) in &self.thread_event_channels {
-                if Some(*thread_id) != voice_owner && !self.side_threads.contains_key(thread_id) {
-                    for request in channel.store.lock().await.pending_replay_requests() {
-                        self.pending_app_server_requests
-                            .resolve_notification(&thread_id.to_string(), request.id());
-                    }
-                }
-            }
-        }
         self.thread_event_listener_tasks.retain(|id, task| {
-            if Some(*id) == voice_owner
-                || self.side_threads.contains_key(id)
+            if self.side_threads.contains_key(id)
                 || self.agents_overview.dispatched_requests.contains_key(id)
             {
                 true
@@ -766,11 +792,12 @@ impl App {
                 false
             }
         });
-        self.thread_event_channels
-            .retain(|id, _| Some(*id) == voice_owner || self.side_threads.contains_key(id));
-        self.pending_realtime_speech_replay.clear();
-        self.pending_realtime_transcript_replay.clear();
-        self.realtime_replay_order.clear();
+        // An overview entry also tracks ordinary running tasks, not just interactive requests.
+        // Retain the original channel only while it owns a still-pending approval or user input;
+        // otherwise keep the existing channel-free overview routing (including steer receipts).
+        self.thread_event_channels.retain(|id, _| {
+            self.side_threads.contains_key(id) || pending_request_threads.contains(id)
+        });
         self.pending_server_profiles.clear();
         self.agents_overview.activity.clear();
         self.agent_navigation.clear();
@@ -785,16 +812,14 @@ impl App {
         self.last_subagent_backfill_attempt = None;
         self.primary_session_configured = None;
         self.pending_primary_events.clear();
-        if voice_owner.is_none() {
-            self.pending_app_server_requests.clear();
-            let side_thread_ids: Vec<_> = self.side_threads.keys().copied().collect();
-            for thread_id in side_thread_ids {
-                if let Some(channel) = self.thread_event_channels.get(&thread_id) {
-                    for request in channel.store.lock().await.pending_replay_requests() {
-                        let _ = self
-                            .pending_app_server_requests
-                            .note_server_request(&request);
-                    }
+        self.pending_app_server_requests.clear();
+        let retained_thread_ids: Vec<_> = self.thread_event_channels.keys().copied().collect();
+        for thread_id in retained_thread_ids {
+            if let Some(channel) = self.thread_event_channels.get(&thread_id) {
+                for request in channel.store.lock().await.pending_replay_requests() {
+                    let _ = self
+                        .pending_app_server_requests
+                        .note_server_request(&request);
                 }
             }
         }

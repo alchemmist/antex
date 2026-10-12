@@ -546,7 +546,7 @@ fn summarize_agent_event(event: &serde_json::Value) -> Option<String> {
         _ => return None,
     };
     let message = message.split_whitespace().collect::<Vec<_>>().join(" ");
-    Some(truncate_string(&message, 240))
+    Some(truncate_string(&message, /*max_bytes*/ 240))
 }
 
 fn truncate_string(value: &str, max_bytes: usize) -> String {

@@ -222,7 +222,13 @@ impl Session {
                 refresh: &self.mcp_refresh,
                 published: false,
             };
-            let auth = self.services.auth_manager.auth().await;
+            let auth = match self.services.auth_manager.auth_for_request().await {
+                Ok(auth) => auth,
+                Err(_) => {
+                    error!("failed to resolve MCP request authentication");
+                    return;
+                }
+            };
             let desired = self.latest_mcp_desired_state(auth, environments).await;
             let selected_capability_roots = self
                 .resolve_selected_capability_roots_for_step(&desired.environments)
@@ -293,7 +299,7 @@ impl Session {
             .acquire()
             .await
             .map_err(|_| anyhow::anyhow!("MCP runtime refresh semaphore closed"))?;
-        let auth = self.services.auth_manager.auth().await;
+        let auth = self.services.auth_manager.auth_for_request().await?;
         let environments = self.services.turn_environments.snapshot().await;
         let environment_selections = environments.all_selections();
         let desired = self.latest_mcp_desired_state(auth, environments).await;
@@ -694,7 +700,13 @@ impl Session {
             error!("MCP runtime refresh semaphore closed");
             return;
         };
-        let auth = self.services.auth_manager.auth().await;
+        let auth = match self.services.auth_manager.auth_for_request().await {
+            Ok(auth) => auth,
+            Err(_) => {
+                error!("failed to resolve MCP request authentication");
+                return;
+            }
+        };
         {
             let mut state = self.state.lock().await;
             let mut config = (*state.session_configuration.original_config_do_not_use).clone();

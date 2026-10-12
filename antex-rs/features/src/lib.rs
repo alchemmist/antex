@@ -295,10 +295,7 @@ pub enum Feature {
     ///
     /// Requirements-only gate: this should be set from requirements, not user config.
     InAppDictation,
-    /// Allow in-app Voice in desktop apps.
-    ///
-    /// Requirements-only gate: this should be set from requirements, not user config.
-    /// Permission does not establish Voice availability or provider support.
+    /// Removed voice gate, retained for legacy requirements/configuration keys.
     InAppVoice,
     /// Allow desktop apps to run local automations.
     ///
@@ -413,7 +410,7 @@ pub enum Feature {
     UltrafastMode,
     /// Enable explicitly requested model changes for later step captures.
     StepModelSwitching,
-    /// Enable voice conversations in the TUI.
+    /// Removed voice mode, retained for legacy configuration keys.
     RealtimeConversation,
     /// Prevent idle system sleep while a turn is actively running.
     PreventIdleSleep,
@@ -1655,8 +1652,8 @@ pub const FEATURES: &[FeatureSpec] = &[
     FeatureSpec {
         id: Feature::InAppVoice,
         key: "in_app_voice",
-        stage: Stage::Stable,
-        default_enabled: true,
+        stage: Stage::Removed,
+        default_enabled: false,
     },
     FeatureSpec {
         id: Feature::InAppLocalAutomation,
@@ -1979,8 +1976,8 @@ pub const FEATURES: &[FeatureSpec] = &[
     FeatureSpec {
         id: Feature::RealtimeConversation,
         key: "realtime_conversation",
-        stage: Stage::Stable,
-        default_enabled: true,
+        stage: Stage::Removed,
+        default_enabled: false,
     },
     FeatureSpec {
         id: Feature::RemoteControl,

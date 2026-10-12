@@ -198,7 +198,28 @@ impl AmazonBedrockModelProvider {
                 .for_current_account(),
         );
         let auth_source = self.auth_source();
-        let managed_auth = self.managed_auth();
+        // Managed bearer credentials own their region. All other sources use
+        // the configured region first, without executing credential commands.
+        if auth_source != auth::BedrockAuthSource::ManagedBearerToken
+            && let Some(region) = mantle::region_from_config(&self.aws)
+        {
+            return Ok(Some(match self.endpoint {
+                BedrockEndpoint::Mantle => mantle::base_url(&region)?,
+                BedrockEndpoint::Runtime => runtime::base_url(&region),
+            }));
+        }
+        let managed_auth = match auth_source {
+            auth::BedrockAuthSource::ManagedBearerToken
+            | auth::BedrockAuthSource::ManagedAccessKeys => {
+                <Self as ModelProvider>::auth_for_request(self).await?
+            }
+            auth::BedrockAuthSource::CommandBearerToken
+            | auth::BedrockAuthSource::CredentialExport
+            | auth::BedrockAuthSource::ConfiguredAwsProfile
+            | auth::BedrockAuthSource::EnvBearerToken
+            | auth::BedrockAuthSource::EnvAwsCredentials
+            | auth::BedrockAuthSource::AwsSdk => None,
+        };
         let base_url = match self.endpoint {
             BedrockEndpoint::Mantle => {
                 bedrock_mantle_runtime_base_url(
@@ -231,11 +252,11 @@ impl AmazonBedrockModelProvider {
         );
         let source = self.auth_source();
         if source == auth::BedrockAuthSource::CommandBearerToken {
-            let auth = self.auth().await;
+            let auth = <Self as ModelProvider>::auth_for_request(self).await?;
             return resolve_configured_provider_auth(auth.as_ref(), &self.info);
         }
 
-        let managed_auth = self.managed_auth();
+        let managed_auth = <Self as ModelProvider>::auth_for_request(self).await?;
         resolve_bedrock_provider_auth(
             source,
             managed_auth.as_ref(),
@@ -395,6 +416,19 @@ impl ModelProvider for AmazonBedrockModelProvider {
         Box::pin(AmazonBedrockModelProvider::auth(self))
     }
 
+    fn auth_for_request(&self) -> ModelProviderFuture<'_, Result<Option<AntexAuth>>> {
+        Box::pin(async move {
+            // auth_manager() already enforces AWS/environment/export precedence.
+            match self.auth_manager() {
+                Some(manager) => manager
+                    .auth_for_request()
+                    .await
+                    .map_err(crate::request_auth::request_error),
+                None => Ok(None),
+            }
+        })
+    }
+
     fn account_state(&self) -> ProviderAccountResult {
         Ok(ProviderAccountState {
             account: Some(ProviderAccount::AmazonBedrock {
@@ -447,6 +481,10 @@ impl ModelProvider for AmazonBedrockModelProvider {
         ))
     }
 }
+
+#[cfg(test)]
+#[path = "runtime_url_request_auth_tests.rs"]
+mod runtime_url_request_auth_tests;
 
 #[cfg(test)]
 #[path = "error_tests.rs"]

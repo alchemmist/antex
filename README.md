@@ -34,7 +34,7 @@ Install the latest release without cloning the repository:
 curl -fsSL https://raw.githubusercontent.com/alchemmist/antex/main/scripts/install/install.sh | sh
 ```
 
-The installer detects macOS (Apple Silicon) or Linux (x86_64), verifies SHA-256 checksums, and installs the complete package, including Code Mode, voice, and bundled tools. It needs `curl`, `sh`, `tar`, and standard system utilities; Git, Make, Python, and Rust are not required. Current prebuilt Linux releases require glibc 2.39+ and OpenSSL 3 (`libssl.so.3`); release builds are tested on Ubuntu 24.04.
+The installer detects macOS (Apple Silicon) or Linux (x86_64), verifies SHA-256 checksums, and installs the complete package, including Code Mode and bundled tools. It needs `curl`, `sh`, `tar`, and standard system utilities; Git, Make, Python, and Rust are not required. Current prebuilt Linux releases require glibc 2.39+ and OpenSSL 3 (`libssl.so.3`); release builds are tested on Ubuntu 24.04.
 
 The command is installed in `~/.local/bin`, and packages are stored under `~/.antex/packages/standalone`. The installer configures your shell's PATH when needed. Open a new terminal and run `antex`, or follow the launch command printed by the installer. Run the same installation command again to update.
 
@@ -57,6 +57,21 @@ make install-local
 make install-mac
 make install-linux
 ```
+
+### ChatGPT subscription sign-in
+
+Checkout builds support direct ChatGPT subscription access to the public OpenAI Responses API. This flow is not included in the published v0.1.14 binaries:
+
+```shell
+antex login --chatgpt-direct
+antex -m gpt-6-astra
+```
+
+Complete the browser sign-in with port `127.0.0.1:1455` available. For a remote installation, forward that callback port to the machine running Antex. Antex registers its own OAuth client and refreshes its own credentials; it does not import another agent's tokens. Existing credentials are replaced only after a successful sign-in.
+
+CLI sign-in updates the credential store, not an already-running server's in-memory account. Before switching via the CLI, finish active work and stop the background server; then start a new Antex session with this build. In particular, the published v0.1.14 server does not understand direct auth.
+
+Plain `antex login` and `antex login --device-auth` retain the legacy Codex sign-in flow; API-key login is unchanged. Direct sign-in does not grant access to Codex-only cloud services or usage endpoints. Actual model availability is determined by the API and the granted account access, not just the model picker.
 
 Upstream documentation: [developers.openai.com/codex](https://developers.openai.com/codex).
 

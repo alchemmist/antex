@@ -20,7 +20,6 @@ pub(crate) struct UserHistoryCell {
     pub text_elements: Vec<TextElement>,
     pub local_image_paths: Vec<PathBuf>,
     pub remote_image_urls: Vec<String>,
-    pub(crate) spoken: bool,
 }
 
 /// Remove CSI sequences and control characters, preserving tabs and newlines.
@@ -184,12 +183,7 @@ impl HistoryCell for UserHistoryCell {
 
     fn display_hyperlink_lines(&self, width: u16) -> Vec<HyperlinkLine> {
         let sanitized_message = sanitize_user_text((&self.message).into());
-        // Speech transcripts can begin with whitespace; the marker already supplies its separator.
-        let message = if self.spoken {
-            sanitized_message.trim_start()
-        } else {
-            sanitized_message.as_ref()
-        };
+        let message = sanitized_message.as_ref();
         let text_elements = if message == self.message {
             self.text_elements.as_slice()
         } else {
@@ -238,11 +232,7 @@ impl HistoryCell for UserHistoryCell {
         if let Some(wrapped_message) = wrapped_message {
             lines.extend(prefix_hyperlink_lines(
                 wrapped_message,
-                if self.spoken {
-                    "› ".red().bold()
-                } else {
-                    " ┃ ".fg(accent_color_on(style.bg)).bold()
-                },
+                " ┃ ".fg(accent_color_on(style.bg)).bold(),
                 " ┃ ".fg(accent_color_on(style.bg)).bold(),
             ));
         }
@@ -513,7 +503,6 @@ pub(crate) struct AgentMarkdownCell {
     cwd: PathBuf,
     inline_visualization_context: Option<crate::inline_visualization::InlineVisualizationContext>,
     rendered_lines: Option<MarkdownRenderCache>,
-    spoken_artifacts: bool,
 }
 
 impl AgentMarkdownCell {
@@ -552,18 +541,7 @@ impl AgentMarkdownCell {
             cwd: cwd.to_path_buf(),
             inline_visualization_context,
             rendered_lines,
-            spoken_artifacts: false,
         }
-    }
-
-    pub(crate) fn new_spoken(markdown_source: String, cwd: &Path) -> Self {
-        let mut cell = Self::new_with_inline_visualizations(
-            markdown_source,
-            cwd,
-            /*inline_visualization_context*/ None,
-        );
-        cell.spoken_artifacts = true;
-        cell
     }
 }
 
@@ -612,13 +590,6 @@ impl AgentMarkdownCell {
                 self.inline_visualization_context.as_ref(),
                 list_spacing,
             );
-            let lines = if self.spoken_artifacts {
-                let mut lines = lines;
-                super::spoken_artifacts::annotate_spoken_artifacts(&mut lines, &self.cwd);
-                lines
-            } else {
-                lines
-            };
             normalize_whitespace_only_hyperlink_lines(prefix_hyperlink_lines(
                 lines,
                 "• ".dim(),
@@ -737,14 +708,7 @@ pub(crate) fn new_user_prompt(
         text_elements,
         local_image_paths,
         remote_image_urls,
-        spoken: false,
     }
-}
-
-pub(crate) fn new_spoken_user_prompt(message: String) -> UserHistoryCell {
-    let mut cell = new_user_prompt(message, Vec::new(), Vec::new(), Vec::new());
-    cell.spoken = true;
-    cell
 }
 
 /// Retain a completed reasoning block in the expanded transcript only.

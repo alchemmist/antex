@@ -98,6 +98,7 @@ mod guardian_cached_score;
 mod guardian_checkpoint_migration;
 // Uses the same command-approval harness as guardian_review below.
 mod canonical_plugin_connectors;
+mod chatgpt_direct;
 mod gateway_auth;
 mod guardian_connector_trust;
 #[cfg(not(target_os = "windows"))]
@@ -176,12 +177,6 @@ mod prompt_cache_key;
 mod prompt_caching;
 mod prompt_debug_tests;
 mod quota_exceeded;
-mod realtime_attachment;
-mod realtime_conversation;
-mod realtime_initial_items;
-mod realtime_misalignment;
-mod realtime_sideband_endpoint;
-mod realtime_system_proxy;
 mod reasoning_effort_override;
 mod remote_env;
 mod remote_models;

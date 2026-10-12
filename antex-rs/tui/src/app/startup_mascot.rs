@@ -33,13 +33,26 @@ impl App {
             return Ok(());
         };
         let finished = animation.motion.is_finished();
+        tracing::trace!(
+            target: "antex_tui::startup_mascot",
+            finished,
+            has_overlay = self.overlay.is_some(),
+            has_header = animation.header.is_some(),
+            owned_screen = tui.is_owned_screen(),
+            "startup mascot refresh entry"
+        );
         if self.overlay.is_some() || animation.header.is_none() {
             if !finished {
                 self.startup_mascot_animation = Some(animation);
+            } else {
+                animation
+                    .motion
+                    .trace_handoff("finished_without_visible_header");
             }
             return Ok(());
         }
         let Some(header) = animation.header.as_ref().and_then(Weak::upgrade) else {
+            animation.motion.trace_handoff("header_dropped");
             return Ok(());
         };
         let Some(index) = self
@@ -47,10 +60,12 @@ impl App {
             .iter()
             .position(|cell| Arc::ptr_eq(cell, &header))
         else {
+            animation.motion.trace_handoff("header_removed");
             return Ok(());
         };
         let mode = self.chat_widget.history_render_mode();
         if mode == HistoryRenderMode::Raw {
+            animation.motion.trace_handoff("raw_history");
             return Ok(());
         }
         let width = self
@@ -70,10 +85,21 @@ impl App {
             )
             .1 + usize::from(!cell.is_stream_continuation());
             if rows_after >= usize::from(tui.terminal.last_known_screen_size.height) {
+                animation.motion.trace_handoff("offscreen_header");
                 return Ok(());
             }
         }
         let lines = header.display_hyperlink_lines_for_mode(width, mode);
+        tracing::trace!(
+            target: "antex_tui::startup_mascot",
+            finished,
+            width,
+            previous_width = animation.width,
+            rows_after,
+            lines_changed = lines != animation.previous_lines,
+            owned_screen = tui.is_owned_screen(),
+            "startup mascot refresh render"
+        );
         // Fullscreen owns every displayed row. Its transcript renderer paints the header; never
         // issue inline-scrollback cursor commands against the owned surface.
         if !tui.is_owned_screen() && animation.width == width && lines != animation.previous_lines {
@@ -88,6 +114,8 @@ impl App {
         animation.width = width;
         if !finished {
             self.startup_mascot_animation = Some(animation);
+        } else {
+            animation.motion.trace_handoff("finished_after_refresh");
         }
         Ok(())
     }

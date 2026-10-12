@@ -6,7 +6,6 @@ on:
     paths:
       - "Makefile"
       - "scripts/**"
-      - "third_party/voice/**"
       - ".github/workflows/alchemmist-release.yml"
     tags:
       - "v*.*.*"
@@ -49,15 +48,9 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Test TUI smoke process lifecycle
+      - name: Test TUI startup smoke lifecycle
         timeout-minutes: 2
-        run: python3 -m unittest discover -s scripts -p 'test_smoke_tui_voice.py' -v
-
-      - uses: bazel-contrib/setup-bazel@c5acdfb288317d0b5c0bbd7a396a3dc868bb0f86
-        with:
-          bazelisk-version: 1.28.1
-          disk-cache: true
-          repository-cache: true
+        run: python3 -m unittest discover -s scripts -p 'test_smoke_tui_startup.py' -v
 
       - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582
         with:
@@ -88,7 +81,7 @@ jobs:
 
       - name: Install Linux packaging tools
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends zsh patchelf pkg-config libcap-dev
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends zsh pkg-config libcap-dev
 
       - name: Build release executables
         working-directory: antex-rs
@@ -113,18 +106,6 @@ jobs:
             ~/.cargo/git
             antex-rs/target
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
-
-      - name: Build native voice resources
-        shell: bash
-        env:
-          ANTEX_BUILD_COMMIT: ${{ github.sha }}
-        run: |
-          flags=()
-          if [[ "$RUNNER_OS" == Linux ]]; then
-            flags+=(--platforms=//:local_linux)
-          fi
-          bazel build --jobs=3 --stamp --workspace_status_command="python3 scripts/workspace-status.py" \
-            -c opt "${flags[@]}" //antex-rs/voice-host:antex-voice-host //third_party/voice:native_runtime
 
       - name: Assemble complete release package
         shell: bash
@@ -152,12 +133,7 @@ jobs:
           python3 scripts/install-fork-package.py "$RUNNER_TEMP/package" "$RUNNER_TEMP/installed/bin" "$TARGET"
           "$RUNNER_TEMP/installed/bin/antex" --help > /dev/null
           python3 scripts/smoke-code-mode-host.py "$RUNNER_TEMP/installed/bin/antex-code-mode-host"
-          python3 scripts/smoke-voice-package.py "$RUNNER_TEMP/installed/bin/antex" "$GITHUB_SHA"
-
-      - name: Validate installed TUI voice picker
-        timeout-minutes: 2
-        shell: bash
-        run: python3 -u scripts/smoke-tui-voice.py "$RUNNER_TEMP/installed/bin/antex"
+          python3 scripts/smoke-tui-startup.py "$RUNNER_TEMP/installed/bin/antex"
 
       - name: Validate daemon and installers
         timeout-minutes: 5
@@ -169,18 +145,7 @@ jobs:
           python3 scripts/smoke-daemon-package.py "$RUNNER_TEMP/installed/bin/antex"
           python3 -m unittest discover -s scripts -p 'test_install_fork_package.py'
           python3 -m unittest discover -s scripts/install -p 'test_*.py'
-          python3 -m unittest discover -s third_party/voice -p 'test_assemble_package.py'
-          cd "$RUNNER_TEMP"
-          python3 - "$TARGET" <<'PYTHON'
-          import hashlib
-          import pathlib
-          import sys
-          for name in (f"antex-{sys.argv[1]}.tar.gz", f"antex-package-{sys.argv[1]}.tar.gz"):
-              archive = pathlib.Path(name)
-              archive.with_suffix(archive.suffix + ".sha256").write_text(
-                  hashlib.sha256(archive.read_bytes()).hexdigest() + "  " + archive.name + "\n"
-              )
-          PYTHON
+          python3 -m unittest discover -s scripts -p 'test_package_fork.py'
 
       - name: Upload release artifact
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f

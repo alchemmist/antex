@@ -76,6 +76,7 @@ pub enum McpStartupPolicy {
 }
 
 /// Configuration and owning-thread state needed to materialize an MCP runtime.
+#[derive(Clone)]
 pub struct McpRuntimeInput {
     pub startup_policy: McpStartupPolicy,
     pub config: Arc<McpConfig>,
@@ -654,7 +655,14 @@ impl McpRuntime {
         requested_timeout: Option<Duration>,
         wait_for_server: bool,
     ) -> anyhow::Result<CallToolResult> {
-        self.latest_connections()
+        let (connections, owner) = self
+            .latest_connections()
+            .connections_for_new_call(server, wait_for_server)
+            .await?;
+        if let Some(owner) = &owner {
+            owner.ensure_same_owner()?;
+        }
+        let result = connections
             .call_tool(
                 server,
                 tool,
@@ -664,7 +672,11 @@ impl McpRuntime {
                 requested_timeout,
                 wait_for_server,
             )
-            .await
+            .await;
+        if let Some(owner) = &owner {
+            owner.ensure_same_owner()?;
+        }
+        result
     }
 
     pub async fn latest_read_resource(

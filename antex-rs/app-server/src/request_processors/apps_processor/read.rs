@@ -27,7 +27,12 @@ impl AppsRequestProcessor {
             .filter(|app_id| seen_app_ids.insert(app_id.clone()))
             .collect::<Vec<_>>();
         let mut config = self.load_apps_config(thread_id.as_deref()).await?;
-        let auth = match self.auth_manager.auth_with_http_client_factory().await {
+        let auth = match self
+            .auth_manager
+            .auth_for_request_with_http_client_factory()
+            .await
+            .map_err(|_| internal_error("failed to resolve request authentication"))?
+        {
             Some((auth, factory)) => {
                 config.application_network_policy = factory.network_policy().clone();
                 Some(auth)

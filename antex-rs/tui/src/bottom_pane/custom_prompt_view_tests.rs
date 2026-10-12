@@ -153,7 +153,8 @@ fn vim_prompt_hint_tracks_escape_behavior() {
     };
     let mut hints = vec![rendered_hint(&view, /*width*/ 80)];
     // Fork defaults hide the indicator; explicitly enable it to cover styled modes.
-    view.textarea.set_vim_mode_indicator_enabled(true);
+    view.textarea
+        .set_vim_mode_indicator_enabled(/*enabled*/ true);
     view.enable_vim_in_insert_mode();
     hints.extend([80, 60, 14].map(|width| rendered_hint(&view, width)));
     assert_eq!(vim_color(&view), Some(ratatui::style::Color::Green));

@@ -24,6 +24,9 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 use tokio::net::TcpStream;
 
+#[path = "request_auth_tests.rs"]
+mod request_auth;
+
 // Routes HTTP normally while selectively stalling WebSocket handshakes.
 struct Gateway {
     url: String,

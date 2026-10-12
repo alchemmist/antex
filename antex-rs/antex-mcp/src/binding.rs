@@ -250,6 +250,25 @@ impl PreparedMcpCall {
         &self.config
     }
 
+    /// Backend file-upload authority captured with this binding, not the MCP
+    /// server's own credentials. Retaining this provider across preparation
+    /// keeps account/source/installation checks active after approval and I/O.
+    pub fn openai_file_upload_auth(&self) -> Option<&dyn antex_api::AuthProvider> {
+        self.connections
+            .openai_file_upload_auth
+            .as_ref()
+            .map(|auth| auth.provider.as_ref())
+    }
+
+    /// Validates strict operation ownership, in addition to the retained
+    /// provider's broader account-scoped header lifetime.
+    pub fn ensure_openai_file_upload_owner(&self) -> Result<(), antex_api::AuthError> {
+        match &self.connections.openai_file_upload_auth {
+            Some(auth) => auth.ensure_same_owner(),
+            None => Ok(()),
+        }
+    }
+
     /// Returns the owner permissions validated when this immutable call was prepared.
     pub fn permission_profile(&self) -> &PermissionProfile {
         let Some(permission_profile) = self.config.permission_profile_for_server(&self.server_name)

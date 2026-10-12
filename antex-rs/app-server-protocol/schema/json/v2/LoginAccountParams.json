@@ -64,6 +64,23 @@
       "type": "object"
     },
     {
+      "description": "Sign in with a ChatGPT subscription for direct OpenAI API access.",
+      "properties": {
+        "type": {
+          "enum": [
+            "chatgptDirect"
+          ],
+          "title": "ChatgptDirectv2::LoginAccountParamsType",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "ChatgptDirectv2::LoginAccountParams",
+      "type": "object"
+    },
+    {
       "properties": {
         "type": {
           "enum": [

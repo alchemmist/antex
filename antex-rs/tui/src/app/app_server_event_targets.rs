@@ -40,6 +40,7 @@ pub(super) enum ServerNotificationThreadTarget {
     InvalidThreadId(String),
     AppScoped,
     Global,
+    Ignored,
 }
 
 pub(super) fn server_notification_thread_target(
@@ -148,38 +149,19 @@ pub(super) fn server_notification_thread_target(
         ServerNotification::TurnModerationMetadata(notification) => {
             Some(notification.thread_id.as_str())
         }
-        ServerNotification::ThreadRealtimeStarted(notification) => {
-            Some(notification.thread_id.as_str())
-        }
-        ServerNotification::ThreadRealtimeItemAdded(notification) => {
-            Some(notification.thread_id.as_str())
-        }
-        ServerNotification::ThreadRealtimeItemStarted(notification) => {
-            Some(notification.thread_id.as_str())
-        }
-        ServerNotification::ThreadRealtimeItemTranscriptDelta(notification) => {
-            Some(notification.thread_id.as_str())
-        }
-        ServerNotification::ThreadRealtimeItemCompleted(notification) => {
-            Some(notification.thread_id.as_str())
-        }
-        ServerNotification::ThreadRealtimeTranscriptDelta(notification) => {
-            Some(notification.thread_id.as_str())
-        }
-        ServerNotification::ThreadRealtimeTranscriptDone(notification) => {
-            Some(notification.thread_id.as_str())
-        }
-        ServerNotification::ThreadRealtimeOutputAudioDelta(notification) => {
-            Some(notification.thread_id.as_str())
-        }
-        ServerNotification::ThreadRealtimeSdp(notification) => {
-            Some(notification.thread_id.as_str())
-        }
-        ServerNotification::ThreadRealtimeError(notification) => {
-            Some(notification.thread_id.as_str())
-        }
-        ServerNotification::ThreadRealtimeClosed(notification) => {
-            Some(notification.thread_id.as_str())
+        // Old servers may still emit these wire DTOs. Do not route removed media events.
+        ServerNotification::ThreadRealtimeStarted(_)
+        | ServerNotification::ThreadRealtimeItemAdded(_)
+        | ServerNotification::ThreadRealtimeItemStarted(_)
+        | ServerNotification::ThreadRealtimeItemTranscriptDelta(_)
+        | ServerNotification::ThreadRealtimeItemCompleted(_)
+        | ServerNotification::ThreadRealtimeTranscriptDelta(_)
+        | ServerNotification::ThreadRealtimeTranscriptDone(_)
+        | ServerNotification::ThreadRealtimeOutputAudioDelta(_)
+        | ServerNotification::ThreadRealtimeSdp(_)
+        | ServerNotification::ThreadRealtimeError(_)
+        | ServerNotification::ThreadRealtimeClosed(_) => {
+            return ServerNotificationThreadTarget::Ignored;
         }
         ServerNotification::AuthRecoveryStarted(notification)
         | ServerNotification::AuthRecoveryCompleted(notification) => {

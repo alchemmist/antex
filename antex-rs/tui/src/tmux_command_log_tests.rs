@@ -1,4 +1,5 @@
 use super::*;
+use pretty_assertions::assert_eq;
 
 #[test]
 fn command_log_renders_streaming_output_stdin_fallback_and_statuses() {
@@ -10,7 +11,7 @@ fn command_log_renders_streaming_output_stdin_fallback_and_statuses() {
             "/workspace",
         )
         .expect("create log writer");
-        log.set_separator_width(45);
+        log.set_separator_width(/*separator_width*/ 45);
         let messages = [
             LogMessage::Started {
                 call_id: "call-1".to_string(),
@@ -65,6 +66,14 @@ fn tmux_command_log_child_process() {
         return;
     }
 
+    // This is an isolated child process. Surface worker errors as well as assertion failures in
+    // the parent's captured diagnostics; the worker otherwise only emits tracing warnings.
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::WARN)
+        .with_writer(std::io::stderr)
+        .try_init()
+        .expect("initialize command log child tracing");
+
     let thread_id =
         ThreadId::try_from("12345abc-0000-4000-8000-000000000000").expect("valid thread id");
     let log = TmuxCommandLog::start(thread_id, "/workspace").expect("start tmux command log");
@@ -86,6 +95,10 @@ fn tmux_command_log_child_process() {
     });
 
     let window_id = wait_for_command_log_window();
+    // The session-id option becomes visible before create_tmux_viewer finishes configuring the
+    // pane. Synchronize with the worker before killing its window, otherwise configuration itself
+    // can race with kill-window and stop the worker before the reopen request is handled.
+    assert_eq!(log.ensure_viewer(), Ok(TmuxViewerState::AlreadyOpen));
     let status = std::process::Command::new("tmux")
         .args(["kill-window", "-t", &window_id])
         .status()
@@ -168,6 +181,7 @@ fn tmux_command_log_creates_last_window_and_streams_output() {
         .args([
             "--exact",
             "tmux_command_log::tests::tmux_command_log_child_process",
+            "--nocapture",
         ])
         .env("ANTEX_TMUX_COMMAND_LOG_TEST_CHILD", "1")
         .env("TMUX", tmux.trim())
@@ -176,7 +190,9 @@ fn tmux_command_log_creates_last_window_and_streams_output() {
         .expect("run command log child test");
     assert!(
         child.status.success(),
-        "child test failed: {}",
+        "child test failed with {}\nstdout:\n{}\nstderr:\n{}",
+        child.status,
+        String::from_utf8_lossy(&child.stdout),
         String::from_utf8_lossy(&child.stderr)
     );
     std::thread::sleep(std::time::Duration::from_millis(700));

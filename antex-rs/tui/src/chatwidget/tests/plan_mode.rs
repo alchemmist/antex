@@ -1853,7 +1853,7 @@ async fn approved_plan_update_renders_persistent_bottom_panel() {
         drain_insert_history(&mut rx).is_empty(),
         "approved-plan updates should stay out of scrollback"
     );
-    chat.note_terminal_height(24);
+    chat.note_terminal_height(/*height*/ 24);
     insta::assert_snapshot!(render_bottom_popup(&chat, /*width*/ 60), @"
      ✓ Explore codebase
      ● Implement feature

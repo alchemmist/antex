@@ -5,6 +5,45 @@ use antex_app_server_protocol::AppListUpdatedNotification;
 use pretty_assertions::assert_eq;
 
 #[tokio::test]
+async fn connector_prefetch_requires_both_subscription_and_backend_capabilities() {
+    for (subscription, backend, expected_fetches) in [
+        (true, true, 1),
+        (false, true, 0),
+        (true, false, 0),
+        (false, false, 0),
+    ] {
+        let (mut app, mut events, _ops) = make_test_app_with_channels().await;
+        app.chat_widget
+            .set_feature_enabled(Feature::Apps, /*enabled*/ true);
+        let cwd = app.config.cwd.to_path_buf();
+        app.chat_widget
+            .handle_thread_session(test_thread_session(ThreadId::new(), cwd));
+        while events.try_recv().is_ok() {}
+        app.chat_widget.update_account_state(
+            /*status_account_display*/ None,
+            /*plan_type*/ None,
+            subscription,
+            backend,
+        );
+        let emitted = std::iter::from_fn(|| events.try_recv().ok()).collect::<Vec<_>>();
+        assert_eq!(
+            emitted.len(),
+            expected_fetches,
+            "subscription={subscription}, backend={backend}: {emitted:?}"
+        );
+        for event in emitted {
+            assert_matches!(
+                event,
+                AppEvent::FetchInstalledConnectorMentions {
+                    force_refresh: false,
+                    ..
+                }
+            );
+        }
+    }
+}
+
+#[tokio::test]
 async fn installed_connector_mentions_ignore_stale_thread_workspace_and_account() -> Result<()> {
     let (mut app, _app_event_rx, _op_rx) = make_test_app_with_channels().await;
     app.chat_widget

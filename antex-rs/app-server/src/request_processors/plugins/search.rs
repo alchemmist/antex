@@ -50,7 +50,11 @@ impl PluginRequestProcessor {
         }
         let plugin_sharing_enabled = config.features.enabled(Feature::PluginSharing);
 
-        let auth = self.auth_manager.auth().await;
+        let auth = self
+            .auth_manager
+            .auth_for_request()
+            .await
+            .map_err(|_| internal_error("failed to resolve request authentication"))?;
         let auth_mode = auth.as_ref().map(AntexAuth::api_auth_mode);
         let remote_plugin_enabled = config.features.enabled(Feature::RemotePlugin);
         let use_remote_global_catalog =

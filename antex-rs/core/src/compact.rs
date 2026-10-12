@@ -114,6 +114,7 @@ pub(crate) async fn run_inline_auto_compact_task(
     sess: Arc<Session>,
     turn_context: Arc<TurnContext>,
     replacement_step_context: Arc<StepContext>,
+    parent_client_session: &mut ModelClientSession,
     world_state: Arc<WorldState>,
     reason: CompactionReason,
     phase: CompactionPhase,
@@ -130,10 +131,14 @@ pub(crate) async fn run_inline_auto_compact_task(
         text_elements: Vec::new(),
     }];
 
+    // Keep compaction's independent transport state, but never independently
+    // rebind an automatic continuation to a login installed during the turn.
+    let mut client_session = parent_client_session.new_session_with_operation_owner();
     run_compact_task_inner(
         sess,
         turn_context,
         replacement_step_context,
+        &mut client_session,
         input,
         world_state,
         CompactionTurnMetadata::new(
@@ -153,10 +158,12 @@ pub(crate) async fn run_compact_task(
     world_state: Arc<WorldState>,
     input: Vec<UserInput>,
 ) -> AntexResult<()> {
+    let mut client_session = sess.services.model_client.new_session();
     run_compact_task_inner(
         sess.clone(),
         Arc::clone(&step_context.turn),
         step_context,
+        &mut client_session,
         input,
         world_state,
         CompactionTurnMetadata::new(
@@ -174,10 +181,15 @@ async fn run_compact_task_inner(
     sess: Arc<Session>,
     turn_context: Arc<TurnContext>,
     replacement_step_context: Arc<StepContext>,
+    client_session: &mut ModelClientSession,
     input: Vec<UserInput>,
     world_state: Arc<WorldState>,
     compaction_metadata: CompactionTurnMetadata,
 ) -> AntexResult<()> {
+    // Bind manual compaction before hooks/other awaits; automatic compaction
+    // inherits the parent turn's owner, including across all local retries.
+    let mut operation = client_session.sampling_operation();
+    let client_session = &mut *operation;
     let trigger = compaction_metadata.trigger();
     let reason = compaction_metadata.reason();
     let phase = compaction_metadata.phase();
@@ -210,6 +222,7 @@ async fn run_compact_task_inner(
         Arc::clone(&sess),
         Arc::clone(&turn_context),
         replacement_step_context,
+        client_session,
         input,
         world_state,
         compaction_metadata,
@@ -260,6 +273,7 @@ async fn run_compact_task_inner_impl(
     sess: Arc<Session>,
     turn_context: Arc<TurnContext>,
     replacement_step_context: Arc<StepContext>,
+    client_session: &mut ModelClientSession,
     input: Vec<UserInput>,
     world_state: Arc<WorldState>,
     compaction_metadata: CompactionTurnMetadata,
@@ -278,10 +292,10 @@ async fn run_compact_task_inner_impl(
 
     let max_retries = turn_context.provider.info().stream_max_retries();
     let mut retries = 0;
-    // Reuse one client session so turn-scoped state (sticky routing and websocket incremental
-    // request tracking) survives retries within this compact turn.
-    let mut client_session = sess.services.model_client.new_session();
+    // Reuse the compactor's independent transport state across retries while
+    // retaining the owner captured before hooks (inherited for auto compaction).
     let compaction_response = loop {
+        client_session.ensure_operation_owner()?;
         // Clone is required because of the loop
         let mut turn_input = history
             .clone()
@@ -313,12 +327,13 @@ async fn run_compact_task_inner_impl(
         let attempt_result = drain_to_completed(
             &sess,
             turn_context.as_ref(),
-            &mut client_session,
+            client_session,
             &responses_metadata,
             &prompt,
             compaction_metadata.phase(),
         )
         .await;
+        client_session.ensure_operation_owner()?;
 
         match attempt_result {
             Ok(response) => {

@@ -290,9 +290,22 @@ the model catalog still determines which service tiers a model supports.
 Existing threads retain their provider configuration. Input RPCs reject requests when managed
 `model_provider` or `model_providers` requirements no longer match that configuration, or cannot
 be loaded. This covers turn start/steer, review, compaction, manual queue start, and active goal
-updates. Realtime connections use separate routing configuration and are not checked here.
-Interrupt, realtime stop, and goal pause/clear remain available. User and project
+updates. Interrupt and goal pause/clear remain available. User and project
 configuration changes alone do not invalidate existing threads.
+
+Legacy `thread/realtime/*` requests remain decodable for protocol compatibility, but
+return an error because voice mode has been removed. Existing realtime timeline
+items remain readable from saved threads.
+
+# Direct ChatGPT subscription authentication
+
+`account/login/start` accepts `{ "type": "chatgptDirect" }` for browser-based ChatGPT subscription access to the public OpenAI Responses API. This is distinct from the legacy `chatgpt` and `chatgptDeviceCode` flows. The start response reuses the `chatgpt` browser response shape (`loginId` and `authUrl`); completion and cancellation use the existing `account/login/completed` notification and `account/login/cancel` request.
+
+After successful authorization, `account/read` returns an account with `type: "chatgptDirect"` and nullable `email` and `planType`. Account/auth notifications report `authMode: "chatgptDirect"`. Clients must not interpret missing optional profile claims as API-key authentication. Token export is unavailable for this mode.
+
+The callback must reach `127.0.0.1:1455` on the app-server host. Direct login registers an Antex OAuth client; it does not convert existing Codex credentials. Cancellation or a failed exchange preserves existing credentials. A concurrent credential change invalidates pending publication; once publication has committed, cancellation cannot undo it. Managed ChatGPT login restrictions apply, and workspace-restricted direct login is rejected.
+
+Direct authentication uses public Responses over HTTP/SSE, not Codex backend WebSockets, workspace discovery, cloud services, or backend usage endpoints. `workspaceRouting` is `null`. Model metadata comes from the bundled public-compatible catalog; the catalog is not an entitlement check. Legacy login, API keys, and custom provider authentication retain their existing routes.
 
 # Amazon Bedrock authentication
 

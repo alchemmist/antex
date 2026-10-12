@@ -745,7 +745,7 @@ async fn load_plugin_command_context(
         codex_home: codex_home.to_path_buf(),
         plugins_input,
         manager,
-        auth: auth_manager.auth().await,
+        auth: auth_manager.auth_for_request().await?,
     })
 }
 

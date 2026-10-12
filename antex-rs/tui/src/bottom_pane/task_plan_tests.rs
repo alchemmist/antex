@@ -51,16 +51,16 @@ fn inactive_plan_ignores_updates() {
     plan.set(vec![item("Unexpected task", StepStatus::InProgress)]);
 
     assert_eq!(plan.visible_capacity(), 0);
-    assert_eq!(render(&plan, 40, 1), "");
+    assert_eq!(render(&plan, /*width*/ 40, /*height*/ 1), "");
 }
 
 #[test]
 fn five_row_window_centers_on_current_task() {
     let plan = long_plan();
 
-    assert_eq!(plan.visible_range(5), 1..6);
+    assert_eq!(plan.visible_range(/*capacity*/ 5), 1..6);
     assert_eq!(plan.desired_height(/*width*/ 40), 7);
-    insta::assert_snapshot!(render(&plan, 40, 7), @r"
+    insta::assert_snapshot!(render(&plan, /*width*/ 40, /*height*/ 7), @r"
       …
       ✓ Second complete
       ✓ Third complete
@@ -74,10 +74,10 @@ fn five_row_window_centers_on_current_task() {
 #[test]
 fn compact_terminal_shows_current_task_and_continuations() {
     let plan = long_plan();
-    plan.set_terminal_height(8);
+    plan.set_terminal_height(/*height*/ 8);
 
     assert_eq!(plan.visible_range(plan.visible_capacity()), 3..4);
-    insta::assert_snapshot!(render(&plan, 24, 3), @r"
+    insta::assert_snapshot!(render(&plan, /*width*/ 24, /*height*/ 3), @r"
       …
       ● Current task
       …
@@ -88,7 +88,10 @@ fn compact_terminal_shows_current_task_and_continuations() {
 fn constrained_area_prioritizes_current_task() {
     let plan = long_plan();
 
-    assert_eq!(render(&plan, 24, 1), "  ● Current task");
+    assert_eq!(
+        render(&plan, /*width*/ 24, /*height*/ 1),
+        "  ● Current task"
+    );
 }
 
 #[test]

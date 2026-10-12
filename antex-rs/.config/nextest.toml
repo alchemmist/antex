@@ -24,6 +24,12 @@ slow-timeout = { period = "1m", terminate-after = 2 }
 filter = 'package(antex-core) & test(=shell_snapshot::tests::snapshot_discovers_and_redacts_shell_initialized_credentials)'
 slow-timeout = { period = "30s", terminate-after = 4 }
 
+[[profile.default.overrides]]
+# Public direct OAuth uses port 1455. Real entrypoint tests must not overlap
+# legacy browser logins in other test processes, including the local profile.
+filter = '(package(antex-login) & test(occupied_port_is_not_canceled_or_replaced)) | (package(antex-app-server) & test(direct_browser_callback_validation_and_cancellation_preserve_legacy_auth))'
+threads-required = 'num-test-threads'
+
 [profile.default.junit]
 path = "junit.xml"
 

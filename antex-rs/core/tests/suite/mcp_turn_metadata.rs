@@ -1,6 +1,9 @@
 #![cfg(not(target_os = "windows"))]
 #![allow(clippy::unwrap_used)]
 
+#[path = "mcp_upload_owner.rs"]
+mod mcp_upload_owner;
+
 use antex_config::test_support::CloudConfigBundleFixture;
 use antex_config::types::AppToolApproval;
 use antex_core::TurnInputRequest;

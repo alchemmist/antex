@@ -75,10 +75,10 @@ impl OpenAiModelsEndpoint {
     }
 
     async fn auth(&self) -> Option<AntexAuth> {
-        match self.auth_manager.as_ref() {
-            Some(auth_manager) => auth_manager.auth().await,
-            None => None,
-        }
+        crate::request_auth::resolve(&self.provider_info, self.auth_manager.as_deref())
+            .await
+            .ok()
+            .flatten()
     }
 
     async fn uses_antex_backend(&self) -> bool {
@@ -93,7 +93,21 @@ impl OpenAiModelsEndpoint {
         client_version: &str,
         http_client_factory: HttpClientFactory,
     ) -> CoreResult<ModelsEndpointResponse> {
-        let auth = self.auth().await;
+        let owner = self
+            .auth_manager
+            .as_ref()
+            .filter(|_| crate::request_auth::uses_manager(&self.provider_info))
+            .map(antex_login::AuthManager::unauthorized_recovery);
+        let auth =
+            crate::request_auth::resolve(&self.provider_info, self.auth_manager.as_deref()).await?;
+        if self
+            .provider_info
+            .uses_chatgpt_direct(auth.as_ref().map(AntexAuth::auth_mode))
+        {
+            return Err(CodexErr::UnsupportedOperation(
+                "Direct ChatGPT uses the bundled public Responses model catalog".to_string(),
+            ));
+        }
         let metric_auth_mode = if self.has_provider_api_key()
             || auth.as_ref().is_some_and(AntexAuth::is_api_key_auth)
         {
@@ -153,6 +167,11 @@ impl OpenAiModelsEndpoint {
                 .transport_builder
                 .build(http_client_factory, request_url.clone())
                 .await?;
+            if let Some(owner) = &owner {
+                owner
+                    .ensure_same_owner()
+                    .map_err(crate::request_auth::request_error)?;
+            }
             let client = ModelsClient::new(transport, api_provider, api_auth)
                 .with_telemetry(Some(request_telemetry));
             let response_body_limit_bytes = self
@@ -182,6 +201,11 @@ impl OpenAiModelsEndpoint {
         })
         .await
         .map_err(|_| CodexErr::RequestTimeout)??;
+        if let Some(owner) = &owner {
+            owner
+                .ensure_same_owner()
+                .map_err(crate::request_auth::request_error)?;
+        }
         if self.provider_info.model_catalog_url.is_some() {
             let mut slugs = HashSet::new();
             if models
@@ -210,6 +234,14 @@ impl OpenAiModelsEndpoint {
 }
 
 impl ModelsEndpointClient for OpenAiModelsEndpoint {
+    fn uses_chatgpt_direct(&self) -> bool {
+        self.provider_info.uses_chatgpt_direct(
+            self.auth_manager
+                .as_ref()
+                .and_then(|manager| manager.auth_mode()),
+        )
+    }
+
     fn supports_api_key_models(&self) -> bool {
         self.provider_info.model_catalog_url.is_some()
             || (self.provider_info.is_openai() && self.provider_info.base_url.is_none())
@@ -224,6 +256,7 @@ impl ModelsEndpointClient for OpenAiModelsEndpoint {
         let auth = self
             .auth_manager
             .as_ref()
+            .filter(|_| crate::request_auth::uses_manager(&self.provider_info))
             .and_then(|manager| manager.auth_cached());
         crate::models_identity::identity(&self.provider_info, auth.as_ref()).ok()
     }

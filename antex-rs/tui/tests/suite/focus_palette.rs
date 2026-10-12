@@ -526,6 +526,10 @@ impl PtyAntex {
         self.parser.screen().contents()
     }
 
+    pub(super) fn screen(&self) -> &vt100::Screen {
+        self.parser.screen()
+    }
+
     pub(super) fn wait_for_screen(&mut self, text: &str) -> Result<()> {
         let deadline = Instant::now() + STARTUP_TIMEOUT;
         while Instant::now() < deadline {

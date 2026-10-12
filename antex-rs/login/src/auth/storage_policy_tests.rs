@@ -428,6 +428,7 @@ fn secrets_keyring_auth_storage_save_persists_and_removes_fallback_file() -> any
             access_token: "access".to_string(),
             refresh_token: "refresh".to_string(),
             account_id: Some("account".to_string()),
+            direct: None,
         }),
         last_refresh: Some(Utc::now()),
         agent_identity: None,

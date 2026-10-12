@@ -96,6 +96,7 @@ pub(crate) enum SignInState {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SignInOption {
     ChatGpt,
+    LegacyCodex,
     DeviceCode,
     ApiKey,
     Bedrock,
@@ -211,6 +212,10 @@ impl KeyboardHandler for AuthModeWidget {
         }
         if keys::SELECT_FOURTH.is_pressed(key_event) {
             self.select_option_by_index(/*index*/ 3);
+            return;
+        }
+        if keys::SELECT_FIFTH.is_pressed(key_event) {
+            self.select_option_by_index(/*index*/ 4);
             return;
         }
         if keys::CONFIRM.is_pressed(key_event) {
@@ -352,6 +357,7 @@ impl AuthModeWidget {
     fn displayed_sign_in_options(&self) -> Vec<SignInOption> {
         let mut options = vec![SignInOption::ChatGpt];
         if self.is_chatgpt_login_allowed() {
+            options.push(SignInOption::LegacyCodex);
             options.push(SignInOption::DeviceCode);
         }
         if self.is_api_login_allowed() {
@@ -367,6 +373,7 @@ impl AuthModeWidget {
         let mut options = Vec::new();
         if self.is_chatgpt_login_allowed() {
             options.push(SignInOption::ChatGpt);
+            options.push(SignInOption::LegacyCodex);
             options.push(SignInOption::DeviceCode);
         }
         if self.is_api_login_allowed() {
@@ -404,7 +411,16 @@ impl AuthModeWidget {
         match option {
             SignInOption::ChatGpt => {
                 if self.is_chatgpt_login_allowed() {
-                    self.start_chatgpt_login();
+                    self.start_chatgpt_login(LoginAccountParams::ChatgptDirect);
+                }
+            }
+            SignInOption::LegacyCodex => {
+                if self.is_chatgpt_login_allowed() {
+                    self.start_chatgpt_login(LoginAccountParams::Chatgpt {
+                        app_brand: None,
+                        antex_streamlined_login: false,
+                        use_hosted_login_success_page: false,
+                    });
                 }
             }
             SignInOption::DeviceCode => {
@@ -485,7 +501,7 @@ impl AuthModeWidget {
         let chatgpt_description = if !self.is_chatgpt_login_allowed() {
             "ChatGPT login is disabled"
         } else {
-            "Usage included with Plus, Pro, Business, and Enterprise plans"
+            "Use your ChatGPT subscription directly with OpenAI"
         };
         let device_code_description = "Sign in from another device with a one-time code";
 
@@ -495,15 +511,23 @@ impl AuthModeWidget {
                     lines.extend(create_mode_item(
                         idx,
                         option,
-                        "Sign in with ChatGPT",
+                        "ChatGPT subscription (recommended)",
                         chatgpt_description,
+                    ));
+                }
+                SignInOption::LegacyCodex => {
+                    lines.extend(create_mode_item(
+                        idx,
+                        option,
+                        "ChatGPT via legacy Codex",
+                        "Use the separate Codex service and its supported models",
                     ));
                 }
                 SignInOption::DeviceCode => {
                     lines.extend(create_mode_item(
                         idx,
                         option,
-                        "Sign in with Device Code",
+                        "Legacy Codex device code",
                         device_code_description,
                     ));
                 }
@@ -593,7 +617,7 @@ impl AuthModeWidget {
                 "  On a remote or headless machine? Press ".into(),
                 self.cancel_binding().into(),
                 " and choose ".into(),
-                "Sign in with Device Code".cyan(),
+                "Legacy Codex device code".cyan(),
                 ".".into(),
             ]));
             lines.push("".into());
@@ -933,7 +957,7 @@ impl AuthModeWidget {
     }
 
     /// Kicks off the ChatGPT auth flow and keeps the UI state consistent with the attempt.
-    fn start_chatgpt_login(&mut self) {
+    fn start_chatgpt_login(&mut self, params: LoginAccountParams) {
         // If we're already authenticated with ChatGPT, don't start a new login –
         // just proceed to the success message flow.
         if self.handle_existing_chatgpt_login() {
@@ -950,11 +974,7 @@ impl AuthModeWidget {
             match request_handle
                 .request_typed::<LoginAccountResponse>(ClientRequest::LoginAccount {
                     request_id: onboarding_request_id(),
-                    params: LoginAccountParams::Chatgpt {
-                        app_brand: None,
-                        antex_streamlined_login: false,
-                        use_hosted_login_success_page: false,
-                    },
+                    params,
                 })
                 .await
             {
@@ -1029,6 +1049,7 @@ impl AuthModeWidget {
                 LoginStatus::AuthMode(match auth_mode {
                     ApiAuthMode::ApiKey => AuthMode::ApiKey,
                     ApiAuthMode::Chatgpt => AuthMode::Chatgpt,
+                    ApiAuthMode::ChatgptDirect => AuthMode::ChatgptDirect,
                     ApiAuthMode::ChatgptAuthTokens => AuthMode::ChatgptAuthTokens,
                     ApiAuthMode::Headers => AuthMode::Headers,
                     ApiAuthMode::AgentIdentity => AuthMode::AgentIdentity,
@@ -1278,6 +1299,67 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn subscription_and_legacy_choices_preserve_keyboard_navigation() {
+        let (mut widget, _tmp) = widget_forced_chatgpt().await;
+        widget.auth_config.forced_login_method = None;
+        widget.bedrock_setup_enabled = true;
+        widget.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(widget.highlighted_mode, SignInOption::LegacyCodex);
+        widget.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(widget.highlighted_mode, SignInOption::DeviceCode);
+        widget.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(widget.highlighted_mode, SignInOption::ApiKey);
+        widget.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(widget.highlighted_mode, SignInOption::Bedrock);
+        widget.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(widget.highlighted_mode, SignInOption::ChatGpt);
+        widget.handle_key_event(KeyEvent::new(KeyCode::Char('4'), KeyModifiers::NONE));
+        assert!(matches!(
+            &*widget.sign_in_state.read().unwrap(),
+            SignInState::ApiKeyEntry(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn direct_subscription_notification_is_not_an_api_key() {
+        let (mut widget, _tmp) = widget_forced_chatgpt().await;
+        widget.on_account_updated(AccountUpdatedNotification {
+            auth_mode: Some(ApiAuthMode::ChatgptDirect),
+            plan_type: None,
+        });
+        assert_eq!(
+            widget.login_status,
+            LoginStatus::AuthMode(AuthMode::ChatgptDirect)
+        );
+        assert!(widget.handle_existing_chatgpt_login());
+        assert!(matches!(
+            &*widget.sign_in_state.read().unwrap(),
+            SignInState::ChatGptSuccess
+        ));
+    }
+
+    #[tokio::test]
+    async fn subscription_choices_snapshots() {
+        let (mut widget, _tmp) = widget_forced_chatgpt().await;
+        widget.auth_config.forced_login_method = None;
+        for (name, width) in [
+            ("subscription_choices", 80),
+            ("subscription_choices_narrow", 40),
+        ] {
+            let area = Rect::new(/*x*/ 0, /*y*/ 0, width, /*height*/ 26);
+            let mut terminal = crate::custom_terminal::Terminal::with_options(
+                crate::test_backend::VT100Backend::new(width, /*height*/ 26),
+            )
+            .expect("terminal");
+            terminal.set_viewport_area(area);
+            terminal
+                .draw(|frame| widget.render_ref(area, frame.buffer_mut()))
+                .expect("draw");
+            insta::assert_snapshot!(name, terminal.backend().to_string());
+        }
+    }
+
+    #[tokio::test]
     async fn api_key_entry_snapshots() {
         let (mut widget, _tmp) = widget_forced_chatgpt().await;
         widget.auth_config.forced_login_method = None;
@@ -1324,6 +1406,7 @@ mod tests {
             widget.displayed_sign_in_options(),
             vec![
                 SignInOption::ChatGpt,
+                SignInOption::LegacyCodex,
                 SignInOption::DeviceCode,
                 SignInOption::ApiKey,
             ]
@@ -1334,6 +1417,7 @@ mod tests {
             widget.displayed_sign_in_options(),
             vec![
                 SignInOption::ChatGpt,
+                SignInOption::LegacyCodex,
                 SignInOption::DeviceCode,
                 SignInOption::ApiKey,
                 SignInOption::Bedrock,
@@ -1358,16 +1442,19 @@ mod tests {
         insta::assert_snapshot!(rows.join("\n"), @r###"
           Choose how you want to use Antex.
 
-        > 1. Sign in with ChatGPT
-             Usage included with Plus, Pro, Business, and Enterprise plans
+        > 1. ChatGPT subscription (recommended)
+             Use your ChatGPT subscription directly with OpenAI
 
-          2. Sign in with Device Code
+          2. ChatGPT via legacy Codex
+             Use the separate Codex service and its supported models
+
+          3. Legacy Codex device code
              Sign in from another device with a one-time code
 
-          3. Use an OpenAI API key
+          4. Use an OpenAI API key
              Pay for what you use
 
-          4. Use Amazon Bedrock
+          5. Use Amazon Bedrock
              Connect using your AWS credentials
 
           Press enter to continue
@@ -1376,7 +1463,11 @@ mod tests {
         widget.auth_config.forced_login_method = Some(ForcedLoginMethod::Chatgpt);
         assert_eq!(
             widget.displayed_sign_in_options(),
-            vec![SignInOption::ChatGpt, SignInOption::DeviceCode]
+            vec![
+                SignInOption::ChatGpt,
+                SignInOption::LegacyCodex,
+                SignInOption::DeviceCode
+            ]
         );
     }
 
@@ -1399,7 +1490,11 @@ mod tests {
 
     #[tokio::test]
     async fn existing_non_oauth_chatgpt_login_counts_as_signed_in() {
-        for auth_mode in [AuthMode::ChatgptAuthTokens, AuthMode::PersonalAccessToken] {
+        for auth_mode in [
+            AuthMode::ChatgptDirect,
+            AuthMode::ChatgptAuthTokens,
+            AuthMode::PersonalAccessToken,
+        ] {
             let (mut widget, _tmp) = widget_forced_chatgpt().await;
             widget.login_status = LoginStatus::AuthMode(auth_mode);
 

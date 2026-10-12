@@ -142,7 +142,9 @@ impl EnterpriseLoginState {
             return false;
         };
         let config = thread.runtime_mcp_config_and_context(&config).await.0;
-        let auth = self.auth_manager.auth_cached();
+        let Ok(auth) = self.auth_manager.auth_for_request().await else {
+            return false;
+        };
         let servers = antex_mcp::effective_mcp_servers(&config, auth.as_ref());
         config.xaa_enabled
             && config.auth_keyring_backend_kind == keyring_backend

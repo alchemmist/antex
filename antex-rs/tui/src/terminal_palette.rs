@@ -700,12 +700,12 @@ mod tests {
                 ),
                 (
                     "extended foreground",
-                    terminal_foreground(indexed_color(196)),
+                    terminal_foreground(indexed_color(/*index*/ 196)),
                     Color::Reset,
                 ),
                 (
                     "system foreground",
-                    terminal_foreground(indexed_color(9)),
+                    terminal_foreground(indexed_color(/*index*/ 9)),
                     Color::Reset
                 ),
                 (
@@ -716,12 +716,12 @@ mod tests {
                 (
                     "extended background",
                     Color::Reset,
-                    terminal_background(indexed_color(236)),
+                    terminal_background(indexed_color(/*index*/ 236)),
                 ),
                 (
                     "system accent background",
                     Color::Reset,
-                    terminal_background(indexed_color(9)),
+                    terminal_background(indexed_color(/*index*/ 9)),
                 ),
                 (
                     "visual selection background",
@@ -749,7 +749,7 @@ mod tests {
 
     #[test]
     fn terminal_output_preserves_mascot_palette_colors() {
-        for color in [rgb_color((177, 108, 70)), indexed_color(137)] {
+        for color in [rgb_color((177, 108, 70)), indexed_color(/*index*/ 137)] {
             assert_eq!(terminal_foreground(color), color);
             assert_eq!(terminal_background(color), color);
         }

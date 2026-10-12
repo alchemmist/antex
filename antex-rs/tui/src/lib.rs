@@ -2190,6 +2190,9 @@ async fn get_login_status(
     let login_status = match &account.account {
         Some(AppServerAccount::ApiKey {}) => LoginStatus::AuthMode(AuthMode::ApiKey),
         Some(AppServerAccount::Chatgpt { .. }) => LoginStatus::AuthMode(AuthMode::Chatgpt),
+        Some(AppServerAccount::ChatgptDirect { .. }) => {
+            LoginStatus::AuthMode(AuthMode::ChatgptDirect)
+        }
         Some(AppServerAccount::AmazonBedrock { .. }) | None => LoginStatus::NotAuthenticated,
     };
     Ok((login_status, account))

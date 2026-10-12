@@ -73,7 +73,8 @@ async fn init_backend(user_agent_suffix: &str) -> anyhow::Result<BackendContext>
     }
 
     let ua = get_antex_user_agent();
-    let (auth_manager, http_client_factory) = util::load_auth_manager(Some(base_url.clone())).await;
+    let (auth_manager, http_client_factory) =
+        util::load_auth_manager(Some(base_url.clone())).await?;
     let environment_http = RouteAwareClientPool::new_without_redirects_or_request_logging(
         http_client_factory.clone(),
         ClientRouteClass::Api,
@@ -87,10 +88,7 @@ async fn init_backend(user_agent_suffix: &str) -> anyhow::Result<BackendContext>
     };
     append_error_log(format!("startup: base_url={base_url} path_style={style}"));
 
-    let auth = match auth_manager.as_ref() {
-        Some(manager) => manager.auth().await,
-        None => None,
-    };
+    let auth = auth_manager.auth_for_request().await?;
     let auth = match auth {
         Some(auth) => auth,
         None => {
@@ -112,7 +110,7 @@ async fn init_backend(user_agent_suffix: &str) -> anyhow::Result<BackendContext>
         std::process::exit(1);
     }
 
-    let auth_provider = antex_model_provider::auth_provider_from_auth(&auth);
+    let auth_provider = antex_model_provider::auth_provider_from_auth_manager(auth_manager, &auth);
     http = http.with_auth_provider(auth_provider);
     if let Some(acc) = auth.get_account_id() {
         append_error_log(format!("auth: set ChatGPT-Account-Id header: {acc}"));
@@ -208,7 +206,7 @@ async fn resolve_environment_id(ctx: &BackendContext, requested: &str) -> anyhow
         return Err(anyhow!("environment id must not be empty"));
     }
     let normalized = util::normalize_base_url(&ctx.base_url);
-    let headers = util::build_chatgpt_headers().await;
+    let headers = util::build_chatgpt_headers().await?;
     let environments =
         crate::env_detect::list_environments(&ctx.environment_http, &normalized, &headers).await?;
     if environments.is_empty() {
@@ -872,7 +870,13 @@ pub async fn run_main(cli: Cli, _antex_linux_sandbox_exe: Option<PathBuf>) -> an
         tokio::spawn(async move {
             let base_url = util::normalize_base_url(&base_url);
             // Build headers: UA + ChatGPT auth if available
-            let headers = util::build_chatgpt_headers().await;
+            let headers = match util::build_chatgpt_headers().await {
+                Ok(headers) => headers,
+                Err(error) => {
+                    let _ = tx.send(app::AppEvent::EnvironmentAutodetected(Err(error)));
+                    return;
+                }
+            };
 
             // Run autodetect. If it fails, we keep using "All".
             let res = crate::env_detect::autodetect_environment_id(
@@ -2032,8 +2036,10 @@ fn spawn_environment_load(
 ) {
     tokio::spawn(async move {
         let base_url = util::normalize_base_url(&base_url);
-        let headers = util::build_chatgpt_headers().await;
-        let result = crate::env_detect::list_environments(&http, &base_url, &headers).await;
+        let result = match util::build_chatgpt_headers().await {
+            Ok(headers) => crate::env_detect::list_environments(&http, &base_url, &headers).await,
+            Err(error) => Err(error),
+        };
         let _ = tx.send(app::AppEvent::EnvironmentsLoaded(result));
     });
 }

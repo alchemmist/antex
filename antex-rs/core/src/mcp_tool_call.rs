@@ -506,11 +506,15 @@ async fn handle_approved_mcp_tool_call(
                             action_name: action_name.clone(),
                             model: step_context.settings.model_info.slug.clone(),
                         });
+                    let upload_auth = crate::mcp_openai_file::BoundUploadAuth::new(&prepared_call);
                     let rewritten_arguments = rewrite_mcp_tool_arguments_for_openai_files(
                         sess,
                         step_context,
                         arguments_value,
                         metadata.openai_file_input_optional_fields.as_ref(),
+                        upload_auth
+                            .as_ref()
+                            .map(|auth| auth as &dyn antex_api::AuthProvider),
                         hosted_upload.as_ref(),
                     )
                     .await

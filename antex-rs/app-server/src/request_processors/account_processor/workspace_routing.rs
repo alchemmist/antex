@@ -133,9 +133,11 @@ impl AccountRequestProcessor {
     ) -> Result<Option<AccountRead>, AccountReadError> {
         if !self
             .auth_manager
-            .auth_cached()
+            .auth_for_request()
+            .await
+            .map_err(|_| WorkspaceRoutingError::DiscoveryFailed { http_status: None })?
             .as_ref()
-            .is_some_and(AntexAuth::is_chatgpt_auth)
+            .is_some_and(|auth| auth.is_chatgpt_auth() && auth.uses_antex_backend())
         {
             return Ok(None);
         }
@@ -254,17 +256,63 @@ impl AccountRequestProcessor {
                         .auth_manager
                         .auth_cached()
                         .as_ref()
-                        .is_some_and(AntexAuth::is_chatgpt_auth) =>
+                        .is_some_and(|auth| {
+                            auth.is_chatgpt_auth() && auth.uses_antex_backend()
+                        }) =>
                 {
+                    self.config.as_ref().clone()
+                }
+                Err(_)
+                    if request.is_none()
+                        && self
+                            .auth_manager
+                            .auth_cached()
+                            .as_ref()
+                            .is_some_and(|auth| {
+                                self.auth_manager.refresh_failure_for_auth(auth).is_some()
+                            }) =>
+                {
+                    // A signed-out metadata response may use the retained config;
+                    // it neither clears requirements nor authorizes a routed request.
                     self.config.as_ref().clone()
                 }
                 Err(_) => return Err(WorkspaceRoutingError::RequirementsLoad.into()),
             };
-            let auth = self.auth_manager.auth_cached();
             let provider = create_model_provider(
                 config.model_provider.clone(),
                 Some(self.auth_manager.clone()),
             );
+            // Bedrock account metadata does not require command credentials or
+            // ChatGPT workspace discovery. Actual inference still resolves auth.
+            let bedrock_account = matches!(
+                provider
+                    .account_state()
+                    .map_err(AccountReadError::InvalidAccount)?
+                    .account,
+                Some(ProviderAccount::AmazonBedrock { .. })
+            );
+            let auth = if bedrock_account {
+                None
+            } else {
+                match provider.auth_for_request().await {
+                    Ok(auth) => auth,
+                    Err(_)
+                        if request.is_none()
+                            && provider
+                                .account_state()
+                                .map_err(AccountReadError::InvalidAccount)?
+                                .account
+                                .is_none() =>
+                    {
+                        None
+                    }
+                    Err(_) => {
+                        return Err(
+                            WorkspaceRoutingError::DiscoveryFailed { http_status: None }.into()
+                        );
+                    }
+                }
+            };
             let account_state = provider
                 .account_state()
                 .map_err(AccountReadError::InvalidAccount)?;
@@ -272,6 +320,7 @@ impl AccountRequestProcessor {
                 .as_ref()
                 .filter(|auth| {
                     auth.is_chatgpt_auth()
+                        && auth.uses_antex_backend()
                         && (request.is_some()
                             || matches!(
                                 account_state.account,
@@ -351,7 +400,11 @@ impl AccountRequestProcessor {
                                     discovery_generation = refreshed.generation;
                                     discovery_auth = self
                                         .auth_manager
-                                        .auth_cached()
+                                        .auth_for_request()
+                                        .await
+                                        .map_err(|_| WorkspaceRoutingError::DiscoveryFailed {
+                                            http_status: None,
+                                        })?
                                         .ok_or(WorkspaceRoutingError::AccountChanged)?;
                                     continue;
                                 }

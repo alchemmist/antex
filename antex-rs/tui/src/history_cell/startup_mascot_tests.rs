@@ -132,6 +132,92 @@ fn animation_starts_on_first_display_and_survives_handoff() {
 }
 
 #[test]
+fn handoff_during_last_antenna_pose_preserves_the_pending_transition() {
+    let (requester, mut requests) = FrameRequester::test_channel();
+    let motion = StartupMascotMotion::new(requester);
+    let first_display = Instant::now();
+    assert_eq!(motion.current_frame_at(first_display), MascotFrame::Rest);
+    assert!(requests.try_recv().is_ok());
+
+    // Model a clock starting at the diagnostic's first 267ms observation, then
+    // its 1189ms antenna and 1203ms readiness. The actual clock may start BEFORE
+    // that first observation; this tests the mid-pose case, not the runtime cause.
+    let before_handoff = first_display + Duration::from_millis(/*millis*/ 922);
+    assert_eq!(
+        motion.current_frame_at(before_handoff),
+        MascotFrame::AntennaeWide
+    );
+    assert!(requests.try_recv().is_ok());
+    let handed_off = motion.clone();
+    let ready = first_display + Duration::from_millis(/*millis*/ 936);
+    for now in [before_handoff, ready] {
+        assert_eq!(handed_off.current_frame_at(now), MascotFrame::AntennaeWide);
+        assert!(requests.try_recv().is_ok());
+    }
+    assert!(Arc::ptr_eq(&motion.started_at, &handed_off.started_at));
+    assert_eq!(handed_off.started_at.get(), Some(&first_display));
+
+    // A shared handle still has the antenna-to-rest transition AFTER ready,
+    // followed by the color-only blink and the final rest. It cannot settle at ready.
+    let remaining = [6, 7, 8].map(|index| {
+        let now = first_display + FRAME_TICK * index;
+        let frame = handed_off.current_frame_at(now);
+        let requested = requests.try_recv().is_ok();
+        (frame, requested)
+    });
+    assert_eq!(
+        remaining,
+        [
+            (MascotFrame::Rest, true),
+            (MascotFrame::Blink, true),
+            (MascotFrame::Rest, false),
+        ]
+    );
+}
+
+#[test]
+fn handoff_on_last_rest_frame_still_has_visible_color_only_motion() {
+    let (requester, mut requests) = FrameRequester::test_channel();
+    let motion = StartupMascotMotion::new(requester);
+    let first_display = Instant::now();
+    motion.current_frame_at(first_display);
+    assert!(requests.try_recv().is_ok());
+    let handed_off = motion;
+    let ready = first_display + FRAME_TICK * 6;
+    let rest = handed_off.current_frame_at(ready);
+    assert!(requests.try_recv().is_ok());
+    let blink = handed_off.current_frame_at(ready + FRAME_TICK);
+    assert!(requests.try_recv().is_ok());
+    let settled = handed_off.current_frame_at(ready + FRAME_TICK * 2);
+    assert!(requests.try_recv().is_err());
+    assert_eq!(
+        (rest, blink, settled),
+        (MascotFrame::Rest, MascotFrame::Blink, MascotFrame::Rest)
+    );
+    assert_eq!(handed_off.started_at.get(), Some(&first_display));
+
+    crate::terminal_palette::with_test_default_colors(
+        crate::terminal_probe::DefaultColors {
+            fg: (255, 255, 255),
+            bg: (0, 0, 0),
+        },
+        || {
+            for skin in [StartupMascotSkin::Ant01, StartupMascotSkin::Ant03] {
+                let rest = render_mascot(skin, rest);
+                let blink = render_mascot(skin, blink);
+                // Text-only PTY observations lose this real visible transition.
+                assert_eq!(
+                    rest.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                    blink.iter().map(ToString::to_string).collect::<Vec<_>>()
+                );
+                pretty_assertions::assert_ne!(rest, blink);
+                assert_eq!(render_mascot(skin, settled), rest);
+            }
+        },
+    );
+}
+
+#[test]
 fn startup_mascot_animation_frames_snapshot() {
     let rendered = [StartupMascotSkin::Ant01, StartupMascotSkin::Ant03]
         .into_iter()

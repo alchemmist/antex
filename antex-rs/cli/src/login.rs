@@ -205,6 +205,48 @@ pub async fn run_login_with_chatgpt(cli_config_overrides: CliConfigOverrides) ->
     }
 }
 
+/// Explicit opt-in to the direct subscription flow; existing credentials remain intact
+/// unless the authorization exchange and persistence both succeed.
+pub async fn run_login_with_chatgpt_direct(cli_config_overrides: CliConfigOverrides) -> ! {
+    let config = load_config_or_exit(cli_config_overrides).await;
+    let _login_log_guard = init_login_file_logging(&config);
+    if !config
+        .auth_config()
+        .is_login_method_allowed(ForcedLoginMethod::Chatgpt)
+    {
+        eprintln!("{CHATGPT_LOGIN_DISABLED_MESSAGE}");
+        std::process::exit(1);
+    }
+    let opts = ServerOptions::new(
+        config.codex_home.to_path_buf(),
+        CLIENT_ID.to_string(),
+        config.auth_config().effective_chatgpt_workspaces(),
+        config.cli_auth_credentials_store_mode,
+        config.auth_keyring_backend_kind(),
+        config.auth_route_config(),
+    );
+    let result = match antex_login::run_direct_login_server(opts) {
+        Ok(server) => {
+            eprintln!(
+                "Sign in with your ChatGPT subscription in your browser:\n\n{}\n\nThe browser callback must reach 127.0.0.1:{} on this machine. Device-code login uses legacy Codex instead.",
+                server.auth_url, server.actual_port
+            );
+            server.block_until_done().await
+        }
+        Err(err) => Err(err),
+    };
+    match result {
+        Ok(()) => {
+            eprintln!("{LOGIN_SUCCESS_MESSAGE}");
+            std::process::exit(0);
+        }
+        Err(err) => {
+            eprintln!("Error logging in: {err}");
+            std::process::exit(1);
+        }
+    }
+}
+
 pub async fn run_login_with_api_key(
     cli_config_overrides: CliConfigOverrides,
     api_key: String,
@@ -476,6 +518,10 @@ pub async fn run_login_status(cli_config_overrides: CliConfigOverrides) -> ! {
                     std::process::exit(1);
                 }
             },
+            AuthMode::ChatgptDirect => {
+                eprintln!("Logged in with ChatGPT subscription (direct OpenAI API)");
+                std::process::exit(0);
+            }
             AuthMode::Chatgpt | AuthMode::ChatgptAuthTokens => {
                 eprintln!("Logged in using ChatGPT");
                 std::process::exit(0);
@@ -627,43 +673,9 @@ mod storage_tests;
 
 #[cfg(test)]
 mod tests {
-    use antex_config::types::AuthCredentialsStoreMode;
-    use antex_login::AuthKeyringBackendKind;
-    use antex_login::load_auth_dot_json;
-    use antex_login::login_with_api_key;
     use pretty_assertions::assert_eq;
-    use tempfile::tempdir;
 
-    use super::clear_existing_auth_before_login;
     use super::safe_format_key;
-
-    #[tokio::test]
-    async fn clears_existing_auth_before_login() {
-        let codex_home = tempdir().expect("create temporary Antex home");
-        login_with_api_key(
-            codex_home.path(),
-            "sk-existing",
-            AuthCredentialsStoreMode::File,
-            AuthKeyringBackendKind::default(),
-        )
-        .expect("save existing auth");
-
-        clear_existing_auth_before_login(
-            codex_home.path(),
-            AuthCredentialsStoreMode::File,
-            AuthKeyringBackendKind::default(),
-            &antex_login::test_support::transport_default_auth_route_config(),
-        )
-        .await;
-
-        let auth = load_auth_dot_json(
-            codex_home.path(),
-            AuthCredentialsStoreMode::File,
-            AuthKeyringBackendKind::default(),
-        )
-        .expect("load auth after cleanup");
-        assert_eq!(auth, None);
-    }
 
     #[test]
     fn formats_long_key() {

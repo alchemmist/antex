@@ -116,6 +116,7 @@ mod event_stream;
 mod executor_environment_http_client;
 pub(crate) mod mcp;
 mod openai_docs_source_attribution;
+mod operation_auth;
 mod pagination;
 mod plugin_config;
 mod resource_client;

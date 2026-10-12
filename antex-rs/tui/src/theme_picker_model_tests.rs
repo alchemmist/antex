@@ -37,7 +37,7 @@ fn model_theme_files_preview_select_and_restore() {
             bg: if light { (255, 255, 255) } else { (24, 24, 24) },
         };
         with_test_default_colors(colors, || {
-            let params = build_theme_picker_params(Some(name), /*antex_home*/ None, Some(120));
+            let params = build_theme_picker_params(Some(name), /*codex_home*/ None, Some(120));
             let idx = params.initial_selected_idx.unwrap();
             assert_eq!(params.items[idx].search_value.as_deref(), Some(name));
             params.on_selection_changed.as_ref().unwrap()(idx, &tx);

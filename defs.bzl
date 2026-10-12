@@ -34,18 +34,6 @@ WINDOWS_GNULLVM_ONLY = select({
     "//conditions:default": ["@platforms//:incompatible"],
 })
 
-# libwebrtc uses Objective-C categories from native archives. Any Bazel-linked
-# macOS binary/test that can pull it in must keep category symbols alive.
-MACOS_WEBRTC_RUSTC_LINK_FLAGS = select({
-    "@platforms//os:macos": [
-        "-C",
-        "link-arg=-ObjC",
-        "-C",
-        "link-arg=-lc++",
-    ],
-    "//conditions:default": [],
-})
-
 def _workspace_root_test_impl(ctx):
     is_windows = ctx.target_platform_has_constraint(ctx.attr._windows_constraint[platform_common.ConstraintValueInfo])
     launcher = ctx.actions.declare_file(ctx.label.name + ".bat" if is_windows else ctx.label.name)

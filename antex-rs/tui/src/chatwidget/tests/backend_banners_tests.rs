@@ -321,7 +321,8 @@ async fn backend_banner_invalid_content_and_absence_restore_fallback() {
 #[tokio::test]
 async fn backend_banner_fallback_candidates_and_notice_follow_selected_model() {
     let (mut chat, _events, _ops) = make_chatwidget_manual(Some("test-model-a")).await;
-    chat.has_chatgpt_account = true;
+    // This is a legacy backend subscription, not a public direct OAuth subscription.
+    set_chatgpt_auth(&mut chat);
     let template = chat.model_catalog.try_list_models().unwrap()[0].clone();
     let models = ["hidden-model", "test-model-b", "test-model-c"].map(|model| ModelPreset {
         model: model.into(),
@@ -338,6 +339,10 @@ async fn backend_banner_fallback_candidates_and_notice_follow_selected_model() {
         chat.backend_banner_fallback().map(|switch| switch.model),
         Some(models[2].clone())
     );
+    // Direct OAuth retains subscription identity without access to backend fallbacks.
+    chat.has_antex_backend_auth = false;
+    assert_eq!(chat.backend_banner_fallback(), None);
+    chat.has_antex_backend_auth = true;
     // A retained ChatGPT login must not change a task whose server does not require auth.
     chat.requires_openai_auth = false;
     assert_eq!(chat.backend_banner_fallback(), None);

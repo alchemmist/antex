@@ -16,8 +16,6 @@ class CurlInstallationTests(unittest.TestCase):
             targets.append("x86_64-unknown-linux-gnu")
         resources = {
             "antex-resources/zsh/bin/zsh": "bundled shell",
-            "antex-resources/voice/bin/antex-voice-host": "voice helper",
-            "antex-resources/voice/lib/runtime": "voice runtime",
         }
         for target in targets:
             with (

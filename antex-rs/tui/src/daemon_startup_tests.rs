@@ -59,7 +59,6 @@ fn audited_overrides_allow_daemon_without_allowing_arbitrary_config() {
 fn monorepo_wrapper_overrides_are_eligible_and_select_only_server_features() {
     let overrides = antex_utils_cli::CliConfigOverrides {
         raw_overrides: [
-            "features.realtime_conversation=true",
             "features.worktrees=true",
             "features.remote_models=true",
             "features.api_key_model_discovery=true",

@@ -91,6 +91,20 @@ impl StartupMascotMotion {
         self.animation_frame_at(now).map(|frame| frame as u64)
     }
 
+    /// Observe the shared clock without starting it or requesting a redraw.
+    pub(crate) fn trace_handoff(&self, stage: &'static str) {
+        let elapsed = self.started_at.get().map(Instant::elapsed);
+        let frame = elapsed.and_then(frame_at_elapsed);
+        tracing::debug!(
+            target: "antex_tui::startup_mascot",
+            stage,
+            motion = ?Arc::as_ptr(&self.started_at),
+            ?elapsed,
+            ?frame,
+            "startup mascot handoff"
+        );
+    }
+
     pub(crate) fn is_finished(&self) -> bool {
         self.started_at
             .get()
@@ -103,7 +117,16 @@ impl StartupMascotMotion {
 
     fn animation_frame_at(&self, now: Instant) -> Option<MascotFrame> {
         let started = self.started_at.get_or_init(|| now);
-        let (frame, next_frame_in) = frame_at_elapsed(now.saturating_duration_since(*started))?;
+        let elapsed = now.saturating_duration_since(*started);
+        let frame = frame_at_elapsed(elapsed);
+        tracing::trace!(
+            target: "antex_tui::startup_mascot",
+            motion = ?Arc::as_ptr(&self.started_at),
+            ?elapsed,
+            ?frame,
+            "startup mascot frame lookup"
+        );
+        let (frame, next_frame_in) = frame?;
         self.request_frame.schedule_frame_in(next_frame_in);
         Some(frame)
     }

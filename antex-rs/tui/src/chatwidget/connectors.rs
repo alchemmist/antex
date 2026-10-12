@@ -148,7 +148,11 @@ impl ChatWidget {
     }
 
     pub(super) fn connectors_enabled(&self) -> bool {
-        self.config.features.enabled(Feature::Apps) && self.has_chatgpt_account
+        // Backend-only identities can read usage, but have never enabled ChatGPT apps.
+        // Subscription identity alone is also insufficient for public direct OAuth.
+        self.config.features.enabled(Feature::Apps)
+            && self.has_chatgpt_account
+            && self.has_antex_backend_auth
     }
 
     /// Return only authorized installed apps, never entries from the discovery directory.

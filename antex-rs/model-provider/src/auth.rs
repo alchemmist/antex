@@ -125,6 +125,7 @@ impl AuthProvider for HeaderAuthProvider {
 
 struct AuthManagerAuthProvider {
     auth_manager: Arc<AuthManager>,
+    owner: antex_login::UnauthorizedRecovery,
     // Startup auth is only the account-scoped identity anchor. Request
     // headers always come from the current AuthManager snapshot below.
     expected_auth: AntexAuth,
@@ -139,6 +140,7 @@ impl AuthManagerAuthProvider {
     }
 
     fn current_auth(&self) -> Option<AntexAuth> {
+        self.owner.ensure_same_header_provider_owner().ok()?;
         self.auth_manager
             .auth_cached()
             .filter(|auth| self.is_expected_auth(auth))
@@ -155,14 +157,21 @@ impl AuthProvider for AuthManagerAuthProvider {
 
     fn resolve_auth_headers(&self) -> AuthHeadersFuture<'_> {
         Box::pin(async move {
+            self.owner
+                .ensure_same_header_provider_owner()
+                .map_err(|error| AuthError::Build(error.to_string()))?;
             let auth = self
                 .auth_manager
-                .auth()
+                .auth_for_request()
                 .await
+                .map_err(crate::request_auth::attachment_error)?
                 .filter(|auth| self.is_expected_auth(auth))
                 .ok_or_else(|| {
                     AuthError::Transient("managed authentication is unavailable".to_string())
                 })?;
+            self.owner
+                .ensure_same_header_provider_owner()
+                .map_err(|error| AuthError::Build(error.to_string()))?;
             Ok(auth_provider_from_auth(&auth).to_auth_headers())
         })
     }
@@ -215,6 +224,11 @@ pub(crate) fn resolve_provider_auth(
         ));
     }
 
+    if provider.uses_chatgpt_direct(auth.map(AntexAuth::auth_mode)) {
+        // Validate configuration before creating a credential-bearing request provider.
+        provider.to_api_provider(auth.map(AntexAuth::auth_mode))?;
+    }
+
     Ok(match auth {
         Some(auth) => auth_provider_from_auth(auth),
         None => unauthenticated_auth_provider(),
@@ -227,6 +241,14 @@ pub(crate) async fn resolve_provider_auth_for_scope(
     provider: &ModelProviderInfo,
     scope: ProviderAuthScope,
 ) -> antex_protocol::error::Result<ResolvedProviderAuth> {
+    if provider.uses_chatgpt_direct(auth.map(AntexAuth::auth_mode))
+        && let Some(auth) = auth
+    {
+        provider.to_api_provider(Some(auth.auth_mode()))?;
+        return Ok(ResolvedProviderAuth::new(Arc::new(
+            crate::chatgpt_direct::DirectAuthProvider::new(auth.clone(), auth_manager),
+        )));
+    }
     let ProviderAuthScope {
         agent_identity_policy,
         session_source,
@@ -248,10 +270,14 @@ pub(crate) async fn resolve_provider_auth_for_scope(
         return resolve_provider_auth(auth, provider).map(ResolvedProviderAuth::new);
     };
 
-    match auth_manager
+    let owner = auth_manager.unauthorized_recovery();
+    let result = auth_manager
         .agent_identity_auth(agent_identity_policy, session_source)
-        .await
-    {
+        .await;
+    owner
+        .ensure_same_owner()
+        .map_err(crate::request_auth::request_error)?;
+    match result {
         Ok(Some(agent_identity_auth)) => Ok(ResolvedProviderAuth::for_agent_identity(
             agent_identity_auth,
         )),
@@ -303,9 +329,14 @@ fn bearer_auth_for_provider(
     Ok(None)
 }
 
-/// Builds request-header auth for a first-party Antex auth snapshot.
+/// Builds auth for a first-party Antex auth snapshot.
+/// Direct ChatGPT grants only attach to validated complete Responses requests, never bare headers.
 pub fn auth_provider_from_auth(auth: &AntexAuth) -> SharedAuthProvider {
     match auth {
+        AntexAuth::ChatgptDirect(_) => Arc::new(crate::chatgpt_direct::DirectAuthProvider::new(
+            auth.clone(),
+            /*manager*/ None,
+        )),
         AntexAuth::AgentIdentity(auth) => {
             Arc::new(AgentIdentityAuthProvider { auth: auth.clone() })
         }
@@ -334,10 +365,15 @@ pub fn auth_provider_from_auth_manager(
     expected_auth: &AntexAuth,
 ) -> SharedAuthProvider {
     Arc::new(AuthManagerAuthProvider {
+        owner: auth_manager.unauthorized_recovery(),
         auth_manager,
         expected_auth: expected_auth.clone(),
     })
 }
+
+#[cfg(test)]
+#[path = "auth_owner_diagnostic_tests.rs"]
+mod owner_diagnostic_tests;
 
 #[cfg(test)]
 mod tests {

@@ -392,6 +392,7 @@ class AsyncUserInputQuestion(BaseModel):
 class AuthMode(Enum):
     apikey = "apikey"
     chatgpt = "chatgpt"
+    chatgpt_direct = "chatgptDirect"
     chatgpt_auth_tokens = "chatgptAuthTokens"
     headers = "headers"
     agent_identity = "agentIdentity"
@@ -2241,6 +2242,15 @@ class ApiKeyLoginAccountParams(BaseModel):
     )
     api_key: Annotated[str, Field(alias="apiKey")]
     type: Annotated[Literal["apiKey"], Field(title="ApiKeyv2::LoginAccountParamsType")]
+
+
+class ChatgptDirectLoginAccountParams(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    type: Annotated[
+        Literal["chatgptDirect"], Field(title="ChatgptDirectv2::LoginAccountParamsType")
+    ]
 
 
 class ChatgptDeviceCodeLoginAccountParams(BaseModel):
@@ -6793,11 +6803,22 @@ class ChatgptAccount(BaseModel):
     type: Annotated[Literal["chatgpt"], Field(title="ChatgptAccountType")]
 
 
-class Account(RootModel[ApiKeyAccount | ChatgptAccount | AmazonBedrockAccount]):
+class ChatgptDirectAccount(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
     )
-    root: ApiKeyAccount | ChatgptAccount | AmazonBedrockAccount
+    email: str | None = None
+    plan_type: Annotated[PlanType | None, Field(alias="planType")] = None
+    type: Annotated[Literal["chatgptDirect"], Field(title="ChatgptDirectAccountType")]
+
+
+class Account(
+    RootModel[ApiKeyAccount | ChatgptAccount | ChatgptDirectAccount | AmazonBedrockAccount]
+):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    root: ApiKeyAccount | ChatgptAccount | ChatgptDirectAccount | AmazonBedrockAccount
 
 
 class AccountLoginCompletedNotification(BaseModel):
@@ -8716,6 +8737,7 @@ class LoginAccountParams(
     RootModel[
         ApiKeyLoginAccountParams
         | ChatgptLoginAccountParams
+        | ChatgptDirectLoginAccountParams
         | ChatgptDeviceCodeLoginAccountParams
         | ChatgptAuthTokensLoginAccountParams
         | AmazonBedrockLoginAccountParams
@@ -8728,6 +8750,7 @@ class LoginAccountParams(
     root: Annotated[
         ApiKeyLoginAccountParams
         | ChatgptLoginAccountParams
+        | ChatgptDirectLoginAccountParams
         | ChatgptDeviceCodeLoginAccountParams
         | ChatgptAuthTokensLoginAccountParams
         | AmazonBedrockLoginAccountParams

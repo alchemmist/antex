@@ -15,9 +15,6 @@ def prepare_winget_package(package: Path) -> None:
     if metadata["entrypoint"] != "bin/antex.exe":
         raise ValueError("WinGet requires the canonical Antex entrypoint")
     entrypoint = f"antex-{target}.exe"
-    manifest_path = package / "antex-resources/voice/manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    manifest["sha256"][entrypoint] = manifest["sha256"].pop("bin/antex.exe")
     (package / "bin/antex.exe").rename(package / entrypoint)
     (package / "bin/antex-code-mode-host.exe").rename(
         package / "antex-code-mode-host.exe"
@@ -27,8 +24,7 @@ def prepare_winget_package(package: Path) -> None:
     for helper in ("antex-command-runner.exe", "antex-windows-sandbox-setup.exe"):
         shutil.copy2(package / "antex-resources" / helper, package / helper)
     metadata["entrypoint"] = entrypoint
-    for path, value in ((metadata_path, metadata), (manifest_path, manifest)):
-        path.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
+    metadata_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

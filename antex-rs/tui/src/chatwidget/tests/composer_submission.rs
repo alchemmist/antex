@@ -2580,7 +2580,6 @@ async fn reconnect_resumes_unsent_input_and_reconciles_confirmed_submissions() {
                         }],
                         Some(id),
                         /*from_replay*/ false,
-                        "turn-1",
                     );
                 }
             } else {
@@ -2720,7 +2719,6 @@ async fn image_submission_is_portable_for_new_turns_and_steers() {
                     &receipt,
                     echo_client_id.then_some(client_user_message_id.as_str()),
                     /*from_replay*/ false,
-                    "turn",
                 );
             }
             rendered.extend(drain_insert_history(&mut rx));
@@ -2734,7 +2732,6 @@ async fn image_submission_is_portable_for_new_turns_and_steers() {
                 &items,
                 Some(&client_user_message_id),
                 /*from_replay*/ true,
-                "turn",
             );
             let replayed = drain_insert_history(&mut rx);
             assert_eq!(replayed, rendered);
@@ -2845,7 +2842,6 @@ async fn image_preparation_failure_restores_full_input_without_submitting() {
                 }],
                 Some(&pending_steers[0].client_id),
                 /*from_replay*/ false,
-                "turn",
             );
             chat.input_queue.suppress_queue_autosend = false;
             handle_turn_completed(&mut chat, "turn", /*duration_ms*/ None);

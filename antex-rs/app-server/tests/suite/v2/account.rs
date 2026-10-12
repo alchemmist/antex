@@ -1,3 +1,6 @@
+#[path = "account_direct_tests.rs"]
+mod direct_tests;
+
 use anyhow::Result;
 use anyhow::bail;
 use app_test_support::TestAppServer;

@@ -181,7 +181,11 @@ impl TrustedAccessContext {
     }
 
     async fn fetch_status(&self) -> Option<Value> {
-        let auth = self.auth_manager.auth().await?;
+        // Bind this lookup to the source/epoch/identity that starts acquisition.
+        // Failed resolution is unknown entitlement status, never cached authority.
+        let owner = self.auth_manager.unauthorized_recovery();
+        let auth = self.auth_manager.auth_for_request().await.ok()??;
+        owner.ensure_same_owner().ok()?;
         let expected_account_id = self
             .auth
             .get_account_id()
@@ -214,6 +218,7 @@ impl TrustedAccessContext {
                 })
             })
             .collect::<Option<Vec<_>>>()?;
+        owner.ensure_same_owner().ok()?;
         let (response, mut response_body) = self
             .http_client
             .http_request_stream(HttpRequestParams {
@@ -252,6 +257,9 @@ impl TrustedAccessContext {
         }
         let program: VerifiedAccessProgram = serde_json::from_value(program).ok()?;
 
+        // Publication validates the completed request's owner, without resolving
+        // another credential. Cached metadata is not used for request headers.
+        owner.ensure_same_owner().ok()?;
         if self.auth_manager.auth_cached().is_none_or(|current| {
             !matches!(
                 current.api_auth_mode(),
@@ -263,6 +271,8 @@ impl TrustedAccessContext {
         }) {
             return None;
         }
+
+        owner.ensure_same_owner().ok()?;
 
         let status = match program.state {
             VerifiedAccessState::Active if !program.grants.is_empty() => "granted",

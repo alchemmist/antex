@@ -12,7 +12,6 @@ pub(crate) mod provider_selection;
 #[cfg(test)]
 #[path = "app_server_session/provider_selection_tests.rs"]
 mod provider_selection_tests;
-mod realtime;
 mod rollout_history;
 mod service_tiers;
 mod startup_launch;
@@ -314,12 +313,13 @@ pub(crate) struct AppServerBootstrap {
     pub(crate) status_account_display: Option<StatusAccountDisplay>,
     pub(crate) plan_type: Option<antex_protocol::account::PlanType>,
     /// Whether the configured model provider needs OpenAI-style auth. Combined
-    /// with `has_chatgpt_account` to decide if a startup rate-limit prefetch
+    /// with `has_antex_backend_auth` to decide if a startup rate-limit prefetch
     /// should be fired.
     pub(crate) requires_openai_auth: bool,
     pub(crate) default_model: String,
     pub(crate) feedback_audience: FeedbackAudience,
     pub(crate) has_chatgpt_account: bool,
+    pub(crate) has_antex_backend_auth: bool,
     pub(crate) available_models: Vec<ModelPreset>,
     pub(crate) collaboration_modes: Vec<antex_protocol::config_types::CollaborationModeMask>,
 }
@@ -756,6 +756,7 @@ impl AppServerSession {
         self.default_model = Some(default_model.clone());
         self.available_models = available_models.clone();
 
+        let has_antex_backend_auth = matches!(&account.account, Some(Account::Chatgpt { .. }));
         let (
             account_email,
             auth_mode,
@@ -793,6 +794,17 @@ impl AppServerSession {
                     true,
                 )
             }
+            Some(Account::ChatgptDirect { email, plan_type }) => (
+                email.clone(),
+                Some(TelemetryAuthMode::Chatgpt),
+                Some(StatusAccountDisplay::ChatGpt {
+                    email,
+                    plan: plan_type.map(plan_type_display_name),
+                }),
+                plan_type,
+                FeedbackAudience::External,
+                true,
+            ),
             Some(Account::AmazonBedrock { .. }) => {
                 (None, None, None, None, FeedbackAudience::External, false)
             }
@@ -808,6 +820,7 @@ impl AppServerSession {
             default_model,
             feedback_audience,
             has_chatgpt_account,
+            has_antex_backend_auth,
             available_models,
             collaboration_modes,
         })
@@ -1873,6 +1886,7 @@ pub(crate) fn status_account_display_from_auth_mode(
     match auth_mode {
         Some(AuthMode::ApiKey) => Some(StatusAccountDisplay::ApiKey),
         Some(AuthMode::Chatgpt)
+        | Some(AuthMode::ChatgptDirect)
         | Some(AuthMode::ChatgptAuthTokens)
         | Some(AuthMode::AgentIdentity)
         | Some(AuthMode::PersonalAccessToken) => Some(StatusAccountDisplay::ChatGpt {
@@ -2706,6 +2720,41 @@ mod tests {
             )
         );
 
+        app_server.shutdown().await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn direct_subscription_bootstrap_keeps_backend_operations_disabled() -> Result<()> {
+        let codex_home = tempfile::tempdir()?;
+        let config = build_config(&codex_home).await;
+        let mut app_server = crate::start_embedded_app_server_for_picker(&config).await?;
+        let account = GetAccountResponse {
+            workspace_routing: None,
+            account: Some(Account::ChatgptDirect {
+                email: None,
+                plan_type: None,
+            }),
+            requires_openai_auth: true,
+        };
+        let bootstrap = app_server.bootstrap_with_account(&config, account).await?;
+        assert_eq!(
+            (
+                bootstrap.auth_mode,
+                bootstrap.has_chatgpt_account,
+                bootstrap.has_antex_backend_auth,
+                bootstrap.status_account_display
+            ),
+            (
+                Some(TelemetryAuthMode::Chatgpt),
+                true,
+                false,
+                Some(StatusAccountDisplay::ChatGpt {
+                    email: None,
+                    plan: None
+                })
+            ),
+        );
         app_server.shutdown().await?;
         Ok(())
     }

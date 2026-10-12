@@ -11,7 +11,7 @@ fn model_theme_files_preserve_custom_precedence_and_invalid_file_warnings() {
     std::fs::write(&path, model_themes::THEMES[1].1).unwrap();
     assert_eq!(
         resolve_theme_by_name("ada", Some(home.path())),
-        resolve_theme_by_name("babbage", /*antex_home*/ None)
+        resolve_theme_by_name("babbage", /*codex_home*/ None)
     );
     let entries = list_available_themes(Some(home.path()));
     let entries = entries

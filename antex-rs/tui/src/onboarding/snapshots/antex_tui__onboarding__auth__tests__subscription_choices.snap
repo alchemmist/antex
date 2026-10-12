@@ -1,0 +1,20 @@
+---
+source: tui/src/onboarding/auth.rs
+expression: terminal.backend().to_string()
+---
+  Sign in with ChatGPT to use Antex as part of your paid plan
+  or connect an API key for usage-based billing
+
+> 1. ChatGPT subscription (recommended)
+     Use your ChatGPT subscription directly with OpenAI
+
+  2. ChatGPT via legacy Codex
+     Use the separate Codex service and its supported models
+
+  3. Legacy Codex device code
+     Sign in from another device with a one-time code
+
+  4. Provide your own API key
+     Pay for what you use
+
+  Press enter to continue

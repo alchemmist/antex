@@ -2,14 +2,12 @@ use super::ResponsesStreamRequest;
 use super::ResponsesStreamRetryState;
 use super::handle_response_stream_error;
 use super::log_retry;
-use crate::realtime_history::RealtimeHistoryState;
 use crate::session::step_context::StepContext;
 use crate::session::tests::make_session_and_context;
 use antex_http_client::RetryAfter;
 use antex_protocol::error::CodexErr;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::Mutex;
 use tokio::time::Instant;
 use tracing_test::internal::MockWriter;
 
@@ -52,14 +50,17 @@ async fn sampling_retry_logs_stream_error_context() {
 
 /// Time spent reporting a retry must count toward the server's original deadline.
 #[tokio::test]
-#[expect(
-    clippy::await_holding_invalid_type,
-    reason = "test holds the event-delivery lock to delay notification while virtual time advances"
-)]
 async fn stream_retry_preserves_deadline_across_delayed_notification() {
     let (mut session, turn_context) = make_session_and_context().await;
     let step_context = StepContext::for_test(Arc::new(turn_context));
-    session.realtime_history = Some(Mutex::new(RealtimeHistoryState::default()));
+    let (tx_event, rx_event) = async_channel::bounded(1);
+    tx_event
+        .try_send(antex_protocol::protocol::Event {
+            id: "queued-event".to_string(),
+            msg: antex_protocol::protocol::EventMsg::ShutdownComplete,
+        })
+        .expect("fill event channel");
+    session.tx_event = tx_event;
     let mut client_session = session.services.model_client.new_session();
     // The second retry emits a notification even when release builds hide the first.
     let mut retry_state = ResponsesStreamRetryState {
@@ -71,8 +72,7 @@ async fn stream_retry_preserves_deadline_across_delayed_notification() {
     let advice = RetryAfter::from_delay(Duration::from_secs(10)).expect("retry deadline");
     tokio::time::advance(Duration::from_secs(4)).await;
 
-    // Hold the event-delivery lock so reporting the error consumes part of the deadline.
-    let history_guard = session.realtime_history.as_ref().unwrap().lock().await;
+    // The full event channel delays reporting the error until the receiver makes room.
     let retry = handle_response_stream_error(
         &mut retry_state,
         /*max_retries*/ 2,
@@ -85,7 +85,9 @@ async fn stream_retry_preserves_deadline_across_delayed_notification() {
     tokio::pin!(retry);
     assert!(futures::poll!(&mut retry).is_pending());
     tokio::time::advance(Duration::from_secs(4)).await;
-    drop(history_guard);
+    rx_event
+        .try_recv()
+        .expect("make room for the retry notification");
 
     assert!(futures::poll!(&mut retry).is_pending());
     tokio::time::advance(Duration::from_secs(1)).await;

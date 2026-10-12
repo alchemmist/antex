@@ -416,12 +416,6 @@ impl ChatWidget {
                 self.app_event_tx
                     .send(AppEvent::OpenWorkflowPicker { workflow_id: None });
             }
-            SlashCommand::Voice => {
-                self.app_event_tx.send(AppEvent::VoiceControl {
-                    thread_id: self.thread_id(),
-                    control: crate::app_event::VoiceControl::Toggle,
-                });
-            }
             SlashCommand::Side | SlashCommand::Btw => {
                 self.request_empty_side_conversation(cmd);
             }
@@ -896,18 +890,6 @@ impl ChatWidget {
                     }
                 }
             }
-            SlashCommand::Voice => match trimmed.to_ascii_lowercase().as_str() {
-                "settings" => self.app_event_tx.send(AppEvent::OpenRealtimeSettings),
-                "mute" => self.app_event_tx.send(AppEvent::VoiceControl {
-                    thread_id: self.thread_id(),
-                    control: crate::app_event::VoiceControl::Mute,
-                }),
-                "stop" => self.app_event_tx.send(AppEvent::VoiceControl {
-                    thread_id: self.thread_id(),
-                    control: crate::app_event::VoiceControl::Stop,
-                }),
-                _ => self.add_error_message("Usage: /voice [settings|mute|stop]".to_string()),
-            },
             SlashCommand::Ide => {
                 self.handle_ide_command_args(trimmed);
             }
@@ -1325,7 +1307,6 @@ impl ChatWidget {
             goal_command_enabled: self.config.features.enabled(Feature::Goals),
             service_tier_commands_enabled: !self.current_model_service_tier_commands().is_empty(),
             daybreak_command_description: self.daybreak_command_description(),
-            voice_command_enabled: self.realtime_conversation_available_for_thread,
             worktrees_enabled: self.config.features.enabled(Feature::Worktrees)
                 && self.local_worktree_operations,
             allow_elevate_sandbox,
@@ -1371,7 +1352,6 @@ impl ChatWidget {
             | SlashCommand::Diff
             | SlashCommand::App
             | SlashCommand::Rename
-            | SlashCommand::Voice
             | SlashCommand::Recap
             | SlashCommand::TestApproval => QueueDrain::Continue,
             SlashCommand::Cd => match self.thread_id {

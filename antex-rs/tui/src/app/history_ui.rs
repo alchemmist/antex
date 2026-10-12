@@ -74,6 +74,13 @@ impl App {
             return;
         }
         let is_session_header = cell.as_any().is::<history_cell::SessionInfoCell>();
+        if is_session_header {
+            tracing::debug!(
+                target: "antex_tui::startup_mascot",
+                has_animation = self.startup_mascot_animation.is_some(),
+                "startup mascot session header insertion"
+            );
+        }
         if let Some(animation) = self.startup_mascot_animation.as_ref()
             && let Some(header) = cell
                 .as_any_mut()

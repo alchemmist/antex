@@ -428,7 +428,12 @@ impl ResponsesWebsocketClient {
 
         let mut headers =
             merge_request_headers(&self.provider.headers, extra_headers, default_headers);
-        self.auth.add_auth_headers(&mut headers);
+        headers.extend(
+            self.auth
+                .resolve_auth_headers()
+                .await
+                .map_err(antex_http_client::TransportError::from)?,
+        );
 
         let connector = WebSocketConnector::new(http_client_factory)
             .map_err(|err| ApiError::Stream(format!("failed to configure websocket TLS: {err}")))?;

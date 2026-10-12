@@ -19,6 +19,16 @@ pub(super) fn same_owner(previous: Option<&AntexAuth>, current: Option<&AntexAut
     if previous.api_auth_mode() != current.api_auth_mode() {
         return false;
     }
+    if matches!(previous, AntexAuth::ChatgptDirect(_)) {
+        let registration = |auth: &AntexAuth| {
+            auth.get_token_data()
+                .ok()
+                .and_then(|tokens| tokens.direct)
+                .map(|direct| direct.client_id)
+        };
+        let previous = registration(previous);
+        return previous.is_some() && previous == registration(current);
+    }
     let (Some(user), Some(workspace)) = (previous.get_chatgpt_user_id(), previous.get_account_id())
     else {
         return false;

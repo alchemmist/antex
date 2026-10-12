@@ -70,7 +70,11 @@ impl AppsRequestProcessor {
                 .set_enabled(Feature::Apps, thread.enabled(Feature::Apps));
         }
 
-        let auth = self.auth_manager.auth().await;
+        let auth = self
+            .auth_manager
+            .auth_for_request()
+            .await
+            .map_err(|_| internal_error("failed to resolve request authentication"))?;
         if !config
             .features
             .apps_enabled_for_auth(auth.as_ref().is_some_and(AntexAuth::uses_antex_backend))

@@ -1,4 +1,7 @@
 use super::*;
+
+#[path = "lazy_recovery_tests.rs"]
+mod lazy_recovery_tests;
 use crate::auth::storage::FileAuthStorage;
 use crate::auth::storage::get_auth_file;
 use crate::token_data::IdTokenInfo;
@@ -76,13 +79,17 @@ async fn refresh_without_id_token() {
         AuthCredentialsStoreMode::File,
         AuthKeyringBackendKind::default(),
     );
-    let updated = super::persist_tokens(
-        &storage,
-        /*id_token*/ None,
-        Some("new-access-token".to_string()),
-        Some("new-refresh-token".to_string()),
+    let original = storage.load().unwrap().unwrap();
+    let updated = super::refresh::refreshed_legacy(
+        original.clone(),
+        super::RefreshResponse {
+            id_token: None,
+            access_token: Some("new-access-token".to_string()),
+            refresh_token: Some("new-refresh-token".to_string()),
+        },
     )
     .expect("update_tokens should succeed");
+    storage.replace_if_matches(&original, &updated).unwrap();
 
     let tokens = updated.tokens.expect("tokens should exist");
     assert_eq!(tokens.id_token.raw_jwt, fake_jwt);
@@ -1065,6 +1072,7 @@ async fn pro_account_with_no_api_key_uses_chatgpt_auth() {
                 access_token: "test-access-token".to_string(),
                 refresh_token: "test-refresh-token".to_string(),
                 account_id: None,
+                direct: None,
             }),
             last_refresh: Some(last_refresh),
             agent_identity: None,
@@ -1155,16 +1163,16 @@ async fn unauthorized_recovery_reports_mode_and_step_names() {
     let managed = UnauthorizedRecovery {
         manager: Arc::clone(&manager),
         step: UnauthorizedRecoveryStep::Reload,
-        expected_account_id: None,
+        owner: recovery::RecoveryOwner::capture(&manager),
         mode: UnauthorizedRecoveryMode::Managed,
     };
     assert_eq!(managed.mode_name(), "managed");
     assert_eq!(managed.step_name(), "reload");
 
     let external = UnauthorizedRecovery {
-        manager,
+        manager: Arc::clone(&manager),
         step: UnauthorizedRecoveryStep::ExternalRefresh,
-        expected_account_id: None,
+        owner: recovery::RecoveryOwner::capture(&manager),
         mode: UnauthorizedRecoveryMode::External,
     };
     assert_eq!(external.mode_name(), "external");

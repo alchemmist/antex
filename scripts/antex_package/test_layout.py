@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
 from pathlib import Path
-import hashlib
 import json
 import shutil
 import subprocess
@@ -90,7 +89,7 @@ int main(void) {
                             (package / "antex-resources/bwrap").read_bytes(), original
                         )
 
-    def test_winget_preserves_signed_files_and_voice_hashes(self) -> None:
+    def test_winget_preserves_signed_files(self) -> None:
         for target in ("x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc"):
             with self.subTest(target=target), tempfile.TemporaryDirectory() as temp:
                 package = Path(temp)
@@ -99,9 +98,6 @@ int main(void) {
                     "bin/antex-code-mode-host.exe": b"signed code mode host",
                     "antex-resources/antex-command-runner.exe": b"signed runner",
                     "antex-resources/antex-windows-sandbox-setup.exe": b"signed setup",
-                    "antex-resources/voice/bin/antex-voice-host.exe": b"signed voice host",
-                    "antex-resources/voice/bin/gstreamer-1.0-0.dll": b"signed audio DLL",
-                    "antex-resources/voice/NOTICE.md": b"license notices",
                     "antex-path/rg.exe": b"ripgrep",
                 }
                 for name, contents in files.items():
@@ -114,17 +110,6 @@ int main(void) {
                     "entrypoint": "bin/antex.exe",
                 }
                 (package / "antex-package.json").write_text(json.dumps(metadata))
-                manifest = {
-                    "schemaVersion": 1,
-                    "sha256": {
-                        name: hashlib.sha256(contents).hexdigest()
-                        for name, contents in files.items()
-                        if name == "bin/antex.exe"
-                        or name.startswith("antex-resources/voice/")
-                    },
-                }
-                manifest_path = package / "antex-resources/voice/manifest.json"
-                manifest_path.write_text(json.dumps(manifest))
                 prepare_winget_package(package)
                 entrypoint = f"antex-{target}.exe"
                 files[entrypoint] = files.pop("bin/antex.exe")
@@ -142,16 +127,9 @@ int main(void) {
                     if path.is_file()
                 }
                 actual_metadata = json.loads(actual.pop("antex-package.json"))
-                actual_manifest = json.loads(
-                    actual.pop("antex-resources/voice/manifest.json")
-                )
                 self.assertEqual(actual, files)
                 metadata["entrypoint"] = entrypoint
                 self.assertEqual(actual_metadata, metadata)
-                manifest["sha256"][entrypoint] = manifest["sha256"].pop("bin/antex.exe")
-                self.assertEqual(actual_manifest, manifest)
-                for name, digest in actual_manifest["sha256"].items():
-                    self.assertEqual(hashlib.sha256(actual[name]).hexdigest(), digest)
 
     def test_macos_package_preserves_prebuilt_resource_binaries(self) -> None:
         for variant_name in ("antex", "antex-app-server"):

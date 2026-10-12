@@ -3,7 +3,6 @@ import importlib.util
 import json
 import os
 import platform
-import shutil
 import subprocess
 import sys
 import tarfile
@@ -32,8 +31,6 @@ class PackageInstallationTests(unittest.TestCase):
             "bin/antex-code-mode-host",
             "antex-path/rg",
             "antex-resources/bwrap",
-            "antex-resources/voice/bin/antex-voice-host",
-            "antex-resources/voice/lib/libgstreamer-1.0.so.0",
         ]
         for name in self.files:
             path = self.source / name
@@ -53,18 +50,6 @@ class PackageInstallationTests(unittest.TestCase):
                 }
             )
         )
-        (self.source / "antex-resources/voice/manifest.json").write_text(
-            json.dumps(
-                {
-                    "sha256": {
-                        name: hashlib.sha256(
-                            (self.source / name).read_bytes()
-                        ).hexdigest()
-                        for name in self.files
-                    },
-                }
-            )
-        )
 
     def test_preserves_resources_and_physical_package_layout_after_upgrade(self):
         self.destination.mkdir()
@@ -79,6 +64,11 @@ class PackageInstallationTests(unittest.TestCase):
             {name: (self.source / name).read_bytes() for name in self.files},
         )
         self.assertEqual((first / "bin/antex").read_bytes(), b"bin/antex")
+        backups = list((self.destination / ".antex-packages").glob("previous-*/antex"))
+        self.assertEqual(
+            sorted(path.read_bytes() for path in backups),
+            sorted([b"previous flat binary", b"bin/antex"]),
+        )
         self.assertEqual(
             (self.destination / "antex-code-mode-host").resolve(),
             second / "bin/antex-code-mode-host",
@@ -90,15 +80,13 @@ class PackageInstallationTests(unittest.TestCase):
         subprocess.run(
             [
                 sys.executable,
-                str(repository / "scripts/build_antex_package.py"),
+                str(repository / "scripts/package-fork.py"),
                 "--target",
                 self.target,
-                "--package-dir",
+                "--output",
                 str(package),
-                "--package-version",
-                "0.1.4",
-                "--strip",
-                "none",
+                "--commit",
+                "a" * 40,
                 "--entrypoint-bin",
                 str(self.source / "bin/antex"),
                 "--code-mode-host-bin",
@@ -110,10 +98,6 @@ class PackageInstallationTests(unittest.TestCase):
             ],
             env=os.environ | {"ANTEX_REPO_ROOT": str(repository)},
             check=True,
-        )
-        shutil.copytree(
-            self.source / "antex-resources/voice",
-            package / "antex-resources/voice",
         )
         MODULE.install_package(package, self.destination, self.target)
         installed = (self.destination / "antex").resolve().parent.parent
@@ -137,7 +121,7 @@ class PackageInstallationTests(unittest.TestCase):
     def test_requires_every_current_executable_before_changing_installation(self):
         MODULE.install_package(self.source, self.destination, self.target)
         installed = (self.destination / "antex").resolve()
-        for name in self.files[:-1]:
+        for name in self.files:
             with self.subTest(executable=name):
                 executable = self.source / name
                 content = executable.read_bytes()
@@ -152,12 +136,13 @@ class PackageInstallationTests(unittest.TestCase):
                     executable.write_bytes(content)
                     executable.chmod(0o755)
 
-    def test_rejects_damaged_runtime_before_changing_installation(self):
+    def test_rejects_incompatible_target_before_changing_installation(self):
         MODULE.install_package(self.source, self.destination, self.target)
         installed = (self.destination / "antex").resolve()
-        (self.source / self.files[-1]).write_bytes(b"corrupted")
-        with self.assertRaisesRegex(ValueError, "checksum mismatch"):
-            MODULE.install_package(self.source, self.destination, self.target)
+        with self.assertRaisesRegex(ValueError, "incompatible package layout"):
+            MODULE.install_package(
+                self.source, self.destination, "aarch64-apple-darwin"
+            )
         self.assertEqual((self.destination / "antex").resolve(), installed)
 
     @unittest.skipUnless(

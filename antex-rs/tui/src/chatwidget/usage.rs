@@ -30,7 +30,7 @@ impl ChatWidget {
     }
 
     fn usage_menu_params(&self) -> SelectionViewParams {
-        let reset_eligible = self.has_chatgpt_account;
+        let reset_eligible = self.has_antex_backend_auth;
         let (reset_action_enabled, reset_description) =
             match (reset_eligible, self.available_rate_limit_reset_credits) {
                 (true, Some(available_count)) if available_count > 0 => {

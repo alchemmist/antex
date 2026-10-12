@@ -364,7 +364,7 @@ async fn daybreak_discards_in_flight_account_changes_without_apps() -> Result<()
         .build_with_remote_and_local_env(&server)
         .await?;
     wait_for_mcp_server(&test.antex, "sample").await?;
-    responses::mount_sse_sequence(
+    let model_requests = responses::mount_sse_sequence(
         &server,
         vec![
             responses::sse(vec![
@@ -382,10 +382,6 @@ async fn daybreak_discards_in_flight_account_changes_without_apps() -> Result<()
                     "{}",
                 ),
                 responses::ev_completed("resp-2"),
-            ]),
-            responses::sse(vec![
-                responses::ev_assistant_message("done", "done"),
-                responses::ev_completed("resp-3"),
             ]),
         ],
     )
@@ -424,6 +420,21 @@ async fn daybreak_discards_in_flight_account_changes_without_apps() -> Result<()
     let (result, switched) = tokio::join!(call, switch);
     switched?;
     response_task.await??;
+    let error = wait_for_event(&test.antex, |event| matches!(event, EventMsg::Error(_))).await;
+    let EventMsg::Error(error) = error else {
+        unreachable!()
+    };
+    assert!(error.message.contains("Authentication owner changed"));
+    // The original turn must stop before sending its context under the new
+    // account. Entitlement metadata below must still discard the stale result.
+    let requests = model_requests.requests();
+    assert_eq!(requests.len(), 2);
+    for request in requests {
+        assert_eq!(
+            request.header("chatgpt-account-id"),
+            Some("account_id".to_string())
+        );
+    }
     wait_for_event(&test.antex, |event| {
         matches!(event, EventMsg::TurnComplete(_))
     })

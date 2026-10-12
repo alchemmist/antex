@@ -97,12 +97,7 @@ use antex_app_server_protocol::ThreadLoadedListParams;
 use antex_app_server_protocol::ThreadMemoryModeSetParams;
 use antex_app_server_protocol::ThreadMetadataUpdateParams;
 use antex_app_server_protocol::ThreadReadParams;
-use antex_app_server_protocol::ThreadRealtimeAppendAudioParams;
-use antex_app_server_protocol::ThreadRealtimeAppendSpeechParams;
-use antex_app_server_protocol::ThreadRealtimeAppendTextParams;
-use antex_app_server_protocol::ThreadRealtimeListVoicesParams;
 use antex_app_server_protocol::ThreadRealtimeStartParams;
-use antex_app_server_protocol::ThreadRealtimeStopParams;
 use antex_app_server_protocol::ThreadResumeParams;
 use antex_app_server_protocol::ThreadSearchOccurrencesParams;
 use antex_app_server_protocol::ThreadSearchParams;
@@ -1187,59 +1182,11 @@ impl TestAppServer {
         self.send_request("thread/realtime/start", params).await
     }
 
-    /// Send a `thread/realtime/appendAudio` JSON-RPC request (v2).
-    pub async fn send_thread_realtime_append_audio_request(
-        &mut self,
-        params: ThreadRealtimeAppendAudioParams,
-    ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("thread/realtime/appendAudio", params)
-            .await
-    }
-
-    /// Send a `thread/realtime/appendText` JSON-RPC request (v2).
-    pub async fn send_thread_realtime_append_text_request(
-        &mut self,
-        params: ThreadRealtimeAppendTextParams,
-    ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("thread/realtime/appendText", params)
-            .await
-    }
-
-    /// Send a `thread/realtime/appendSpeech` JSON-RPC request (v2).
-    pub async fn send_thread_realtime_append_speech_request(
-        &mut self,
-        params: ThreadRealtimeAppendSpeechParams,
-    ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("thread/realtime/appendSpeech", params)
-            .await
-    }
-
-    /// Send a `thread/realtime/stop` JSON-RPC request (v2).
-    pub async fn send_thread_realtime_stop_request(
-        &mut self,
-        params: ThreadRealtimeStopParams,
-    ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("thread/realtime/stop", params).await
-    }
-
     pub async fn send_thread_timeline_list_request(
         &mut self,
         params: ThreadTimelineListParams,
     ) -> anyhow::Result<i64> {
         self.send_request("thread/timeline/list", Some(serde_json::to_value(params)?))
-            .await
-    }
-
-    pub async fn send_thread_realtime_list_voices_request(
-        &mut self,
-        params: ThreadRealtimeListVoicesParams,
-    ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("thread/realtime/listVoices", params)
             .await
     }
 

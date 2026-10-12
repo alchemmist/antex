@@ -1,50 +1,7 @@
 use super::*;
-use crate::chatwidget::realtime::tests::activate_voice_for_thread;
 use pretty_assertions::assert_eq;
 
 const ERROR_MESSAGE: &str = "Responses API returned misalignment_policy_violation";
-
-#[tokio::test]
-async fn misalignment_precaution_retires_voice_and_keeps_late_turn_blocked() {
-    let (mut chat, _events, mut ops) = make_chatwidget_manual(/*model_override*/ None).await;
-    let thread_id = ThreadId::new();
-    chat.thread_id = Some(thread_id);
-    handle_turn_started(&mut chat, "unsafe-turn");
-    activate_voice_for_thread(&mut chat, thread_id);
-
-    handle_error(
-        &mut chat,
-        ERROR_MESSAGE,
-        Some(CodexErrorInfo::MisalignmentPolicyViolation),
-    );
-
-    assert!(!chat.realtime_conversation_is_running());
-    assert_matches!(
-        ops.try_recv(),
-        Ok(Op::RealtimeConversationStop { thread_id: stopped }) if stopped == thread_id
-    );
-    assert!(ops.try_recv().is_err());
-    assert!(chat.has_misalignment_policy_violation());
-    assert!(!chat.bottom_pane.composer_input_enabled());
-    assert!(chat.submit_op(Op::RealtimeConversationStop { thread_id }));
-    assert_matches!(ops.try_recv(), Ok(Op::RealtimeConversationStop { .. }));
-
-    // A handoff already in flight may still produce a TurnStarted notification.
-    // It must not dismiss the precaution or restart local capture.
-    handle_turn_started(&mut chat, "late-voice-turn");
-    assert!(chat.has_misalignment_policy_violation());
-    assert!(!chat.bottom_pane.composer_input_enabled());
-    chat.toggle_realtime_conversation();
-    assert!(!chat.realtime_conversation_is_running());
-    assert!(ops.try_recv().is_err());
-
-    chat.clear_misalignment_for_new_turn(
-        "acknowledged-turn",
-        MisalignmentTurnSource::AcknowledgedContinuation,
-    );
-    assert!(!chat.has_misalignment_policy_violation());
-    assert!(chat.bottom_pane.composer_input_enabled());
-}
 
 #[tokio::test]
 async fn misalignment_policy_failure_stops_the_thread_and_renders_once() {
@@ -220,10 +177,7 @@ async fn misalignment_turn_end_discards_history_search_and_question_drafts() {
 
     assert_eq!(chat.capture_thread_input_state().unwrap().composer, None);
     assert_eq!(chat.bottom_pane.question_editor().unanswered_count(), 0);
-    chat.clear_misalignment_for_new_turn(
-        "acknowledged-turn",
-        MisalignmentTurnSource::AcknowledgedContinuation,
-    );
+    chat.clear_misalignment_for_new_turn("acknowledged-turn");
     assert!(chat.bottom_pane.no_modal_or_popup_active());
     chat.handle_key_event(KeyEvent::from(KeyCode::Esc));
     assert_eq!(chat.capture_thread_input_state().unwrap().composer, None);

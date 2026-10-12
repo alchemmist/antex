@@ -25,13 +25,12 @@ use antex_protocol::AgentPath;
 use antex_protocol::config_types::CollaborationModeMask;
 use antex_protocol::openai_models::ModelInfo;
 use antex_protocol::openai_models::ModelsResponse;
-use antex_protocol::protocol::EventMsg;
 use antex_protocol::protocol::InterAgentCommunication;
 use antex_protocol::protocol::Op;
 use antex_protocol::user_input::UserInput;
 use core_test_support::responses;
 use core_test_support::test_antex::test_antex;
-use core_test_support::wait_for_event;
+use core_test_support::wait_for_submission_barrier;
 use pretty_assertions::assert_eq;
 use tokio::sync::Notify;
 use tokio::sync::TryLockError;
@@ -180,11 +179,7 @@ async fn interrupt_during_wake_context_construction_does_not_start_turn() -> any
             start_options: Default::default(),
         })
         .await?;
-    codex.submit(Op::RealtimeConversationListVoices).await?;
-    wait_for_event(codex, |event| {
-        matches!(event, EventMsg::RealtimeConversationListVoicesResponse(_))
-    })
-    .await;
+    wait_for_submission_barrier(codex).await?;
     models
         .gate_next_lookup
         .store(/*val*/ true, Ordering::SeqCst);
@@ -194,11 +189,7 @@ async fn interrupt_during_wake_context_construction_does_not_start_turn() -> any
     // Process the interrupt before allowing that context construction to finish.
     models.context_build.entered.notified().await;
     codex.submit(Op::Interrupt).await?;
-    codex.submit(Op::RealtimeConversationListVoices).await?;
-    wait_for_event(codex, |event| {
-        matches!(event, EventMsg::RealtimeConversationListVoicesResponse(_))
-    })
-    .await;
+    wait_for_submission_barrier(codex).await?;
     models.context_build.release.notify_one();
     sleeping_turn.finished.notified().await;
 

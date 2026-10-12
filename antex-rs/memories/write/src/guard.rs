@@ -13,7 +13,13 @@ pub(crate) async fn rate_limits_ok(auth_manager: &AuthManager, config: &Config) 
 }
 
 async fn rate_limits_check(auth_manager: &AuthManager, config: &Config) -> Option<bool> {
-    let auth = auth_manager.auth().await?;
+    let auth = match auth_manager.auth_for_request().await {
+        Ok(auth) => auth?,
+        Err(_) => {
+            warn!("skipping memories startup because request authentication failed");
+            return Some(false);
+        }
+    };
     if !auth.uses_antex_backend() {
         return None;
     }

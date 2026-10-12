@@ -9,11 +9,7 @@ use sha2::Sha256;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::fs::File;
-use std::fs::OpenOptions;
 use std::io::Read;
-use std::io::Write;
-#[cfg(unix)]
-use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -45,7 +41,7 @@ use antex_secrets::SecretsManager;
 use once_cell::sync::Lazy;
 
 /// Expected structure for $ANTEX_HOME/auth.json.
-#[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
+#[derive(Deserialize, Serialize, Clone, PartialEq)]
 pub struct AuthDotJson {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth_mode: Option<AuthMode>,
@@ -70,6 +66,14 @@ pub struct AuthDotJson {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bedrock_access_keys: Option<BedrockAccessKeysAuth>,
+}
+
+impl std::fmt::Debug for AuthDotJson {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthDotJson")
+            .field("auth_mode", &self.auth_mode)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
@@ -176,6 +180,34 @@ pub(super) trait AuthStorageBackend: Debug + Send + Sync {
     fn load(&self) -> std::io::Result<Option<AuthDotJson>>;
     fn save(&self, auth: &AuthDotJson) -> std::io::Result<()>;
     fn delete(&self) -> std::io::Result<bool>;
+
+    fn revision(&self) -> std::io::Result<Option<String>> {
+        Ok(None)
+    }
+
+    fn try_transaction(&self) -> std::io::Result<Option<Arc<dyn AuthStorageBackend>>> {
+        Err(std::io::Error::other(
+            "Auth storage does not support transactions",
+        ))
+    }
+    fn try_refresh_lease(&self) -> std::io::Result<Option<super::storage_ownership::Lease>> {
+        Err(std::io::Error::other(
+            "Auth storage does not support refresh ownership",
+        ))
+    }
+
+    fn replace_if_matches(
+        &self,
+        expected: &AuthDotJson,
+        updated: &AuthDotJson,
+    ) -> std::io::Result<()> {
+        if self.load()?.as_ref() != Some(expected) {
+            return Err(std::io::Error::other(
+                "Credentials changed during token refresh",
+            ));
+        }
+        self.save(updated)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -218,16 +250,8 @@ impl AuthStorageBackend for FileAuthStorage {
             std::fs::create_dir_all(parent)?;
         }
         let json_data = serde_json::to_string_pretty(auth_dot_json)?;
-        let mut options = OpenOptions::new();
-        options.truncate(true).write(true).create(true);
-        #[cfg(unix)]
-        {
-            options.mode(0o600);
-        }
-        let mut file = options.open(auth_file)?;
-        file.write_all(json_data.as_bytes())?;
-        file.flush()?;
-        Ok(())
+        crate::atomic_file::PendingFile::write(&auth_file, json_data.as_bytes())?
+            .replace(&auth_file)
     }
 
     fn delete(&self) -> std::io::Result<bool> {
@@ -598,6 +622,10 @@ fn create_auth_storage_with_store(
     keyring_store: Arc<dyn KeyringStore>,
     keyring_backend_kind: AuthKeyringBackendKind,
 ) -> Arc<dyn AuthStorageBackend> {
+    let scope = super::storage_ownership::LockScope {
+        home: codex_home.clone(),
+        ephemeral: mode == AuthCredentialsStoreMode::Ephemeral,
+    };
     let storage: Arc<dyn AuthStorageBackend> = match mode {
         AuthCredentialsStoreMode::File => Arc::new(FileAuthStorage::new(codex_home)),
         AuthCredentialsStoreMode::Keyring => {
@@ -610,7 +638,10 @@ fn create_auth_storage_with_store(
         )),
         AuthCredentialsStoreMode::Ephemeral => Arc::new(EphemeralAuthStorage::new(codex_home)),
     };
-    storage_telemetry::observe(storage, mode, keyring_backend_kind)
+    super::storage_transaction::TransactionalStorage::wrap(
+        storage_telemetry::observe(storage, mode, keyring_backend_kind),
+        scope,
+    )
 }
 
 fn create_keyring_auth_storage(

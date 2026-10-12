@@ -251,9 +251,6 @@ impl ChatWidget {
     /// Animated titles record their next refresh for the foreground loop, independently
     /// of full TUI redraws.
     fn refresh_terminal_title_from_selections(&mut self, selections: &StatusSurfaceSelections) {
-        if self.app_event_tx.voice_only.load(Ordering::Relaxed) {
-            return;
-        }
         self.last_terminal_title_requires_action =
             self.terminal_title_shows_action_required_with_selections(selections);
         let now = Instant::now();
@@ -349,11 +346,7 @@ impl ChatWidget {
     ) -> Option<String> {
         if self.terminal_title_shows_action_required_with_selections(selections) {
             let title = self.action_required_terminal_title_text(selections, now);
-            return Some(if self.realtime_microphone_is_listening() {
-                format!("● {title}")
-            } else {
-                title
-            });
+            return Some(title);
         }
 
         let mut previous = None;
@@ -1015,7 +1008,7 @@ impl ChatWidget {
                     .find(|tier| tier.id == service_tier)
                     .map(|tier| tier.name)
             })
-            .filter(|_| self.has_chatgpt_account)
+            .filter(|_| self.has_antex_backend_auth)
             .map(|tier| format!(" {tier}"))
             .unwrap_or_default();
         format!("{} {label}{service_tier_label}", self.model_display_name())
@@ -1053,13 +1046,6 @@ impl ChatWidget {
             && self.local_settings.tui.effects.progress
             && self.terminal_title_has_active_progress())
         .then(|| self.terminal_title_spinner_frame_at(now));
-        if self.realtime_microphone_is_listening() {
-            return Some(match spinner {
-                Some(frame) => format!("● {frame}"),
-                None => "●".to_string(),
-            });
-        }
-
         spinner.map(str::to_string)
     }
 

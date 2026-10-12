@@ -8,7 +8,9 @@ use ratatui::text::Line;
 
 #[test]
 fn repaint_header_preserves_shell_notices_and_composer() {
-    let backend = VT100Backend::with_scrollback(40, 16, 32);
+    let backend = VT100Backend::with_scrollback(
+        /*width*/ 40, /*height*/ 16, /*scrollback_len*/ 32,
+    );
     let mut terminal =
         Terminal::with_options_and_cursor_position(backend, Position::new(0, 2)).unwrap();
     write!(terminal.backend_mut(), "SHELL HISTORY\r\n$ antex\r\n").unwrap();
@@ -38,7 +40,7 @@ fn repaint_header_preserves_shell_notices_and_composer() {
         &mut terminal,
         &previous,
         &next,
-        1,
+        /*rows_after*/ 1,
         HistoryLineWrapPolicy::PreWrap,
     )
     .unwrap();
@@ -49,7 +51,7 @@ fn repaint_header_preserves_shell_notices_and_composer() {
 
 #[test]
 fn clear_visible_history_preserves_shell_prefix() {
-    let backend = VT100Backend::new(40, 16);
+    let backend = VT100Backend::new(/*width*/ 40, /*height*/ 16);
     let mut terminal =
         Terminal::with_options_and_cursor_position(backend, Position::new(0, 2)).unwrap();
     write!(terminal.backend_mut(), "SHELL HISTORY\r\n$ antex\r\n").unwrap();

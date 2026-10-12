@@ -32,6 +32,8 @@ use std::sync::OnceLock;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 
+#[path = "client_auth_owner.rs"]
+mod auth_owner;
 #[path = "client_tool_metadata.rs"]
 mod tool_metadata;
 
@@ -46,8 +48,6 @@ use antex_api::MemorySummarizeInput as ApiMemorySummarizeInput;
 use antex_api::MemorySummarizeOutput as ApiMemorySummarizeOutput;
 use antex_api::Provider as ApiProvider;
 use antex_api::RawMemory as ApiRawMemory;
-use antex_api::RealtimeCallClient as ApiRealtimeCallClient;
-use antex_api::RealtimeSessionConfig as ApiRealtimeSessionConfig;
 use antex_api::Reasoning;
 use antex_api::ReasoningContext;
 use antex_api::RequestTelemetry;
@@ -157,6 +157,14 @@ use antex_response_debug_context::extract_response_debug_context_from_api_error;
 use antex_response_debug_context::telemetry_api_error_message;
 use antex_response_debug_context::telemetry_transport_error_message;
 
+#[cfg(test)]
+#[path = "client_test_transport.rs"]
+mod test_transport;
+#[cfg(test)]
+use test_transport::ApiTransport;
+#[cfg(not(test))]
+type ApiTransport = ReqwestTransport;
+
 pub const OPENAI_BETA_HEADER: &str = "OpenAI-Beta";
 pub const X_ANTEX_INSTALLATION_ID_HEADER: &str = "x-codex-installation-id";
 pub const X_ANTEX_ROUTING_HINT_HEADER: &str = "x-codex-routing-hint";
@@ -175,7 +183,6 @@ const WS_REQUEST_HEADER_RESPONSES_LITE_CLIENT_METADATA_KEY: &str =
 const RESPONSES_WEBSOCKETS_V2_BETA_HEADER_VALUE: &str = "responses_websockets=2026-02-06";
 const X_OPENAI_INTERNAL_ANTEX_RESPONSES_LITE_HEADER: &str =
     "x-openai-internal-codex-responses-lite";
-const REALTIME_CALLS_ENDPOINT: &str = "/realtime/calls";
 const MEMORIES_SUMMARIZE_ENDPOINT: &str = "/memories/trace_summarize";
 #[cfg(test)]
 pub(crate) const WEBSOCKET_CONNECT_TIMEOUT: Duration =
@@ -222,6 +229,8 @@ struct ModelClientState {
     latest_model_request: StdMutex<Option<String>>,
     /// Last full tool list used for sampling, retained across turns and connection resets.
     last_inference_tools: StdMutex<Option<Arc<[ToolSpec]>>>,
+    #[cfg(test)]
+    test_transport: Option<test_transport::StreamHook>,
 }
 
 enum ClientRouting {
@@ -295,6 +304,7 @@ pub struct ModelClient {
 /// contract and can cause routing bugs.
 pub struct ModelClientSession {
     client: ModelClient,
+    operation_owner: Option<Arc<UnauthorizedRecovery>>,
     websocket_session: WebsocketSession,
     /// Turn state for sticky routing.
     ///
@@ -505,28 +515,6 @@ enum WebsocketStreamOutcome {
     FallbackToHttp,
 }
 
-/// Result of opening a WebRTC Realtime call.
-///
-/// The SDP answer goes back to the client. The call id and auth headers stay on the server so the
-/// ordinary Realtime WebSocket machinery can join the same in-progress call as a sideband
-/// controller.
-pub(crate) struct RealtimeWebrtcCallStart {
-    pub(crate) sdp: String,
-    pub(crate) call_id: String,
-    pub(crate) sideband_headers: ApiHeaderMap,
-}
-
-/// Reuses the API-auth material that created the WebRTC call for the sideband WebSocket join.
-///
-/// API-key sessions send that API bearer. ChatGPT-auth sessions send their bearer plus account id;
-/// transceiver is responsible for accepting that same call-create identity on the direct
-/// `api.openai.com` sideband path.
-fn sideband_websocket_auth_headers(api_auth: &dyn AuthProvider) -> ApiHeaderMap {
-    let mut headers = ApiHeaderMap::new();
-    api_auth.add_auth_headers(&mut headers);
-    headers
-}
-
 impl ModelClient {
     #[allow(clippy::too_many_arguments)]
     /// Creates a new session-scoped `ModelClient`.
@@ -596,6 +584,8 @@ impl ModelClient {
                 cached_websocket_session: StdMutex::new(WebsocketSession::default()),
                 latest_model_request: StdMutex::new(None),
                 last_inference_tools: StdMutex::new(None),
+                #[cfg(test)]
+                test_transport: None,
             }),
             agent_identity_policy,
             prompt_cache_key_override: None,
@@ -617,6 +607,7 @@ impl ModelClient {
 
     pub(crate) fn reasoning_effort_override_enabled(&self, model_info: &ModelInfo) -> bool {
         self.state.reasoning_effort_override_enabled
+            && !self.uses_chatgpt_direct()
             && self.state.provider.info().is_openai()
             && model_info.supports_reasoning_effort_updates
     }
@@ -696,6 +687,7 @@ impl ModelClient {
         }
         ModelClientSession {
             client: self.clone(),
+            operation_owner: None,
             websocket_session,
             turn_state: Arc::new(OnceLock::new()),
         }
@@ -750,58 +742,6 @@ impl ModelClient {
 
         self.store_cached_websocket_session(WebsocketSession::default());
         activated
-    }
-
-    pub(crate) async fn create_realtime_call_with_headers(
-        &self,
-        sdp: String,
-        session_config: ApiRealtimeSessionConfig,
-        mut extra_headers: ApiHeaderMap,
-        api_provider_override: Option<ApiProvider>,
-    ) -> Result<RealtimeWebrtcCallStart> {
-        // Create the media call over HTTP first, then retain matching auth so realtime can attach
-        // the server-side control WebSocket to the call id from that HTTP response.
-        let client_setup = self
-            .current_client_setup(ClientRouting::ConfiguredProvider)
-            .await?;
-        if let Some(header_value) = self.generate_attestation_header_for().await {
-            extra_headers.insert(X_OAI_ATTESTATION_HEADER, header_value);
-        }
-        let mut sideband_headers = extra_headers.clone();
-        sideband_headers.extend(sideband_websocket_auth_headers(
-            client_setup.api_auth.as_ref(),
-        ));
-        let api_provider = api_provider_override.unwrap_or(client_setup.api_provider);
-        let transport = self.build_api_transport(
-            &api_provider,
-            REALTIME_CALLS_ENDPOINT,
-            client_setup.redirect_policy,
-        )?;
-        let response = ApiRealtimeCallClient::new(transport, api_provider, client_setup.api_auth)
-            .create_with_session_and_headers(sdp, session_config, extra_headers)
-            .await
-            .map_err(|error| self.state.provider.map_api_error(error))?;
-        Ok(RealtimeWebrtcCallStart {
-            sdp: response.sdp,
-            call_id: response.call_id,
-            sideband_headers,
-        })
-    }
-
-    pub(crate) async fn realtime_sideband_headers(
-        &self,
-        mut extra_headers: ApiHeaderMap,
-    ) -> Result<ApiHeaderMap> {
-        let client_setup = self
-            .current_client_setup(ClientRouting::ConfiguredProvider)
-            .await?;
-        if let Some(header_value) = self.generate_attestation_header_for().await {
-            extra_headers.insert(X_OAI_ATTESTATION_HEADER, header_value);
-        }
-        extra_headers.extend(sideband_websocket_auth_headers(
-            client_setup.api_auth.as_ref(),
-        ));
-        Ok(extra_headers)
     }
 
     /// Builds memory summaries for each provided normalized raw memory.
@@ -916,7 +856,7 @@ impl ModelClient {
     }
 
     async fn generate_attestation_header_for(&self) -> Option<HeaderValue> {
-        if !self.state.include_attestation {
+        if !self.state.include_attestation || self.uses_chatgpt_direct() {
             return None;
         }
 
@@ -961,8 +901,7 @@ impl ModelClient {
                 .then_some(summary),
             // When Responses Lite is disabled, omit context so Responses uses the default,
             // which is currently `current_turn`.
-            context: model_info
-                .use_responses_lite
+            context: (model_info.use_responses_lite && !self.uses_chatgpt_direct())
                 .then_some(ReasoningContext::AllTurns),
         }
     }
@@ -984,7 +923,8 @@ impl ModelClient {
             // Filter only the request copy; persisted history remains unchanged.
             input.retain(|item| !matches!(item, ResponseItem::ConfigurationUpdate { .. }));
         }
-        let is_openai = self.state.provider.info().is_openai();
+        let direct = self.uses_chatgpt_direct();
+        let is_openai = self.state.provider.info().is_openai() && !direct;
         // These prompt-only items are rebuilt on every request. Hash their visible payloads
         // within the thread so retries and resumed sessions preserve their identity.
         let prefix_namespace = Uuid::new_v5(
@@ -992,7 +932,7 @@ impl ModelClient {
             self.state.thread_id.to_string().as_bytes(),
         );
         let mut prefix = Vec::new();
-        let tools = if model_info.use_responses_lite {
+        let tools = if model_info.use_responses_lite && !direct {
             if !prompt.tools.is_empty() {
                 let tools = create_tools_json_for_responses_lite(&prompt.tools)?;
                 prefix.push(ResponseItem::AdditionalTools {
@@ -1089,7 +1029,8 @@ impl ModelClient {
             input,
             tools,
             tool_choice: "auto".to_string(),
-            parallel_tool_calls: prompt.parallel_tool_calls && !model_info.use_responses_lite,
+            parallel_tool_calls: prompt.parallel_tool_calls
+                && (!model_info.use_responses_lite || direct),
             reasoning: Some(reasoning),
             store: false,
             stream: true,
@@ -1098,7 +1039,7 @@ impl ModelClient {
             service_tier,
             prompt_cache_key,
             text,
-            client_metadata: Some(client_metadata),
+            client_metadata: (!direct).then_some(client_metadata),
             access_programs: None,
         };
         Ok(request)
@@ -1109,17 +1050,27 @@ impl ModelClient {
             if item.id().is_some_and(|id| !id.is_prefixed()) {
                 item.set_id(/*new_id*/ None);
             }
-            if !self.state.content_item_kinds_enabled {
+            if !self.state.content_item_kinds_enabled || self.uses_chatgpt_direct() {
                 item.clear_content_item_kinds();
             }
         }
+    }
+
+    fn uses_chatgpt_direct(&self) -> bool {
+        self.state.provider.info().uses_chatgpt_direct(
+            self.state
+                .provider
+                .auth_manager()
+                .and_then(|manager| manager.auth_mode()),
+        )
     }
 
     /// Returns whether the Responses-over-WebSocket transport is active for this session.
     ///
     /// WebSocket use is controlled by provider capability and session-scoped fallback state.
     pub fn responses_websocket_enabled(&self) -> bool {
-        if !self.state.provider.info().supports_websockets
+        if self.uses_chatgpt_direct()
+            || !self.state.provider.info().supports_websockets
             || self.state.disable_websockets.load(Ordering::Relaxed)
         {
             return false;
@@ -1133,9 +1084,16 @@ impl ModelClient {
     /// This centralizes setup used by both prewarm and normal request paths so they stay in
     /// lockstep when auth/provider resolution changes.
     async fn current_client_setup(&self, routing: ClientRouting) -> Result<CurrentClientSetup> {
-        // Capture before resolving credentials so an account switch during setup cannot label
-        // an old connection with the new owner's revision.
-        let auth_owner_generation = self.auth_owner_generation();
+        self.current_client_setup_for_owner(routing, self.auth_owner_generation())
+            .await
+    }
+
+    async fn current_client_setup_for_owner(
+        &self,
+        routing: ClientRouting,
+        auth_owner_generation: Option<u64>,
+    ) -> Result<CurrentClientSetup> {
+        // The caller binds the original owner before resolving credentials.
         let auth_changes = self
             .state
             .provider
@@ -1143,7 +1101,7 @@ impl ModelClient {
             .map(|manager| manager.auth_change_receiver());
         loop {
             let revision = auth_changes.as_ref().map(|changes| *changes.borrow());
-            let auth = self.state.provider.auth().await;
+            let auth = self.state.provider.auth_for_request().await?;
             let (api_provider, redirect_policy) = match routing {
                 ClientRouting::Workspace => {
                     let resolved = self
@@ -1155,7 +1113,11 @@ impl ModelClient {
                 }
                 ClientRouting::ConfiguredProvider => (
                     self.state.provider.api_provider().await?,
-                    ClientRedirectPolicy::Default,
+                    if self.uses_chatgpt_direct() {
+                        ClientRedirectPolicy::Reject
+                    } else {
+                        ClientRedirectPolicy::Default
+                    },
                 ),
             };
             let resolved_auth = self
@@ -1275,7 +1237,7 @@ impl ModelClient {
         api_provider: &ApiProvider,
         endpoint: &str,
         redirect_policy: ClientRedirectPolicy,
-    ) -> Result<ReqwestTransport> {
+    ) -> Result<ApiTransport> {
         let redirect_policy = if api_provider
             .headers
             .contains_key(antex_model_provider::ACCOUNT_ROUTING_HEADER)
@@ -1291,7 +1253,10 @@ impl ModelClient {
             redirect_policy,
         )
         .map_err(std::io::Error::from)?;
-        Ok(ReqwestTransport::from_http_client(client))
+        let transport = ReqwestTransport::from_http_client(client);
+        #[cfg(test)]
+        let transport = ApiTransport::new(transport, self.state.test_transport.clone());
+        Ok(transport)
     }
 
     pub(crate) async fn prewarm_auth(&self) -> Result<()> {
@@ -1460,6 +1425,9 @@ impl ModelClientSession {
         compression: Compression,
         use_responses_lite: bool,
     ) -> ApiResponsesOptions {
+        if self.client.uses_chatgpt_direct() {
+            return ApiResponsesOptions::default();
+        }
         ApiResponsesOptions {
             session_id: Some(self.client.responses_session_id(responses_metadata)),
             thread_id: Some(responses_metadata.thread_id.to_string()),
@@ -1575,7 +1543,7 @@ impl ModelClientSession {
         loop {
             let client_setup = self
                 .client
-                .current_client_setup(ClientRouting::Workspace)
+                .current_client_setup_for_request(ClientRouting::Workspace, auth_recovery.as_ref())
                 .await?;
             let auth_context = AuthRequestTelemetryContext::new(
                 client_setup.auth.as_ref().map(AntexAuth::auth_mode),
@@ -1595,7 +1563,9 @@ impl ModelClientSession {
                     .service_tier_for_request(service_tier.clone())
                     .as_deref(),
             );
-            match self
+            self.ensure_operation_owner()?;
+            auth_owner::ensure_same_owner(auth_recovery.as_ref())?;
+            let connection_result = self
                 .websocket_connection(WebsocketConnectParams {
                     session_telemetry,
                     api_provider: client_setup.api_provider,
@@ -1608,8 +1578,11 @@ impl ModelClientSession {
                     responses_headers: &responses_headers,
                 })
                 .await
-            {
-                Ok(_) => return Ok(()),
+                .map(|_| ());
+            self.ensure_operation_owner()?;
+            auth_owner::ensure_same_owner(auth_recovery.as_ref())?;
+            match connection_result {
+                Ok(()) => return Ok(()),
                 Err(ApiError::Transport(TransportError::Http { status, .. }))
                     if status == StatusCode::UPGRADE_REQUIRED =>
                 {
@@ -1769,7 +1742,7 @@ impl ModelClientSession {
         loop {
             let client_setup = self
                 .client
-                .current_client_setup(ClientRouting::Workspace)
+                .current_client_setup_for_request(ClientRouting::Workspace, auth_recovery.as_ref())
                 .await?;
             let include_internal = self
                 .client
@@ -1854,6 +1827,10 @@ impl ModelClientSession {
                 antex_extension_api::ModelRequestKind::Generation,
                 &mut request.client_metadata,
             );
+            if self.client.uses_chatgpt_direct() {
+                request.client_metadata = None;
+                request.access_programs = None;
+            }
             let inference_trace_attempt = inference_trace.start_attempt();
             inference_trace_attempt.add_request_headers(&mut options.extra_headers);
             if let Some(input) = tool_metadata::bounded_input(&request, &request.input) {
@@ -1870,7 +1847,11 @@ impl ModelClientSession {
                 client_setup.api_auth,
             )
             .with_telemetry(Some(request_telemetry), Some(sse_telemetry));
+            self.ensure_operation_owner()?;
+            auth_owner::ensure_same_owner(auth_recovery.as_ref())?;
             let stream_result = client.stream_request(request, options).await;
+            self.ensure_operation_owner()?;
+            auth_owner::ensure_same_owner(auth_recovery.as_ref())?;
 
             match stream_result {
                 Ok(stream) => {
@@ -1966,7 +1947,7 @@ impl ModelClientSession {
         loop {
             let client_setup = self
                 .client
-                .current_client_setup(ClientRouting::Workspace)
+                .current_client_setup_for_request(ClientRouting::Workspace, auth_recovery.as_ref())
                 .await?;
             let include_internal = self
                 .client
@@ -2013,7 +1994,9 @@ impl ModelClientSession {
             } else {
                 session_telemetry_for_request(session_telemetry, &request)
             };
-            match self
+            self.ensure_operation_owner()?;
+            auth_owner::ensure_same_owner(auth_recovery.as_ref())?;
+            let connection_result = self
                 .websocket_connection(WebsocketConnectParams {
                     session_telemetry,
                     api_provider: client_setup.api_provider,
@@ -2026,8 +2009,11 @@ impl ModelClientSession {
                     responses_headers: &responses_headers,
                 })
                 .await
-            {
-                Ok(_) => {}
+                .map(|_| ());
+            self.ensure_operation_owner()?;
+            auth_owner::ensure_same_owner(auth_recovery.as_ref())?;
+            match connection_result {
+                Ok(()) => {}
                 Err(ApiError::Transport(TransportError::Http { status, .. }))
                     if status == StatusCode::UPGRADE_REQUIRED =>
                 {
@@ -2204,6 +2190,8 @@ impl ModelClientSession {
                     ),
                 ],
             );
+            self.ensure_operation_owner()?;
+            auth_owner::ensure_same_owner(auth_recovery.as_ref())?;
             let stream_result = websocket_connection
                 .stream_request(
                     ws_request,
@@ -2211,6 +2199,8 @@ impl ModelClientSession {
                     Some(Arc::clone(&self.turn_state)),
                 )
                 .await;
+            self.ensure_operation_owner()?;
+            auth_owner::ensure_same_owner(auth_recovery.as_ref())?;
             if let Some(original_item_ids) = original_item_ids {
                 for (item, original_item_id) in request.input.iter_mut().zip(original_item_ids) {
                     item.set_id(original_item_id);
@@ -2360,46 +2350,56 @@ impl ModelClientSession {
         responses_metadata: &AntexResponsesMetadata,
         inference_trace: &InferenceTraceContext,
     ) -> Result<ResponseStream> {
-        let wire_api = self.client.state.provider.info().wire_api;
-        match wire_api {
-            WireApi::Responses => {
-                if self.client.responses_websocket_enabled() {
-                    let request_trace = current_span_w3c_trace_context();
-                    match self
-                        .stream_responses_websocket(
+        let mut operation = self.sampling_operation();
+        operation.ensure_operation_owner()?;
+        let result = async {
+            let wire_api = operation.client.state.provider.info().wire_api;
+            match wire_api {
+                WireApi::Responses => {
+                    if operation.client.responses_websocket_enabled() {
+                        let request_trace = current_span_w3c_trace_context();
+                        match operation
+                            .stream_responses_websocket(
+                                prompt,
+                                model_info,
+                                session_telemetry,
+                                effort.clone(),
+                                summary,
+                                service_tier.clone(),
+                                responses_metadata,
+                                /*warmup*/ false,
+                                request_trace,
+                                inference_trace,
+                            )
+                            .await?
+                        {
+                            WebsocketStreamOutcome::Stream(stream) => return Ok(stream),
+                            WebsocketStreamOutcome::FallbackToHttp => {
+                                operation.ensure_operation_owner()?;
+                                operation
+                                    .try_switch_fallback_transport(session_telemetry, model_info);
+                            }
+                        }
+                    }
+
+                    operation
+                        .stream_responses_api(
                             prompt,
                             model_info,
                             session_telemetry,
-                            effort.clone(),
+                            effort,
                             summary,
-                            service_tier.clone(),
+                            service_tier,
                             responses_metadata,
-                            /*warmup*/ false,
-                            request_trace,
                             inference_trace,
                         )
-                        .await?
-                    {
-                        WebsocketStreamOutcome::Stream(stream) => return Ok(stream),
-                        WebsocketStreamOutcome::FallbackToHttp => {
-                            self.try_switch_fallback_transport(session_telemetry, model_info);
-                        }
-                    }
+                        .await
                 }
-
-                self.stream_responses_api(
-                    prompt,
-                    model_info,
-                    session_telemetry,
-                    effort,
-                    summary,
-                    service_tier,
-                    responses_metadata,
-                    inference_trace,
-                )
-                .await
             }
         }
+        .await;
+        operation.ensure_operation_owner()?;
+        result
     }
 
     /// Permanently disables WebSockets for this Antex session and resets WebSocket state.
@@ -2702,6 +2702,7 @@ impl AuthRequestTelemetryContext {
                 AuthMode::ApiKey | AuthMode::BedrockApiKey | AuthMode::BedrockAccessKeys => {
                     "ApiKey"
                 }
+                AuthMode::ChatgptDirect => "ChatgptDirect",
                 AuthMode::Chatgpt
                 | AuthMode::ChatgptAuthTokens
                 | AuthMode::Headers
@@ -2761,6 +2762,7 @@ async fn handle_unauthorized(
     event_sender: Option<&Sender<ProtocolEvent>>,
     turn_id: Option<&str>,
 ) -> Result<UnauthorizedRecoveryExecution> {
+    auth_owner::ensure_same_owner(auth_recovery.as_ref())?;
     let debug = extract_response_debug_context(&transport);
     if !*provider_auth_recovery_attempted {
         *provider_auth_recovery_attempted = true;

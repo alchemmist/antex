@@ -7,6 +7,8 @@
 
 #[path = "connection_manager/catalog_telemetry.rs"]
 mod catalog_telemetry;
+#[path = "connection_manager/new_call.rs"]
+mod new_call;
 #[path = "connection_manager/required.rs"]
 mod required;
 #[path = "connection_manager/resources.rs"]
@@ -17,6 +19,8 @@ mod startup;
 mod status;
 #[path = "connection_manager/tool_catalog.rs"]
 mod tool_catalog;
+#[path = "connection_manager/upload_auth.rs"]
+mod upload_auth;
 
 use startup::chatgpt_auth_provider_for_server;
 use startup::emit_update;
@@ -214,6 +218,7 @@ impl McpServerView {
 pub(crate) struct McpConnectionSet {
     servers: HashMap<String, McpServerView>,
     pub(crate) event_stream_connection: Option<Arc<EventStreamConnectionSettings>>,
+    new_call_connection: Option<new_call::NewCallConnection>,
     disabled_servers: Vec<String>,
     required_servers: Vec<String>,
     optional_startup_deadline: OnceLock<tokio::time::Instant>,
@@ -222,6 +227,9 @@ pub(crate) struct McpConnectionSet {
     non_prefixed_mcp_tool_servers: Vec<String>,
     elicitation_requests: ElicitationRequestManager,
     pub(crate) trusted_access: Option<TrustedAccessContext>,
+    // Backend upload authority captured before startup awaits, independent of
+    // each MCP server's OAuth or explicit environment-token transport auth.
+    pub(crate) openai_file_upload_auth: Option<upload_auth::FileUploadAuth>,
 }
 
 impl McpConnectionSet {
@@ -233,7 +241,26 @@ impl McpConnectionSet {
         input: McpRuntimeInput,
         elicitation_router: ElicitationRequestRouter,
     ) -> Self {
+        Self::new_with_call_auth(
+            previous,
+            publication_gate,
+            input,
+            elicitation_router,
+            /*call_auth*/ None,
+        )
+        .await
+    }
+
+    async fn new_with_call_auth(
+        previous: Option<&Self>,
+        publication_gate: McpPublicationGate,
+        input: McpRuntimeInput,
+        elicitation_router: ElicitationRequestRouter,
+        call_auth: Option<antex_api::SharedAuthProvider>,
+    ) -> Self {
         let trusted_access = TrustedAccessContext::from_runtime(&input);
+        let mut new_call_connection =
+            new_call::NewCallConnection::capture(&input, elicitation_router.clone());
         let McpRuntimeInput {
             startup_policy,
             config,
@@ -305,14 +332,19 @@ impl McpConnectionSet {
         let static_chatgpt_auth_provider = auth
             .filter(|auth| auth.uses_antex_backend())
             .map(antex_model_provider::auth_provider_from_auth);
-        let codex_apps_auth_provider = auth_manager.as_ref().and_then(|auth_manager| {
-            auth.filter(|auth| auth.uses_antex_backend()).map(|auth| {
-                antex_model_provider::auth_provider_from_auth_manager(
-                    Arc::clone(auth_manager),
-                    auth,
-                )
+        let codex_apps_auth_provider = call_auth.or_else(|| {
+            auth_manager.as_ref().and_then(|auth_manager| {
+                auth.filter(|auth| auth.uses_antex_backend()).map(|auth| {
+                    antex_model_provider::auth_provider_from_auth_manager(
+                        Arc::clone(auth_manager),
+                        auth,
+                    )
+                })
             })
         });
+        let openai_file_upload_auth = auth
+            .filter(|auth| auth.uses_antex_backend())
+            .map(|auth| upload_auth::FileUploadAuth::capture(auth, auth_manager.as_ref()));
         for (server_name, server) in mcp_servers
             .into_iter()
             .filter(|(_, server)| server.enabled())
@@ -517,6 +549,15 @@ impl McpConnectionSet {
                                 })
                         })
                 {
+                    // Keep the auth lifetime of the transport actually reused,
+                    // not the fresh provider constructed for this publication.
+                    if server_name == CODEX_APPS_MCP_SERVER_NAME
+                        && let Some(new_call) = &mut new_call_connection
+                        && let Some(previous_call) =
+                            previous.and_then(|previous| previous.new_call_connection.as_ref())
+                    {
+                        new_call.transport_owner = Arc::clone(&previous_call.transport_owner);
+                    }
                     let pending_client =
                         reusable_pending_startup.then(|| connection.client.clone());
                     servers.insert(
@@ -787,6 +828,7 @@ impl McpConnectionSet {
         let manager = Self {
             servers,
             event_stream_connection,
+            new_call_connection,
             disabled_servers,
             required_servers,
             optional_startup_deadline: OnceLock::new(),
@@ -795,6 +837,7 @@ impl McpConnectionSet {
             non_prefixed_mcp_tool_servers,
             elicitation_requests: elicitation_requests.clone(),
             trusted_access,
+            openai_file_upload_auth,
         };
         let summary_publication_gate = publication_gate;
         tokio::spawn(async move {
@@ -845,6 +888,7 @@ impl McpConnectionSet {
         Self {
             servers: HashMap::new(),
             event_stream_connection: None,
+            new_call_connection: None,
             disabled_servers: Vec::new(),
             required_servers: Vec::new(),
             optional_startup_deadline: OnceLock::new(),
@@ -853,6 +897,7 @@ impl McpConnectionSet {
             non_prefixed_mcp_tool_servers: Vec::new(),
             elicitation_requests: ElicitationRequestManager::default(),
             trusted_access: None,
+            openai_file_upload_auth: None,
         }
     }
 

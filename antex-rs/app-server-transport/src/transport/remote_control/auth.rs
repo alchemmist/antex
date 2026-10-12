@@ -100,7 +100,18 @@ async fn load_auth_manager(
 ) -> io::Result<RemoteControlConnectionAuth> {
     let mut reloaded = false;
     let (auth, http_client_factory) = loop {
-        let Some((auth, http_client_factory)) = auth_manager.auth_with_http_client_factory().await
+        let Some((auth, http_client_factory)) = auth_manager
+            .auth_for_request_with_http_client_factory()
+            .await
+            .map_err(|error| match error {
+                antex_login::RefreshTokenError::Transient(error) => error,
+                antex_login::RefreshTokenError::Permanent(error) => {
+                    io::Error::new(ErrorKind::PermissionDenied, error)
+                }
+                antex_login::RefreshTokenError::Policy(error) => {
+                    io::Error::new(ErrorKind::PermissionDenied, error)
+                }
+            })?
         else {
             if reloaded {
                 return Err(io::Error::new(

@@ -7,7 +7,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use thiserror::Error;
 
-#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Default)]
+#[derive(Deserialize, Serialize, Clone, PartialEq, Default)]
 pub struct TokenData {
     /// Flat info parsed from the JWT in auth.json.
     #[serde(
@@ -22,10 +22,33 @@ pub struct TokenData {
     pub refresh_token: String,
 
     pub account_id: Option<String>,
+
+    /// Present only for public direct ChatGPT grants; never inferred from legacy credentials.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direct: Option<DirectTokenMetadata>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+pub struct DirectTokenMetadata {
+    pub client_id: String,
+    pub expires_at: DateTime<Utc>,
+    pub scopes: Vec<String>,
+}
+
+impl std::fmt::Debug for TokenData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TokenData").finish_non_exhaustive()
+    }
+}
+
+impl std::fmt::Debug for IdTokenInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IdTokenInfo").finish_non_exhaustive()
+    }
 }
 
 /// Flat subset of useful claims in id_token from auth.json.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct IdTokenInfo {
     pub email: Option<String>,
     /// The ChatGPT subscription plan type

@@ -6792,6 +6792,40 @@
             "type": "object"
           },
           {
+            "description": "ChatGPT subscription access to the public API, not the Codex backend.",
+            "properties": {
+              "email": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "planType": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/v2/PlanType"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "type": {
+                "enum": [
+                  "chatgptDirect"
+                ],
+                "title": "ChatgptDirectAccountType",
+                "type": "string"
+              }
+            },
+            "required": [
+              "email",
+              "type"
+            ],
+            "title": "ChatgptDirectAccount",
+            "type": "object"
+          },
+          {
             "properties": {
               "type": {
                 "enum": [
@@ -8054,6 +8088,13 @@
             "description": "ChatGPT OAuth managed by Antex (tokens persisted and refreshed by Antex).",
             "enum": [
               "chatgpt"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "Public ChatGPT subscription OAuth for the direct OpenAI Responses API.",
+            "enum": [
+              "chatgptDirect"
             ],
             "type": "string"
           },
@@ -14228,6 +14269,23 @@
               "type"
             ],
             "title": "Chatgptv2::LoginAccountParams",
+            "type": "object"
+          },
+          {
+            "description": "Sign in with a ChatGPT subscription for direct OpenAI API access.",
+            "properties": {
+              "type": {
+                "enum": [
+                  "chatgptDirect"
+                ],
+                "title": "ChatgptDirectv2::LoginAccountParamsType",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "title": "ChatgptDirectv2::LoginAccountParams",
             "type": "object"
           },
           {

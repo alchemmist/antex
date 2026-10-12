@@ -53,7 +53,8 @@ pub(crate) struct ExhaustedResponseRetry {
 }
 
 /// Returns `Ok(())` when the caller should retry the request loop, or the original error when
-/// it is terminal or the retry budget is exhausted.
+/// it is terminal or the retry budget is exhausted. Callers retain a sampling
+/// operation scope across this wait; a retry must not rebind after backoff.
 pub(crate) async fn handle_response_stream_error(
     retry_state: &mut ResponsesStreamRetryState,
     max_retries: u64,
@@ -63,6 +64,7 @@ pub(crate) async fn handle_response_stream_error(
     step_context: &StepContext,
     request: ResponsesStreamRequest,
 ) -> Result<(), CodexErr> {
+    client_session.ensure_operation_owner()?;
     let turn_context = &step_context.turn;
     if matches!(request, ResponsesStreamRequest::Sampling)
         && matches!(err.details(), CodexErrorDetails::ContentFilter)
@@ -89,6 +91,7 @@ pub(crate) async fn handle_response_stream_error(
         return Err(err);
     };
     let retry_after = err.retry_after();
+    client_session.ensure_operation_owner()?;
 
     if turn_context
         .config
@@ -114,7 +117,7 @@ pub(crate) async fn handle_response_stream_error(
         retry_state.connection_retry_delay = retry_delay
             .saturating_mul(2)
             .min(MAX_CONNECTION_RETRY_DELAY);
-        return Ok(());
+        return client_session.ensure_operation_owner();
     }
 
     if retry_state.retries >= max_retries
@@ -135,7 +138,7 @@ pub(crate) async fn handle_response_stream_error(
         )
         .await;
         retry_state.retries = 0;
-        return Ok(());
+        return client_session.ensure_operation_owner();
     }
 
     if retry_state.retries < max_retries {
@@ -163,7 +166,7 @@ pub(crate) async fn handle_response_stream_error(
         let delay = retry_at.saturating_duration_since(now);
         antex_client::record_retry!(retry_count, delay, operation);
         tokio::time::sleep_until(retry_at).await;
-        return Ok(());
+        return client_session.ensure_operation_owner();
     }
 
     sess.services

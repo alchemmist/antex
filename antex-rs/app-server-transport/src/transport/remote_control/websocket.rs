@@ -2073,6 +2073,7 @@ mod tests {
                 access_token: access_token.to_string(),
                 refresh_token: "refresh-token".to_string(),
                 account_id: Some("account_id".to_string()),
+                direct: None,
             }),
             last_refresh: Some(Utc::now()),
             agent_identity: None,

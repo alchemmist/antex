@@ -173,7 +173,7 @@ impl TurnCostWorkerHandle {
             let Some(auth) = auth_manager.auth_cached() else {
                 return;
             };
-            if !auth.is_api_key_auth() && !auth.is_chatgpt_auth() {
+            if !auth.is_api_key_auth() && !(auth.is_chatgpt_auth() && auth.uses_antex_backend()) {
                 return;
             }
         }
@@ -400,8 +400,10 @@ impl WorkerRuntime {
     ) -> Result<Option<Vec<ApiKeyTurnCost>>, RequestError> {
         match &self.backend {
             TurnCostBackend::OpenAi(auth_manager) => {
-                let Some((auth, captured_factory)) =
-                    auth_manager.auth_with_http_client_factory().await
+                let Some((auth, captured_factory)) = auth_manager
+                    .auth_for_request_with_http_client_factory()
+                    .await
+                    .map_err(|error| RequestError::Other(error.into()))?
                 else {
                     return Ok(None);
                 };
@@ -409,7 +411,7 @@ impl WorkerRuntime {
                     .config
                     .http_client_factory()
                     .with_network_policy(captured_factory.network_policy().clone());
-                if auth.is_chatgpt_auth() {
+                if auth.is_chatgpt_auth() && auth.uses_antex_backend() {
                     return self
                         .query_chatgpt_turn_costs(&auth, http_client_factory, turn_ids)
                         .await
@@ -441,7 +443,11 @@ impl WorkerRuntime {
                         .for_current_account(),
                 );
                 if model_provider.info().requires_openai_auth {
-                    let Some(auth) = model_provider.auth().await else {
+                    let Some(auth) = model_provider
+                        .auth_for_request()
+                        .await
+                        .map_err(|error| RequestError::Other(error.into()))?
+                    else {
                         return Ok(None);
                     };
                     if !auth.is_api_key_auth() {

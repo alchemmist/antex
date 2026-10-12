@@ -11,6 +11,7 @@ use super::INITIAL_WEBSOCKET_CONNECTIONS;
 use super::LunaSamplerConfig;
 use super::LunaSamplerError;
 use super::MAX_CONCURRENT_REQUESTS;
+use super::request_owner::RequestOwner;
 use antex_api::ApiError;
 use antex_api::Provider;
 use antex_api::ReqwestTransport;
@@ -81,6 +82,7 @@ struct HttpTransport {
 }
 
 pub(super) struct PooledConnection {
+    owner: Arc<RequestOwner>,
     connection: ResponsesWebsocketConnection,
     request_kind: RequestMode,
     // The bridge routes by thread ID, so each socket needs its own identity.
@@ -92,6 +94,7 @@ pub(super) struct PooledConnection {
 }
 
 struct ClientSetup {
+    owner: Arc<RequestOwner>,
     provider: Provider,
     auth: SharedAuthProvider,
     redirect_policy: ClientRedirectPolicy,
@@ -105,6 +108,7 @@ enum Connection {
 }
 
 pub(super) struct ConnectionLease {
+    owner: Arc<RequestOwner>,
     pub(super) thread_id: String,
     pub(super) request_kind: RequestMode,
     connection: Connection,
@@ -209,19 +213,23 @@ impl ConnectionPool {
     }
 
     pub(super) async fn lease(self: &Arc<Self>) -> Result<ConnectionLease, LunaSamplerError> {
+        let admission_owner = RequestOwner::capture(&self.config.provider);
         let started = Instant::now();
         let permit = Arc::clone(&self.classifications)
             .acquire_owned()
             .await
             .map_err(|error| LunaSamplerError::Api(ApiError::Stream(error.to_string())))?;
+        admission_owner.check()?;
         let admitted = Instant::now();
         let ClientSetup {
+            owner,
             mut provider,
             auth,
             redirect_policy,
             key,
             auth_changes,
         } = self.client_setup().await?;
+        admission_owner.check()?;
         let setup_finished = Instant::now();
         let connection = loop {
             let idle = self
@@ -232,6 +240,7 @@ impl ConnectionPool {
             match idle {
                 Some(connection)
                     if connection.key == key
+                        && connection.owner.check().is_ok()
                         && connection
                             .auth_changes
                             .as_ref()
@@ -264,7 +273,7 @@ impl ConnectionPool {
                 self.replenish();
                 // Sampling owns the retry budget across both transports.
                 provider.retry.max_attempts = 0;
-                let request_kind = self.responses_request_kind().await;
+                let request_kind = self.responses_request_kind().await?;
                 let url = provider.url_for_path("/responses");
                 let redirect_policy = if provider.headers.contains_key(ACCOUNT_ROUTING_HEADER) {
                     ClientRedirectPolicy::Reject
@@ -318,6 +327,8 @@ impl ConnectionPool {
                 )
             }
         };
+        admission_owner.check()?;
+        owner.check()?;
         if auth_changes
             .as_ref()
             .is_some_and(|auth| auth.has_changed().unwrap_or(true))
@@ -344,6 +355,7 @@ impl ConnectionPool {
             }
         }
         Ok(ConnectionLease {
+            owner,
             thread_id,
             request_kind,
             connection,
@@ -353,6 +365,7 @@ impl ConnectionPool {
     }
 
     async fn client_setup(&self) -> Result<ClientSetup, LunaSamplerError> {
+        let owner = RequestOwner::capture(&self.config.provider);
         let mut auth_changes = self
             .config
             .provider
@@ -368,6 +381,7 @@ impl ConnectionPool {
             .responses_api_provider(&self.config.workspace_routing)
             .await
             .map_err(LunaSamplerError::Provider)?;
+        owner.check()?;
         let auth = self
             .config
             .provider
@@ -379,6 +393,7 @@ impl ConnectionPool {
             .await
             .map_err(LunaSamplerError::Provider)?
             .auth;
+        owner.check()?;
         if auth_changes
             .as_ref()
             .is_some_and(|auth| auth.has_changed().unwrap_or(true))
@@ -389,6 +404,7 @@ impl ConnectionPool {
         }
         let key = ResponsesConnectionKey::new(&provider, revision);
         Ok(ClientSetup {
+            owner,
             provider,
             auth,
             redirect_policy,
@@ -430,13 +446,14 @@ impl ConnectionPool {
         }
         Ok(headers)
     }
-    async fn responses_request_kind(&self) -> RequestMode {
+    async fn responses_request_kind(&self) -> Result<RequestMode, LunaSamplerError> {
         let provider = self.config.provider.info();
         if self
             .config
             .provider
-            .auth()
+            .auth_for_request()
             .await
+            .map_err(LunaSamplerError::Provider)?
             .as_ref()
             .is_some_and(AntexAuth::uses_antex_backend)
             && provider.supports_antex_backend_routes()
@@ -446,9 +463,9 @@ impl ConnectionPool {
             && provider.auth.is_none()
             && provider.aws.is_none()
         {
-            RequestMode::GuardianClassifier
+            Ok(RequestMode::GuardianClassifier)
         } else {
-            RequestMode::Regular
+            Ok(RequestMode::Regular)
         }
     }
 
@@ -457,6 +474,7 @@ impl ConnectionPool {
         permit: OwnedSemaphorePermit,
     ) -> Result<PooledConnection, LunaSamplerError> {
         let ClientSetup {
+            owner,
             provider,
             auth,
             redirect_policy: _,
@@ -464,7 +482,8 @@ impl ConnectionPool {
             auth_changes,
         } = self.client_setup().await?;
         let thread_id = ThreadId::new().to_string();
-        let request_kind = self.responses_request_kind().await;
+        let request_kind = self.responses_request_kind().await?;
+        owner.check()?;
         let mut headers = self.headers(&thread_id, request_kind)?;
         headers.insert(
             "openai-beta",
@@ -488,6 +507,9 @@ impl ConnectionPool {
                         })
                 })
                 .await?;
+            owner
+                .check()
+                .map_err(|error| ApiError::Transport(TransportError::Build(error.to_string())))?;
             client
                 .connect_with_connector(
                     connector,
@@ -515,6 +537,7 @@ impl ConnectionPool {
                 &tags,
             );
         }
+        owner.check()?;
         let connection = result?;
         if auth_changes
             .as_ref()
@@ -526,6 +549,7 @@ impl ConnectionPool {
         }
 
         Ok(PooledConnection {
+            owner,
             connection,
             request_kind,
             thread_id,
@@ -542,8 +566,14 @@ impl ConnectionLease {
         &self,
         request: &ResponsesApiRequest,
     ) -> Result<ResponseStream, ApiError> {
-        match &self.connection {
+        self.owner
+            .check()
+            .map_err(|error| ApiError::Transport(TransportError::Build(error.to_string())))?;
+        let result = match &self.connection {
             Connection::Websocket(connection) => {
+                connection.owner.check().map_err(|error| {
+                    ApiError::Transport(TransportError::Build(error.to_string()))
+                })?;
                 connection
                     .connection
                     .stream_request(
@@ -573,11 +603,17 @@ impl ConnectionLease {
                 .await
                 .map_err(|_| ApiError::Transport(TransportError::Timeout))?
             }
-        }
+        };
+        self.owner
+            .check()
+            .map_err(|error| ApiError::Transport(TransportError::Build(error.to_string())))?;
+        result
     }
 
     pub(super) fn reuse(self) {
-        if let Connection::Websocket(connection) = self.connection {
+        if let Connection::Websocket(connection) = self.connection
+            && connection.owner.check().is_ok()
+        {
             self.pool
                 .idle_connections
                 .lock()

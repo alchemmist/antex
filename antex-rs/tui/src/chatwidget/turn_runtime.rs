@@ -203,14 +203,7 @@ impl ChatWidget {
                 .current_goal_status
                 .as_ref()
                 .is_some_and(GoalStatusState::is_active);
-            if !follow_up_started
-                && !active_goal_continuing
-                && !self
-                    .turn_lifecycle
-                    .last_turn_id
-                    .as_deref()
-                    .is_some_and(|turn_id| self.should_hide_realtime_delegation(turn_id))
-            {
+            if !follow_up_started && !active_goal_continuing {
                 self.notify(Notification::AgentTurnComplete {
                     response: notification_response,
                 });
@@ -366,7 +359,7 @@ impl ChatWidget {
     pub(super) fn on_rate_limit_error(&mut self, error_kind: RateLimitErrorKind, message: String) {
         self.invalidate_ordinary_usage_recovery();
         // on_error can drain queued input, before the asynchronous recovery read completes.
-        self.input_queue.rate_limit_recovery_pending = self.has_chatgpt_account;
+        self.input_queue.rate_limit_recovery_pending = self.has_antex_backend_auth;
         let usage_limit_error = matches!(error_kind, RateLimitErrorKind::UsageLimit);
         let rate_limit_reached_type = self.antex_rate_limit_reached_type.map(|kind| {
             if usage_limit_error {
@@ -411,7 +404,7 @@ impl ChatWidget {
         {
             self.open_workspace_owner_nudge_prompt(credit_type);
         }
-        if self.has_chatgpt_account {
+        if self.has_antex_backend_auth {
             self.app_event_tx.send(AppEvent::RefreshRateLimits {
                 origin: crate::app_event::RateLimitRefreshOrigin::Recovery,
             });

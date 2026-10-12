@@ -230,7 +230,6 @@ deny = [
         "pagable",
         "rmcp",
         "tonic",
-        "webrtc",
         "zbus",
     ], reason = "first-party traits must use native async trait methods with explicit Send bounds" },
     # Migration ratchet: `antex-http-client` is the intended reqwest owner. Remove each temporary
@@ -252,7 +251,6 @@ deny = [
         "opentelemetry-otlp",
         "rmcp",
         "sentry",
-        "webrtc-sys-build",
     ], reason = "new direct reqwest dependencies must use antex-http-client; temporary wrappers track migration debt" },
 ]
 

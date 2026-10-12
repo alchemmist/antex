@@ -212,7 +212,7 @@ pub async fn list_accessible_connectors_from_mcp_tools_with_mcp_manager(
 ) -> anyhow::Result<AccessibleConnectorsStatus> {
     let auth_manager =
         AuthManager::shared_from_config(config, /*enable_antex_api_key_env*/ false).await?;
-    let auth = auth_manager.auth().await;
+    let auth = auth_manager.auth_for_request().await?;
     if !config
         .features
         .apps_enabled_for_auth(auth.as_ref().is_some_and(AntexAuth::uses_antex_backend))
@@ -436,6 +436,7 @@ async fn cached_directory_connectors_for_tool_suggest_with_auth(
         else {
             return Vec::new();
         };
+        // Cache-only directory metadata; no credential or request is produced here.
         loaded_auth = auth_manager.auth().await;
         loaded_auth.as_ref()
     };

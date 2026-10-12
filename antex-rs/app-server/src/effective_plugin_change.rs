@@ -102,7 +102,9 @@ pub(crate) async fn trust_materialized_plugin_hooks(
     config_processor: &ConfigRequestProcessor,
 ) -> Result<(), String> {
     let Some(current_account_id) = auth_manager
-        .auth_cached()
+        .auth_for_request()
+        .await
+        .map_err(|_| "failed to resolve plugin trust authentication".to_string())?
         .and_then(|auth| auth.get_account_id())
     else {
         return Ok(());
@@ -147,7 +149,9 @@ pub(crate) async fn trust_materialized_plugin_hooks(
         return Ok(());
     }
     if auth_manager
-        .auth_cached()
+        .auth_for_request()
+        .await
+        .map_err(|_| "failed to resolve plugin trust authentication".to_string())?
         .and_then(|auth| auth.get_account_id())
         .as_deref()
         != Some(current_account_id.as_str())

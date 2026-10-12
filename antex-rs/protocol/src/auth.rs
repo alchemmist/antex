@@ -11,6 +11,10 @@ pub enum AuthMode {
     ApiKey,
     /// ChatGPT OAuth managed by Antex (tokens persisted and refreshed by Antex).
     Chatgpt,
+    /// Public ChatGPT subscription OAuth for the direct OpenAI Responses API.
+    #[serde(rename = "chatgptDirect")]
+    #[strum(serialize = "chatgptDirect")]
+    ChatgptDirect,
     /// ChatGPT auth tokens supplied by an external host application.
     #[serde(rename = "chatgptAuthTokens")]
     #[strum(serialize = "chatgptAuthTokens")]
@@ -41,7 +45,10 @@ impl AuthMode {
     /// Returns whether this mode represents an authenticated human ChatGPT account.
     pub fn has_chatgpt_account(self) -> bool {
         match self {
-            Self::Chatgpt | Self::ChatgptAuthTokens | Self::PersonalAccessToken => true,
+            Self::Chatgpt
+            | Self::ChatgptDirect
+            | Self::ChatgptAuthTokens
+            | Self::PersonalAccessToken => true,
             Self::ApiKey
             | Self::Headers
             | Self::AgentIdentity
@@ -58,7 +65,9 @@ impl AuthMode {
             | Self::Headers
             | Self::AgentIdentity
             | Self::PersonalAccessToken => true,
-            Self::ApiKey | Self::BedrockApiKey | Self::BedrockAccessKeys => false,
+            Self::ApiKey | Self::ChatgptDirect | Self::BedrockApiKey | Self::BedrockAccessKeys => {
+                false
+            }
         }
     }
 }

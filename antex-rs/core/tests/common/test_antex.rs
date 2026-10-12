@@ -58,7 +58,6 @@ use antex_protocol::protocol::AskForApproval;
 use antex_protocol::protocol::EnvironmentConfig;
 use antex_protocol::protocol::EnvironmentConfigState;
 use antex_protocol::protocol::EventMsg;
-use antex_protocol::protocol::RealtimeConversationVersion as RealtimeWsVersion;
 use antex_protocol::protocol::SandboxPolicy;
 use antex_protocol::protocol::SessionConfiguredEvent;
 use antex_protocol::protocol::SessionSource;
@@ -695,8 +694,6 @@ impl TestAntexBuilder {
         };
         self.config_mutators.push(Box::new(move |config| {
             config.model_provider.supports_websockets = true;
-            config.experimental_realtime_ws_model = Some("realtime-test-model".to_string());
-            config.realtime.version = RealtimeWsVersion::V1;
         }));
         let test_env = TestEnv::local().await?;
         Box::pin(self.build_with_home_and_base_url(

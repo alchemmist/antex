@@ -47,6 +47,40 @@
           "type": "object"
         },
         {
+          "description": "ChatGPT subscription access to the public API, not the Codex backend.",
+          "properties": {
+            "email": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "planType": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/PlanType"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": {
+              "enum": [
+                "chatgptDirect"
+              ],
+              "title": "ChatgptDirectAccountType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "email",
+            "type"
+          ],
+          "title": "ChatgptDirectAccount",
+          "type": "object"
+        },
+        {
           "properties": {
             "type": {
               "enum": [

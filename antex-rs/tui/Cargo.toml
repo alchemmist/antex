@@ -57,7 +57,6 @@ antex-models-manager = { workspace = true }
 antex-otel = { workspace = true }
 antex-plugin = { workspace = true }
 antex-protocol = { workspace = true }
-antex-realtime-webrtc = { workspace = true }
 futures = { workspace = true }
 antex-rollout = { workspace = true }
 antex-sandboxing = { workspace = true }

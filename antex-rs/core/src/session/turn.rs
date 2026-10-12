@@ -10,7 +10,6 @@ use crate::compact::run_inline_auto_compact_task;
 use crate::compact_remote_v2::run_inline_remote_auto_compact_task as run_inline_remote_auto_compact_task_v2;
 use crate::connectors;
 use crate::context::ContextualUserFragment;
-use crate::context::UserVerificationNotice;
 use crate::cyber_access_program;
 use crate::environment_selection::TurnEnvironmentSnapshot;
 use crate::feedback_tags;
@@ -177,6 +176,10 @@ pub(crate) async fn run_turn(
 
     let mut client_session =
         prewarmed_client_session.unwrap_or_else(|| sess.services.model_client.new_session());
+    // One user turn owns every automatic tool/hook/compaction continuation, not
+    // just each sampling request. Bind here (also for prewarmed sessions), before
+    // pre-sampling compaction can send the existing private history.
+    let mut client_session = client_session.sampling_operation();
     // TODO(ccunningham): Pre-turn compaction runs before context updates and the
     // new user message are recorded. Estimate pending incoming items (context
     // diffs/full reinjection + user input) and trigger compaction preemptively
@@ -817,12 +820,6 @@ pub(crate) async fn run_turn(
             }
             Err(e) => {
                 info!("Turn error: {e:#}");
-                if matches!(
-                    e.details(),
-                    CodexErrorDetails::MisalignmentPolicyViolation { .. }
-                ) {
-                    sess.conversation.retire_handoffs_for_misalignment().await;
-                }
                 let error = e.to_antex_protocol_error();
                 sess.emit_turn_error_lifecycle(turn_context.as_ref(), error.clone(), e.details())
                     .await;
@@ -1498,6 +1495,7 @@ async fn run_auto_compact(
                 Arc::clone(sess),
                 Arc::clone(turn_context),
                 replacement_step_context,
+                client_session,
                 world_state,
                 reason,
                 phase,
@@ -1610,6 +1608,8 @@ async fn run_sampling_request(
     input: Vec<ResponseItem>,
     cancellation_token: CancellationToken,
 ) -> AntexResult<(SamplingRequestResult, Vec<ResponseItem>)> {
+    let mut operation = client_session.sampling_operation();
+    let client_session = &mut *operation;
     let turn_context = Arc::clone(&step_context.turn);
     let preempt = step_context.preempt.clone().unwrap_or_default();
     let _input_watch = if let Some(preempt) = &step_context.preempt {
@@ -1638,6 +1638,7 @@ async fn run_sampling_request(
     let mut original_input = None;
     let mut executed_tool_calls_by_output = HashMap::new();
     loop {
+        client_session.ensure_operation_owner()?;
         // Running code-mode cells can request review while this response is in flight.
         // Keep the latest received ID until response.created replaces it.
         let prompt_input = if let Some(input) = initial_input.take() {
@@ -1742,7 +1743,7 @@ pub(crate) struct PreparedToolRecommendations {
 pub(crate) async fn prepare_tool_recommendations(
     sess: &Session,
     turn_context: &TurnContext,
-) -> PreparedToolRecommendations {
+) -> AntexResult<PreparedToolRecommendations> {
     let loaded_plugins = sess
         .services
         .plugins_manager
@@ -1751,7 +1752,17 @@ pub(crate) async fn prepare_tool_recommendations(
         .without_plugins(&turn_context.disabled_plugin_ids);
     let tool_suggest_is_enabled = tool_suggest_enabled(turn_context);
     let auth = if tool_suggest_is_enabled {
-        sess.services.auth_manager.auth().await
+        sess.services
+            .auth_manager
+            .auth_for_request()
+            .await
+            .map_err(|error| match error {
+                antex_login::RefreshTokenError::Permanent(failure) => {
+                    CodexErr::RefreshTokenFailed(failure)
+                }
+                antex_login::RefreshTokenError::Transient(error) => CodexErr::Io(error),
+                antex_login::RefreshTokenError::Policy(error) => CodexErr::Fatal(error.to_string()),
+            })?
     } else {
         None
     };
@@ -1771,10 +1782,10 @@ pub(crate) async fn prepare_tool_recommendations(
         None
     };
 
-    PreparedToolRecommendations {
+    Ok(PreparedToolRecommendations {
         auth,
         endpoint_candidates,
-    }
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2044,140 +2055,6 @@ pub(super) fn agent_message_text(item: &antex_protocol::items::AgentMessageItem)
             antex_protocol::items::AgentMessageContent::Text { text } => text.as_str(),
         })
         .collect()
-}
-
-#[derive(Debug, PartialEq)]
-pub(super) enum RealtimeEventText {
-    Handoff(String, Option<MessagePhase>),
-    QuietReasoning(String),
-}
-
-pub(super) fn realtime_text_for_event(msg: &EventMsg) -> Option<RealtimeEventText> {
-    match msg {
-        EventMsg::ElicitationRequest(request)
-            if matches!(
-                &request.request,
-                antex_protocol::approvals::ElicitationRequest::UserVerification { .. }
-            ) =>
-        {
-            Some(RealtimeEventText::Handoff(
-                UserVerificationNotice.render(),
-                None,
-            ))
-        }
-        EventMsg::AgentMessage(event) => Some(RealtimeEventText::Handoff(
-            event.message.clone(),
-            event.phase.clone(),
-        )),
-        EventMsg::ItemCompleted(event) => match &event.item {
-            TurnItem::AgentMessage(item) => Some(RealtimeEventText::Handoff(
-                agent_message_text(item),
-                item.phase.clone(),
-            )),
-            TurnItem::Reasoning(item) => item
-                .summary_text
-                .iter()
-                .rev()
-                .map(|summary| summary.trim())
-                .find(|summary| !summary.is_empty())
-                .map(|summary| RealtimeEventText::QuietReasoning(summary.to_owned())),
-            _ => None,
-        },
-        EventMsg::ExecApprovalRequest(_)
-        | EventMsg::RequestPermissions(_)
-        | EventMsg::ApplyPatchApprovalRequest(_)
-        | EventMsg::RequestUserInput(_)
-        | EventMsg::ElicitationRequest(_) => {
-            let message = if matches!(
-                msg,
-                EventMsg::RequestUserInput(_) | EventMsg::ElicitationRequest(_)
-            ) {
-                "I need your input. Please respond in the app."
-            } else {
-                "I need your approval to continue. Please review the request in the app."
-            };
-            serde_json::to_string(msg)
-                .ok()
-                .map(|request| RealtimeEventText::Handoff(format!("{message}\n\n{request}"), None))
-        }
-        EventMsg::Error(_)
-        | EventMsg::Warning(_)
-        | EventMsg::AuthRecoveryStarted(_)
-        | EventMsg::AuthRecoveryCompleted(_)
-        | EventMsg::GuardianWarning(_)
-        | EventMsg::RealtimeConversationStarted(_)
-        | EventMsg::RealtimeConversationSdp(_)
-        | EventMsg::RealtimeConversationRealtime(_)
-        | EventMsg::RealtimeConversationClosed(_)
-        | EventMsg::ModelReroute(_)
-        | EventMsg::ModelVerification(_)
-        | EventMsg::TurnModerationMetadata(_)
-        | EventMsg::SafetyBuffering(_)
-        | EventMsg::ContextCompacted(_)
-        | EventMsg::ThreadRolledBack(_)
-        | EventMsg::TurnStarted(_)
-        | EventMsg::ThreadSettingsApplied(_)
-        | EventMsg::TurnComplete(_)
-        | EventMsg::TokenCount(_)
-        | EventMsg::UserMessage(_)
-        | EventMsg::AgentReasoning(_)
-        | EventMsg::AgentReasoningRawContent(_)
-        | EventMsg::AgentReasoningSectionBreak(_)
-        | EventMsg::SessionConfigured(_)
-        | EventMsg::EnvironmentConnected(_)
-        | EventMsg::EnvironmentDisconnected(_)
-        | EventMsg::ThreadGoalUpdated(_)
-        | EventMsg::ThreadQueueChanged(_)
-        | EventMsg::McpStartupUpdate(_)
-        | EventMsg::McpStartupComplete(_)
-        | EventMsg::McpToolCallBegin(_)
-        | EventMsg::McpToolCallEnd(_)
-        | EventMsg::ElicitationAbandoned(_)
-        | EventMsg::WebSearchBegin(_)
-        | EventMsg::WebSearchEnd(_)
-        | EventMsg::ExecCommandBegin(_)
-        | EventMsg::ExecCommandOutputDelta(_)
-        | EventMsg::TerminalInteraction(_)
-        | EventMsg::ExecCommandEnd(_)
-        | EventMsg::PatchApplyBegin(_)
-        | EventMsg::PatchApplyUpdated(_)
-        | EventMsg::PatchApplyEnd(_)
-        | EventMsg::ImageGenerationBegin(_)
-        | EventMsg::ImageGenerationEnd(_)
-        | EventMsg::ViewImageToolCall(_)
-        | EventMsg::DynamicToolCallRequest(_)
-        | EventMsg::DynamicToolCallResponse(_)
-        | EventMsg::GuardianAssessment(_)
-        | EventMsg::DeprecationNotice(_)
-        | EventMsg::StreamError(_)
-        | EventMsg::TurnDiff(_)
-        | EventMsg::RealtimeConversationListVoicesResponse(_)
-        | EventMsg::PlanUpdate(_)
-        | EventMsg::TurnAborted(_)
-        | EventMsg::ShutdownComplete
-        | EventMsg::EnteredReviewMode(_)
-        | EventMsg::ExitedReviewMode(_)
-        | EventMsg::RawResponseItem(_)
-        | EventMsg::RawResponseCompleted(_)
-        | EventMsg::ItemStarted(_)
-        | EventMsg::HookStarted(_)
-        | EventMsg::HookCompleted(_)
-        | EventMsg::AgentMessageContentDelta(_)
-        | EventMsg::PlanDelta(_)
-        | EventMsg::ReasoningContentDelta(_)
-        | EventMsg::ReasoningRawContentDelta(_)
-        | EventMsg::CollabAgentSpawnBegin(_)
-        | EventMsg::CollabAgentSpawnEnd(_)
-        | EventMsg::CollabAgentInteractionBegin(_)
-        | EventMsg::CollabAgentInteractionEnd(_)
-        | EventMsg::CollabWaitingBegin(_)
-        | EventMsg::CollabWaitingEnd(_)
-        | EventMsg::CollabCloseBegin(_)
-        | EventMsg::CollabCloseEnd(_)
-        | EventMsg::CollabResumeBegin(_)
-        | EventMsg::CollabResumeEnd(_)
-        | EventMsg::SubAgentActivity(_) => None,
-    }
 }
 
 /// Split the stream into normal assistant text vs. proposed plan content.
@@ -3206,6 +3083,9 @@ pub(crate) fn get_last_assistant_message_from_turn<'a>(
     None
 }
 
+#[cfg(test)]
+#[path = "turn_owner_tests.rs"]
+mod owner_tests;
 #[cfg(test)]
 #[path = "turn_tests.rs"]
 mod tests;

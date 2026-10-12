@@ -370,6 +370,17 @@ impl ThreadIdle {
     }
 }
 
+/// Fence earlier submissions with a read-only request handled by the same loop.
+/// The reply does not create synthetic model input or consume queued events.
+pub async fn wait_for_submission_barrier(antex: &AntexThread) -> anyhow::Result<()> {
+    let (reply, response) = tokio::sync::oneshot::channel();
+    antex
+        .submit(antex_protocol::protocol::Op::InspectContext { reply })
+        .await?;
+    tokio::time::timeout(std::time::Duration::from_secs(10), response).await??;
+    Ok(())
+}
+
 pub async fn wait_for_event_match<T, F>(antex: &AntexThread, matcher: F) -> T
 where
     F: Fn(&antex_protocol::protocol::EventMsg) -> Option<T>,

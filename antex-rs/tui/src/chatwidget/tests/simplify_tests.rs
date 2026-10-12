@@ -4,7 +4,7 @@ use pretty_assertions::assert_eq;
 
 #[tokio::test]
 async fn simplify_starts_a_parallel_review_without_changing_subagent_mode() {
-    let (mut chat, mut rx, mut ops) = make_chatwidget_manual(None).await;
+    let (mut chat, mut rx, mut ops) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.handle_thread_session(configured_thread_session(ThreadId::new()));
     drain_insert_history(&mut rx);
     chat.dispatch_command(SlashCommand::Simplify);
@@ -37,7 +37,7 @@ async fn simplify_starts_a_parallel_review_without_changing_subagent_mode() {
 
 #[tokio::test]
 async fn simplify_preserves_user_focus_as_text() {
-    let (mut chat, _rx, mut ops) = make_chatwidget_manual(None).await;
+    let (mut chat, _rx, mut ops) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.handle_thread_session(configured_thread_session(ThreadId::new()));
     chat.dispatch_command_with_args(
         SlashCommand::Simplify,
@@ -67,10 +67,10 @@ async fn simplify_preserves_user_focus_as_text() {
 
 #[tokio::test]
 async fn simplify_does_not_steer_an_active_task() {
-    let (mut chat, mut rx, mut ops) = make_chatwidget_manual(None).await;
+    let (mut chat, mut rx, mut ops) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.handle_thread_session(configured_thread_session(ThreadId::new()));
     drain_insert_history(&mut rx);
-    chat.bottom_pane.set_task_running(true);
+    chat.bottom_pane.set_task_running(/*running*/ true);
     while ops.try_recv().is_ok() {}
     chat.dispatch_command(SlashCommand::Simplify);
     assert!(ops.try_recv().is_err());
@@ -83,7 +83,7 @@ async fn simplify_does_not_steer_an_active_task() {
 
 #[tokio::test]
 async fn queued_simplify_keeps_access_to_subagents() {
-    let (mut chat, _rx, mut ops) = make_chatwidget_manual(None).await;
+    let (mut chat, _rx, mut ops) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.handle_thread_session(configured_thread_session(ThreadId::new()));
     chat.handle_composer_input_result(
         crate::bottom_pane::InputResult::Queued {
@@ -92,7 +92,7 @@ async fn queued_simplify_keeps_access_to_subagents() {
             action: QueuedInputAction::ParseSlash,
             pending_pastes: Vec::new(),
         },
-        false,
+        /*had_modal_or_popup*/ false,
     );
     chat.maybe_send_next_queued_input();
     assert_matches!(

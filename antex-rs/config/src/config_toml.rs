@@ -430,6 +430,8 @@ pub struct ConfigToml {
     /// Base URL override for the built-in `openai` model provider.
     pub openai_base_url: Option<String>,
 
+    // Legacy voice settings are accepted for existing configuration files only.
+    // They do not enable a voice runtime.
     /// Machine-local realtime audio device preferences used by realtime voice.
     #[serde(default)]
     pub audio: Option<RealtimeAudioToml>,

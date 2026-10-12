@@ -397,6 +397,22 @@ async fn parent_response(
     State(state): State<Arc<MockResponsesState>>,
     Json(request): Json<Value>,
 ) -> impl IntoResponse {
+    if state.compact_root_after_answer {
+        let tail = request["input"].as_array().map(|input| {
+            input
+                .iter()
+                .rev()
+                .take(3)
+                .map(|item| (&item["type"], &item["call_id"]))
+                .collect::<Vec<_>>()
+        });
+        eprintln!(
+            "guardian compaction diagnostic: root_requests={} model={} metadata={} input_tail={tail:?}",
+            state.root_requests.load(Ordering::SeqCst),
+            request["model"],
+            request["client_metadata"]
+        );
+    }
     let events = if request["input"].as_array().is_some_and(|input| {
         input
             .last()

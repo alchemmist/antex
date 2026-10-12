@@ -137,7 +137,7 @@ fn test_antex_auth(auth_mode: Option<AuthMode>) -> Option<AntexAuth> {
             secret_access_key: "test-secret-access-key".to_string(),
             session_token: None,
         }),
-        AuthMode::AgentIdentity | AuthMode::PersonalAccessToken => {
+        AuthMode::ChatgptDirect | AuthMode::AgentIdentity | AuthMode::PersonalAccessToken => {
             panic!("test auth mode requires a purpose-built CodexAuth")
         }
     })

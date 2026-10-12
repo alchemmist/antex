@@ -140,7 +140,18 @@ impl SessionInfoCell {
             .first_mut()
             .and_then(|part| part.as_any_mut().downcast_mut::<SessionHeaderHistoryCell>())
         {
+            motion.trace_handoff("session_header_attachment");
             header.startup_mascot_motion = Some(motion);
+            tracing::debug!(
+                target: "antex_tui::startup_mascot",
+                visible_motion = header.animated_startup_mascot().is_some(),
+                "startup mascot attached to session header"
+            );
+        } else {
+            tracing::debug!(
+                target: "antex_tui::startup_mascot",
+                "startup mascot attachment missing session header part"
+            );
         }
     }
 }

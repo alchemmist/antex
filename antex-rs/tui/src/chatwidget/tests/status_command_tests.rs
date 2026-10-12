@@ -542,6 +542,27 @@ async fn status_command_requests_thread_usage_for_remote_connection_metadata() {
 }
 
 #[tokio::test]
+async fn direct_subscription_status_does_not_request_codex_usage() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.thread_id = Some(ThreadId::new());
+    chat.update_account_state(
+        Some(crate::status::StatusAccountDisplay::ChatGpt {
+            email: None,
+            plan: None,
+        }),
+        /*plan_type*/ None,
+        /*has_chatgpt_account*/ true,
+        /*has_antex_backend_auth*/ false,
+    );
+    assert!(!chat.should_prefetch_rate_limits());
+    chat.dispatch_command(SlashCommand::Status);
+    assert_matches!(rx.try_recv(), Ok(AppEvent::InsertHistoryCell(_)));
+    while let Ok(event) = rx.try_recv() {
+        assert!(!matches!(event, AppEvent::RefreshThreadUsage { .. }));
+    }
+}
+
+#[tokio::test]
 async fn status_command_requests_thread_usage_with_backend_only_authentication() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.thread_id = Some(ThreadId::new());

@@ -213,6 +213,47 @@ supports_websockets = true
 }
 
 #[test]
+fn direct_chatgpt_route_rejects_custom_origins_but_preserves_explicit_provider_auth() {
+    for base_url in [
+        "https://chatgpt.com/backend-api/codex",
+        "https://proxy.example.com/v1",
+        "http://api.openai.com/v1",
+        "https://api.openai.com.evil.test/v1",
+        "https://api.openai.com/v1?forward=elsewhere",
+    ] {
+        let mut provider = ModelProviderInfo::create_openai_provider(Some(base_url.to_string()));
+        assert!(
+            provider
+                .to_api_provider(Some(AuthMode::ChatgptDirect))
+                .is_err()
+        );
+        // This independent credential belongs to the configured endpoint, not to ChatGPT.
+        provider.experimental_bearer_token = Some("provider-key".into());
+        assert_eq!(
+            provider
+                .to_api_provider(Some(AuthMode::ChatgptDirect))
+                .unwrap()
+                .base_url,
+            base_url
+        );
+        assert_eq!(
+            provider
+                .to_api_provider(Some(AuthMode::ApiKey))
+                .unwrap()
+                .base_url,
+            base_url
+        );
+    }
+    for base_url in [None, Some("https://api.openai.com/v1".to_string())] {
+        let provider = ModelProviderInfo::create_openai_provider(base_url);
+        let route = provider
+            .to_api_provider(Some(AuthMode::ChatgptDirect))
+            .unwrap();
+        assert_eq!(route.base_url, "https://api.openai.com/v1");
+    }
+}
+
+#[test]
 fn test_personal_access_token_uses_chatgpt_codex_base_url() {
     let api_provider = ModelProviderInfo::create_openai_provider(/*base_url*/ None)
         .to_api_provider(Some(AuthMode::PersonalAccessToken))

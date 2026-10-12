@@ -7,6 +7,9 @@ use antex_extension_api::McpServerContributor;
 use antex_mcp::CODEX_APPS_MCP_SERVER_NAME;
 use antex_mcp::hosted_plugin_runtime_mcp_server_config;
 
+#[cfg(test)]
+#[path = "auth_lifecycle_tests.rs"]
+mod auth_lifecycle_tests;
 mod cloud_plugin;
 #[cfg(test)]
 #[path = "event_stream_tests.rs"]

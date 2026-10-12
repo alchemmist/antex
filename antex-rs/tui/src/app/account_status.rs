@@ -31,7 +31,10 @@ impl App {
             .await;
             match result {
                 Ok(Ok(response)) => {
-                    if let Some(Account::Chatgpt { email, .. }) = response.account {
+                    if let Some(
+                        Account::Chatgpt { email, .. } | Account::ChatgptDirect { email, .. },
+                    ) = response.account
+                    {
                         app_event_tx.send(AppEvent::AccountEmailLoaded { request_id, email });
                     }
                 }

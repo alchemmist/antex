@@ -26,7 +26,11 @@ pub(crate) fn load_local_chatgpt_auth(
     )
     .map_err(|err| format!("failed to load local auth: {err}"))?
     .ok_or_else(|| "no local auth available".to_string())?;
-    if matches!(auth.auth_mode, Some(AuthMode::ApiKey)) || auth.openai_api_key.is_some() {
+    if matches!(
+        auth.auth_mode,
+        Some(AuthMode::ApiKey | AuthMode::ChatgptDirect)
+    ) || auth.openai_api_key.is_some()
+    {
         return Err("local auth is not a ChatGPT login".to_string());
     }
 
@@ -111,6 +115,7 @@ mod tests {
                 access_token,
                 refresh_token: "refresh-token".to_string(),
                 account_id: Some("workspace-1".to_string()),
+                direct: None,
             }),
             last_refresh: Some(Utc::now()),
             agent_identity: None,

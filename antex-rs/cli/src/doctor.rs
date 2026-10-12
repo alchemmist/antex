@@ -1371,6 +1371,7 @@ fn stored_auth_mode(auth: &antex_login::AuthDotJson) -> &'static str {
     match stored_auth_mode_value(auth) {
         AuthMode::ApiKey => "api_key",
         AuthMode::Chatgpt => "chatgpt",
+        AuthMode::ChatgptDirect => "chatgpt_direct",
         AuthMode::ChatgptAuthTokens => "chatgpt_auth_tokens",
         AuthMode::Headers => "headers",
         AuthMode::AgentIdentity => "agent_identity",
@@ -1430,6 +1431,32 @@ fn stored_auth_issues(
                 issues.push("ChatGPT auth is missing refresh metadata");
             }
         }
+        AuthMode::ChatgptDirect => match auth.tokens.as_ref() {
+            Some(tokens) => {
+                if tokens.access_token.trim().is_empty() || tokens.refresh_token.trim().is_empty() {
+                    issues.push("direct ChatGPT auth is missing tokens");
+                }
+                if tokens.id_token.raw_jwt.trim().is_empty() {
+                    issues.push("direct ChatGPT auth is missing an ID token");
+                }
+                match tokens.direct.as_ref() {
+                    Some(metadata) => {
+                        if metadata.client_id.trim().is_empty() {
+                            issues.push("direct ChatGPT auth is missing the issued client ID");
+                        }
+                        if !metadata
+                            .scopes
+                            .iter()
+                            .any(|scope| scope == "chatgpt.tokens.use.direct")
+                        {
+                            issues.push("direct ChatGPT auth is missing the direct-use scope");
+                        }
+                    }
+                    None => issues.push("direct ChatGPT auth is missing grant metadata"),
+                }
+            }
+            None => issues.push("direct ChatGPT auth is missing token data"),
+        },
         AuthMode::ChatgptAuthTokens => {
             match auth.tokens.as_ref() {
                 Some(tokens) => {
@@ -2460,6 +2487,7 @@ fn auth_mode_name(auth: &AntexAuth) -> &'static str {
     match auth.auth_mode() {
         AuthMode::ApiKey => "api_key",
         AuthMode::Chatgpt => "chatgpt",
+        AuthMode::ChatgptDirect => "chatgpt_direct",
         AuthMode::ChatgptAuthTokens => "chatgpt_auth_tokens",
         AuthMode::Headers => "headers",
         AuthMode::AgentIdentity => "agent_identity",
@@ -2536,6 +2564,7 @@ enum ProviderAuthReachabilityMode {
     NotRequired,
     ApiKey,
     Chatgpt,
+    ChatgptDirect,
 }
 
 impl ProviderAuthReachabilityMode {
@@ -2544,6 +2573,7 @@ impl ProviderAuthReachabilityMode {
             Self::NotRequired => "provider auth",
             Self::ApiKey => "API key auth",
             Self::Chatgpt => "ChatGPT auth",
+            Self::ChatgptDirect => "ChatGPT subscription (direct OpenAI API)",
         }
     }
 }
@@ -2615,6 +2645,7 @@ fn provider_auth_reachability_mode_from_auth(
         return ProviderAuthReachabilityMode::Chatgpt;
     }
     match stored_auth.map(stored_auth_mode_value) {
+        Some(AuthMode::ChatgptDirect) => ProviderAuthReachabilityMode::ChatgptDirect,
         Some(AuthMode::ApiKey | AuthMode::BedrockApiKey | AuthMode::BedrockAccessKeys) => {
             ProviderAuthReachabilityMode::ApiKey
         }
@@ -2647,6 +2678,12 @@ fn provider_reachability_plan_from_parts(
                 .then(|| provider_url_for_path(url, "models", provider_query_params))
         });
     let endpoints = match (mode, provider_base_url) {
+        (ProviderAuthReachabilityMode::ChatgptDirect, _) => vec![ReachabilityEndpoint {
+            label: "ChatGPT subscription".to_string(),
+            url: "https://api.openai.com/v1/responses".to_string(),
+            required: true,
+            route_probe_url: None,
+        }],
         (ProviderAuthReachabilityMode::ApiKey, _) | (_, Some(_)) => vec![ReachabilityEndpoint {
             label: format!("{provider_id} API"),
             url: provider_url_for_path(

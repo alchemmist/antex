@@ -2,10 +2,12 @@ mod amazon_bedrock;
 mod auth;
 mod bearer_auth_provider;
 mod capabilities;
+mod chatgpt_direct;
 mod combined_auth;
 mod models_endpoint;
 mod models_identity;
 mod provider;
+mod request_auth;
 mod shared_state;
 pub mod test_support;
 mod workspace_routing;
@@ -44,3 +46,7 @@ pub use provider::create_model_provider;
 #[cfg(test)]
 #[path = "workspace_routing_tests.rs"]
 mod workspace_routing_tests;
+
+#[cfg(test)]
+#[path = "external_resolution_tests.rs"]
+mod external_resolution_tests;

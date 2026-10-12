@@ -841,7 +841,7 @@ fn startup_panel_styles_snapshot() {
             "test",
         )
         .with_startup_panel(config, Some(1_000_000))
-        .with_yolo_mode(true);
+        .with_yolo_mode(/*yolo_mode*/ true);
         format!(
             "{style:?}:\n{}",
             render_lines(&cell.display_lines(/*width*/ 60)).join("\n")
@@ -871,7 +871,7 @@ fn startup_panel_updates_snapshot() {
     )
     .with_startup_panel(config, Some(1_000_000))
     .with_startup_updates(updates)
-    .with_yolo_mode(true);
+    .with_yolo_mode(/*yolo_mode*/ true);
 
     insta::assert_snapshot!(render_lines(&cell.display_lines(/*width*/ 68)).join("\n"));
 }
@@ -893,7 +893,7 @@ fn startup_panel_mascot_skins_and_narrow_fallback_snapshot() {
                 "test",
             )
             .with_startup_panel(config, Some(1_000_000))
-            .with_yolo_mode(true);
+            .with_yolo_mode(/*yolo_mode*/ true);
             format!(
                 "{mascot_skin:?}:\nwide:\n{}\nnarrow:\n{}",
                 render_lines(&cell.display_lines(/*width*/ 60)).join("\n"),
@@ -2415,7 +2415,6 @@ fn ran_cell_multiline_with_stderr_snapshot() {
 fn user_history_cell_wraps_and_prefixes_each_line_snapshot() {
     let msg = "_count_r\x1b[13;2:3uows";
     let cell = UserHistoryCell {
-        spoken: false,
         message: msg.to_string(),
         text_elements: Vec::new(),
         local_image_paths: Vec::new(),
@@ -2440,7 +2439,6 @@ fn user_history_cell_wraps_long_urls_inside_the_message_gutter() {
     );
     let image_start = message.find("[Image #1]").unwrap();
     let cell = UserHistoryCell {
-        spoken: false,
         message,
         text_elements: vec![TextElement::new(
             (image_start..image_start + "[Image #1]".len()).into(),
@@ -2491,7 +2489,6 @@ fn user_history_cell_wraps_long_urls_inside_the_message_gutter() {
 #[test]
 fn user_history_cell_renders_remote_image_urls() {
     let cell = UserHistoryCell {
-        spoken: false,
         message: "describe these".to_string(),
         text_elements: Vec::new(),
         local_image_paths: Vec::new(),
@@ -2512,7 +2509,6 @@ fn user_image_labels_follow_the_painted_prompt_surface() {
 
     let placeholder = "[Image #1]";
     let cell = UserHistoryCell {
-        spoken: false,
         message: format!("{placeholder} describe these"),
         text_elements: vec![TextElement::new(
             (0..placeholder.len()).into(),
@@ -2548,7 +2544,6 @@ fn user_image_labels_follow_the_painted_prompt_surface() {
 #[test]
 fn user_history_cell_summarizes_inline_data_urls() {
     let mut cell = UserHistoryCell {
-        spoken: false,
         message: "describe inline image".to_string(),
         text_elements: Vec::new(),
         local_image_paths: Vec::new(),
@@ -2574,7 +2569,6 @@ fn user_history_cell_summarizes_inline_data_urls() {
 #[test]
 fn user_history_cell_numbers_multiple_remote_images() {
     let cell = UserHistoryCell {
-        spoken: false,
         message: "describe both".to_string(),
         text_elements: Vec::new(),
         local_image_paths: Vec::new(),
@@ -2594,7 +2588,6 @@ fn user_history_cell_numbers_multiple_remote_images() {
 #[test]
 fn user_history_cell_height_matches_rendered_lines_with_remote_images() {
     let cell = UserHistoryCell {
-        spoken: false,
         message: "line one\nline two".to_string(),
         text_elements: Vec::new(),
         local_image_paths: Vec::new(),
@@ -2617,7 +2610,6 @@ fn user_history_cell_height_matches_rendered_lines_with_remote_images() {
 #[test]
 fn user_history_cell_trims_trailing_blank_message_lines() {
     let cell = UserHistoryCell {
-        spoken: false,
         message: "line one\n\n   \n\t \n".to_string(),
         text_elements: Vec::new(),
         local_image_paths: Vec::new(),
@@ -2638,7 +2630,6 @@ fn user_history_cell_trims_trailing_blank_message_lines() {
 fn user_history_cell_trims_trailing_blank_message_lines_with_text_elements() {
     let message = "tokenized\n\n\n".to_string();
     let cell = UserHistoryCell {
-        spoken: false,
         message,
         text_elements: vec![TextElement::new(
             (0..8).into(),
@@ -2662,7 +2653,6 @@ fn user_history_cell_trims_trailing_blank_message_lines_with_text_elements() {
 fn render_uses_wrapping_for_long_url_like_line() {
     let url = "https://example.test/api/v1/projects/alpha-team/releases/2026-02-17/builds/1234567890/artifacts/reports/performance/summary/detail/with/a/very/long/path/that/keeps/going/for/testing/purposes-only-and-does/not/need/to/resolve/index.html?session_id=abc123def456ghi789jkl012mno345pqr678stu901vwx234yz";
     let cell: Box<dyn HistoryCell> = Box::new(UserHistoryCell {
-        spoken: false,
         message: url.to_string(),
         text_elements: Vec::new(),
         local_image_paths: Vec::new(),
@@ -3147,7 +3137,6 @@ fn agent_markdown_cell_narrow_width_shows_prefix_only() {
 #[test]
 fn wrapped_and_prefixed_cells_handle_tiny_widths() {
     let user_cell = UserHistoryCell {
-        spoken: false,
         message: "tiny width coverage for wrapped user history".to_string(),
         text_elements: Vec::new(),
         local_image_paths: Vec::new(),
@@ -3254,7 +3243,6 @@ fn consolidation_walker_replaces_agent_message_cells() {
 
     // Build a transcript with: [UserCell, AgentMsg(head), AgentMsg(cont), AgentMsg(cont)]
     let user = Arc::new(UserHistoryCell {
-        spoken: false,
         message: "hello".to_string(),
         text_elements: Vec::new(),
         local_image_paths: Vec::new(),

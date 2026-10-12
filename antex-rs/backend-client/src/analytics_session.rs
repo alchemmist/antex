@@ -39,9 +39,10 @@ impl AnalyticsSession {
                     "Couldn't load local sign-in. Sign in with ChatGPT and retry.".to_string()
                 })?;
         let auth = auth_manager
-            .auth()
+            .auth_for_request()
             .await
-            .filter(AntexAuth::is_chatgpt_auth)
+            .map_err(|error| error.to_string())?
+            .filter(|auth| auth.uses_antex_backend() && auth.is_chatgpt_auth())
             .ok_or("Sign in locally with ChatGPT to view Analytics.")?;
         let (Some(id), Some(_)) = (auth.get_account_id(), auth.get_chatgpt_user_id()) else {
             return Err("Analytics requires a ChatGPT account and user identity.".into());
@@ -92,9 +93,12 @@ impl AnalyticsSession {
     /// Reject responses or cached data after a local account or user change.
     pub async fn ensure_identity(&self) -> Result<(), String> {
         self.auth_manager.reload().await;
-        let current = self.auth_manager.auth().await;
+        // This checks identity metadata, not permission to send a request.
+        // A failed refresh can leave the same identity signed in but unusable.
+        let current = self.auth_manager.auth_cached();
         if current.is_none_or(|auth| {
-            auth.get_account_id() != self.auth.get_account_id()
+            !auth.uses_antex_backend()
+                || auth.get_account_id() != self.auth.get_account_id()
                 || auth.get_chatgpt_user_id() != self.auth.get_chatgpt_user_id()
         }) {
             return Err("Account changed. Press R to refresh Analytics.".into());
@@ -108,25 +112,58 @@ impl AnalyticsSession {
         F: std::future::Future<Output = Result<T, RequestError>>,
     {
         let mut recovery = self.auth_manager.unauthorized_recovery();
+        let mut unauthorized = None;
         loop {
-            self.ensure_identity()
-                .await
-                .map_err(|error| RequestError::Other(anyhow::anyhow!(error)))?;
-            let result = request(self.client.clone()).await;
-            // Keep the original 401 when recovery fails so callers retain sign-in guidance.
-            if result.as_ref().is_err_and(RequestError::is_unauthorized)
-                && recovery.has_next()
-                && recovery.next().await.is_ok()
-            {
-                continue;
+            let ready = async {
+                recovery
+                    .ensure_same_owner()
+                    .map_err(|error| error.to_string())?;
+                self.ensure_identity().await?;
+                self.auth_manager
+                    .auth_for_request()
+                    .await
+                    .map_err(|error| error.to_string())?
+                    .ok_or_else(|| "Sign in again to load Analytics.".to_string())?;
+                recovery
+                    .ensure_same_owner()
+                    .map_err(|error| error.to_string())
             }
-            self.ensure_identity()
-                .await
-                .map_err(|error| RequestError::Other(anyhow::anyhow!(error)))?;
+            .await;
+            if let Err(error) = ready {
+                // Only an observed HTTP 401 supplies a status. Initial auth
+                // failures must remain status-less and must not dispatch.
+                return Err(
+                    unauthorized.unwrap_or_else(|| RequestError::Other(anyhow::anyhow!(error)))
+                );
+            }
+            let result = request(self.client.clone()).await;
+            if result.as_ref().is_err_and(RequestError::is_unauthorized) {
+                if recovery.has_next() && recovery.next().await.is_ok() {
+                    unauthorized = result.err();
+                    continue;
+                }
+                return result;
+            }
+            let still_owned = async {
+                self.ensure_identity().await?;
+                recovery
+                    .ensure_same_owner()
+                    .map_err(|error| error.to_string())
+            }
+            .await;
+            if let Err(error) = still_owned {
+                return Err(
+                    unauthorized.unwrap_or_else(|| RequestError::Other(anyhow::anyhow!(error)))
+                );
+            }
             return result;
         }
     }
 }
+
+#[cfg(test)]
+#[path = "analytics_session_request_auth_tests.rs"]
+mod request_auth_tests;
 
 #[cfg(test)]
 #[path = "analytics_session_tests.rs"]

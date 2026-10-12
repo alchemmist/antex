@@ -57,6 +57,7 @@ use core_test_support::test_antex::TestAntex;
 use core_test_support::test_antex::test_antex;
 use core_test_support::test_antex::turn_permission_fields;
 use core_test_support::wait_for_event;
+use core_test_support::wait_for_submission_barrier;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
 use serde_json::from_slice;
@@ -405,14 +406,9 @@ async fn enqueue_queue_only_agent_mail(antex: &AntexThread, text: &str) {
 
 async fn submit_queue_only_agent_mail(antex: &AntexThread, text: &str) {
     enqueue_queue_only_agent_mail(antex, text).await;
-    antex
-        .submit(Op::RealtimeConversationListVoices)
+    wait_for_submission_barrier(antex)
         .await
-        .expect("submit list-voices barrier");
-    wait_for_event(antex, |event| {
-        matches!(event, EventMsg::RealtimeConversationListVoicesResponse(_))
-    })
-    .await;
+        .expect("submit queued-mail barrier");
 }
 
 async fn wait_for_reasoning_item_started(antex: &AntexThread) {
@@ -2257,11 +2253,7 @@ async fn terminal_compaction_error_does_not_retry_pending_input(
                     start_options: Default::default(),
                 })
                 .await?;
-            antex.submit(Op::RealtimeConversationListVoices).await?;
-            wait_for_event(antex, |event| {
-                matches!(event, EventMsg::RealtimeConversationListVoicesResponse(_))
-            })
-            .await;
+            wait_for_submission_barrier(antex).await?;
         }
     }
     release_failure.send(()).expect("release compact failure");

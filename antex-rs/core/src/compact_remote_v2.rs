@@ -385,6 +385,8 @@ async fn run_remote_compaction_request_v2(
     prompt: &Prompt,
     responses_metadata: &AntexResponsesMetadata,
 ) -> AntexResult<RemoteCompactionV2Output> {
+    let mut operation = client_session.sampling_operation();
+    let client_session = &mut *operation;
     let turn_context = &step_context.turn;
     let max_retries = turn_context
         .provider
@@ -393,6 +395,7 @@ async fn run_remote_compaction_request_v2(
         .min(MAX_REMOTE_COMPACTION_V2_STREAM_RETRIES);
     let mut retry_state = ResponsesStreamRetryState::default();
     loop {
+        client_session.ensure_operation_owner()?;
         let result = match client_session
             .stream(
                 prompt,

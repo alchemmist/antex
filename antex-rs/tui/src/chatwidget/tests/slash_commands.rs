@@ -2759,11 +2759,14 @@ async fn copy_shortcut_submits_markdown_and_reports_completion_once() {
     // Vim visual copies share the upstream worker's non-transcript feedback path.
     chat.show_selection_copy_result(Ok(crate::clipboard_copy::CopyStatus::Pending(2)));
     assert!(drain_insert_history(&mut rx).is_empty());
-    chat.finish_clipboard(&(2, Ok(crate::clipboard_copy::CopyStatus::Confirmed)), true);
+    chat.finish_clipboard(
+        &(2, Ok(crate::clipboard_copy::CopyStatus::Confirmed)),
+        /*composer_visible*/ true,
+    );
     assert!(drain_insert_history(&mut rx).is_empty());
     chat.show_selection_copy_result(Err("blocked visual selection".to_string()));
     assert!(drain_insert_history(&mut rx).is_empty());
-    assert!(render_bottom_popup(&chat, 80).contains("blocked visual selection"));
+    assert!(render_bottom_popup(&chat, /*width*/ 80).contains("blocked visual selection"));
 }
 
 #[tokio::test]

@@ -1187,7 +1187,12 @@ impl AntexThread {
             }
             None => None,
         };
-        let _ = self.session.services.auth_manager.auth().await;
+        let _ = self
+            .session
+            .services
+            .auth_manager
+            .auth_for_request()
+            .await?;
         self.session.refresh_mcp_if_dirty().await;
         antex_mcp::McpResourceClient::new(Arc::clone(&self.session.services.mcp_runtime))
             .open_event_stream(name, &arguments, meta)

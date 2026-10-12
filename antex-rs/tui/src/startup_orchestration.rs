@@ -815,9 +815,7 @@ pub(super) async fn run_main_inner(
         let log_file = log_file_opts.open(log_dir.join(TUI_LOG_FILE_NAME))?;
         let (non_blocking, guard) = non_blocking(log_file);
         let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-            EnvFilter::new(
-                "antex_core=info,antex_tui=info,antex_rmcp_client=info,codex_realtime_webrtc=warn",
-            )
+            EnvFilter::new("antex_core=info,antex_tui=info,antex_rmcp_client=info")
         });
         let file_layer = tracing_subscriber::fmt::layer()
             .with_writer(non_blocking)

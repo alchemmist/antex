@@ -3,6 +3,6 @@ load("//:defs.bzl", "antex_rust_crate")
 antex_rust_crate(
     name = "antex-mcp",
     crate_name = "antex_mcp",
-    extra_binaries = ["//antex-rs/cli:codex"],
+    extra_binaries = ["//antex-rs/cli:antex"],
     test_data_extra = glob(["src/**/snapshots/**"]),
 )

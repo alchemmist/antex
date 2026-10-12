@@ -1,4 +1,5 @@
 import argparse
+import hashlib
 import json
 import os
 import subprocess
@@ -46,8 +47,19 @@ def smoke(binary):
             selected = home / "packages/app-server-daemon/current"
             if json.loads((selected / "antex-package.json").read_text()) != expected:
                 raise RuntimeError("daemon did not retain package metadata")
-            if not (selected / "antex-resources/voice/bin/antex-voice-host").is_file():
-                raise RuntimeError("daemon installation lost voice resources")
+            for source_file in source.rglob("*"):
+                if source_file.is_file():
+                    relative = source_file.relative_to(source)
+                    with source_file.open("rb") as original:
+                        expected_digest = hashlib.file_digest(
+                            original, "sha256"
+                        ).digest()
+                    with (selected / relative).open("rb") as installed:
+                        actual_digest = hashlib.file_digest(
+                            installed, "sha256"
+                        ).digest()
+                    if actual_digest != expected_digest:
+                        raise RuntimeError(f"daemon installation changed {relative}")
         finally:
             subprocess.run(
                 [*command, "stop"],

@@ -749,7 +749,7 @@ fn inline_code_and_file_paths_follow_syntax_theme() {
         let theme = if name == "no-markup-color" {
             syntect::highlighting::Theme::default()
         } else {
-            crate::render::highlight::resolve_theme_by_name(name, /*antex_home*/ None)
+            crate::render::highlight::resolve_theme_by_name(name, /*codex_home*/ None)
                 .expect("bundled theme")
         };
         let colors = if name == "catppuccin-latte" {

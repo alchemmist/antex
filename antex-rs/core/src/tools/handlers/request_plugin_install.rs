@@ -188,7 +188,16 @@ impl RequestPluginInstallHandler {
             })?;
         let tool = if self.presentation == ToolSuggestPresentation::RecommendationContext {
             let plugin_id = tool.id().to_string();
-            let auth = session.services.auth_manager.auth().await;
+            let auth = session
+                .services
+                .auth_manager
+                .auth_for_request()
+                .await
+                .map_err(|_| {
+                    FunctionCallError::RespondToModel(
+                        "failed to resolve plugin authentication".to_string(),
+                    )
+                })?;
             let plugins_config = turn.config.plugins_config_input();
             match antex_core_plugins::hydrate_selected_recommended_plugin_install_metadata(
                 &plugins_config,
@@ -264,7 +273,16 @@ impl RequestPluginInstallHandler {
             .as_ref()
             .is_some_and(|response| response.action == ElicitationAction::Accept);
 
-        let auth = session.services.auth_manager.auth().await;
+        let auth = session
+            .services
+            .auth_manager
+            .auth_for_request()
+            .await
+            .map_err(|_| {
+                FunctionCallError::RespondToModel(
+                    "failed to resolve plugin authentication".to_string(),
+                )
+            })?;
         let completed = if user_confirmed {
             verify_request_plugin_install_completed(&session, &turn, mcp, &tool, auth.as_ref())
                 .await

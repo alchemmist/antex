@@ -268,8 +268,6 @@ impl App {
         let events = tui.event_stream();
         let operation = async {
             let result = async {
-                self.stop_voice_for_removed_thread(app_server, thread_id)
-                    .await?;
                 if let Some(primary) = primary_thread_id
                     && primary != thread_id
                 {

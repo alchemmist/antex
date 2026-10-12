@@ -9,7 +9,6 @@
 //! options only update turn context on Started; input provenance follows each request.
 //! Host shutdown admission is checked before reserving or starting a new turn.
 //! Parent-delegated subagent input bypasses drain; automatic starts remain gated.
-//! Realtime drain refusals are returned to the fanout for ordered session teardown.
 //! Sender evidence is read without the active-turn lock and bound to the accepted turn.
 
 use super::TurnInput;
@@ -34,10 +33,6 @@ use antex_protocol::error::CodexErr;
 use antex_protocol::error::Result as AntexResult;
 use antex_protocol::models::ResponseItem;
 use antex_protocol::protocol::AdditionalContextEntry;
-use antex_protocol::protocol::CodexErrorInfo;
-use antex_protocol::protocol::ErrorEvent;
-use antex_protocol::protocol::Event;
-use antex_protocol::protocol::EventMsg;
 use antex_protocol::protocol::NonSteerableTurnKind;
 use antex_protocol::protocol::SessionSource;
 use antex_protocol::protocol::SubAgentSource;
@@ -49,12 +44,10 @@ use antex_protocol::turn_input::TurnInputMode;
 use antex_protocol::turn_input::TurnInputRequest;
 use antex_protocol::turn_input::TurnInputSubmission;
 use antex_protocol::turn_input::TurnStartOptions;
-use antex_protocol::user_input::UserInput;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::sync::Arc;
-use uuid::Uuid;
 
 #[cfg(test)]
 #[path = "turn_input_tests.rs"]
@@ -730,54 +723,6 @@ impl Session {
                 .unwrap_or_default()
         };
         Some((Arc::clone(&active_turn.turn_state), previous_options))
-    }
-
-    pub(crate) async fn route_realtime_text_input(
-        self: &Arc<Self>,
-        text: String,
-    ) -> Result<(), &'static str> {
-        let submission_id = Uuid::now_v7().to_string();
-        let submission = handle(
-            self,
-            TurnInputRequest::user_input(vec![UserInput::Text {
-                text,
-                text_elements: Vec::new(),
-            }])
-            .on_start(TurnStartOptions {
-                turn_trigger: Some("realtime".to_string()),
-                ..Default::default()
-            }),
-            TurnInputMode::StartOrSteer,
-            submission_id.clone(),
-        )
-        .await;
-        match submission {
-            Ok(TurnInputSubmission::Started { .. } | TurnInputSubmission::Steered { .. }) => {}
-            Ok(TurnInputSubmission::NotSubmitted {
-                reason: NotSubmittedReason::ServerDraining,
-            }) => {
-                return Err("Server is draining; retry the turn after reconnecting");
-            }
-            Ok(TurnInputSubmission::NotSubmitted { reason }) => {
-                self.send_event_raw(Event {
-                    id: submission_id,
-                    msg: EventMsg::Error(ErrorEvent {
-                        misalignment: None,
-                        message: format!("failed to submit turn input: {reason:?}"),
-                        codex_error_info: Some(CodexErrorInfo::BadRequest),
-                    }),
-                })
-                .await;
-            }
-            Err(error) => {
-                self.send_event_raw(Event {
-                    id: submission_id,
-                    msg: EventMsg::Error(error.to_error_event(/*message_prefix*/ None)),
-                })
-                .await;
-            }
-        }
-        Ok(())
     }
 
     async fn clear_reserved_idle_turn(&self, turn_state: &Arc<tokio::sync::Mutex<TurnState>>) {

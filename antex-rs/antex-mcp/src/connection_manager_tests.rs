@@ -101,9 +101,18 @@ fn workflow_guard_rejects_quality_graph_ignore_tool_arguments() {
     let forbidden = serde_json::json!({"body": "/qg finding ignore"});
     let allowed = serde_json::json!({"body": "Fixed the root cause"});
 
-    assert!(quality_graph_ignore_forbidden(Some(&forbidden), true));
-    assert!(!quality_graph_ignore_forbidden(Some(&forbidden), false));
-    assert!(!quality_graph_ignore_forbidden(Some(&allowed), true));
+    assert!(quality_graph_ignore_forbidden(
+        Some(&forbidden),
+        /*enabled*/ true
+    ));
+    assert!(!quality_graph_ignore_forbidden(
+        Some(&forbidden),
+        /*enabled*/ false
+    ));
+    assert!(!quality_graph_ignore_forbidden(
+        Some(&allowed),
+        /*enabled*/ true
+    ));
 }
 
 impl McpConnectionSet {
@@ -115,6 +124,7 @@ impl McpConnectionSet {
         Self {
             servers: HashMap::new(),
             event_stream_connection: None,
+            new_call_connection: None,
             disabled_servers: Vec::new(),
             required_servers: Vec::new(),
             optional_startup_deadline: OnceLock::new(),
@@ -132,6 +142,7 @@ impl McpConnectionSet {
                 ElicitationRequestRouter::default(),
             ),
             trusted_access: None,
+            openai_file_upload_auth: None,
         }
     }
 

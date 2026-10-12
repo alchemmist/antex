@@ -389,7 +389,7 @@ fn request_telemetry_fixture(router: RpcRouter<ExecServerHandler>) -> RequestTel
         notifications,
         ExecServerRuntimeOptions::new(
             std::env::current_exe().expect("current executable"),
-            /*codex_linux_sandbox_exe*/ None,
+            /*antex_linux_sandbox_exe*/ None,
         )
         .expect("runtime paths"),
         HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault),

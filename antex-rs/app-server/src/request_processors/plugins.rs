@@ -580,7 +580,11 @@ impl PluginRequestProcessor {
         if !context.plugins_enabled() && context.load_errors.is_empty() {
             return Ok(empty_response());
         }
-        let auth = self.auth_manager.auth().await;
+        let auth = self
+            .auth_manager
+            .auth_for_request()
+            .await
+            .map_err(|_| internal_error("failed to resolve request authentication"))?;
         let auth_mode = auth.as_ref().map(AntexAuth::api_auth_mode);
         if include_local
             && force_refetch
@@ -843,7 +847,11 @@ impl PluginRequestProcessor {
         if !context.plugins_enabled() && context.load_errors.is_empty() {
             return Ok(empty_response());
         }
-        let auth = self.auth_manager.auth().await;
+        let auth = self
+            .auth_manager
+            .auth_for_request()
+            .await
+            .map_err(|_| internal_error("failed to resolve request authentication"))?;
         let auth_mode = auth.as_ref().map(AntexAuth::api_auth_mode);
 
         let use_remote_global_catalog = context.remote_plugins_enabled()
@@ -1029,7 +1037,12 @@ impl PluginRequestProcessor {
         });
 
         let mut config = self.load_latest_config(config_cwd).await?;
-        let auth = match self.auth_manager.auth_with_http_client_factory().await {
+        let auth = match self
+            .auth_manager
+            .auth_for_request_with_http_client_factory()
+            .await
+            .map_err(|_| internal_error("failed to resolve request authentication"))?
+        {
             Some((auth, factory)) => {
                 config.application_network_policy = factory.network_policy().clone();
                 Some(auth)
@@ -1245,7 +1258,11 @@ impl PluginRequestProcessor {
             ));
         }
 
-        let auth = self.auth_manager.auth().await;
+        let auth = self
+            .auth_manager
+            .auth_for_request()
+            .await
+            .map_err(|_| internal_error("failed to resolve request authentication"))?;
         let remote_plugin_service_config = remote_plugin_service_config(&config);
         let remote_skill_detail = antex_core_plugins::remote::fetch_remote_plugin_skill_detail(
             &remote_plugin_service_config,
@@ -1474,7 +1491,11 @@ impl PluginRequestProcessor {
         if !config.features.enabled(Feature::Plugins) {
             return Err(invalid_request("plugin sharing is not enabled"));
         }
-        let auth = self.auth_manager.auth().await;
+        let auth = self
+            .auth_manager
+            .auth_for_request()
+            .await
+            .map_err(|_| internal_error("failed to resolve request authentication"))?;
         Ok((config, auth))
     }
 
@@ -1507,7 +1528,12 @@ impl PluginRequestProcessor {
         };
         let config_cwd = marketplace_path.as_path().parent().map(Path::to_path_buf);
         let mut config = self.load_latest_config(config_cwd.clone()).await?;
-        let auth = match self.auth_manager.auth_with_http_client_factory().await {
+        let auth = match self
+            .auth_manager
+            .auth_for_request_with_http_client_factory()
+            .await
+            .map_err(|_| internal_error("failed to resolve request authentication"))?
+        {
             Some((auth, factory)) => {
                 config.application_network_policy = factory.network_policy().clone();
                 Some(auth)
@@ -1598,7 +1624,12 @@ impl PluginRequestProcessor {
         install_attempt_id: Option<String>,
     ) -> Result<PluginInstallResponse, JSONRPCErrorError> {
         let mut config = self.load_latest_config(/*fallback_cwd*/ None).await?;
-        let auth = match self.auth_manager.auth_with_http_client_factory().await {
+        let auth = match self
+            .auth_manager
+            .auth_for_request_with_http_client_factory()
+            .await
+            .map_err(|_| internal_error("failed to resolve request authentication"))?
+        {
             Some((auth, factory)) => {
                 config.application_network_policy = factory.network_policy().clone();
                 Some(auth)
@@ -1715,7 +1746,9 @@ impl PluginRequestProcessor {
             .await;
         }
 
-        let is_chatgpt_auth = auth.as_ref().is_some_and(AntexAuth::is_chatgpt_auth);
+        let is_chatgpt_auth = auth
+            .as_ref()
+            .is_some_and(|auth| auth.is_chatgpt_auth() && auth.uses_antex_backend());
         let apps_needing_auth = if let Some(app_ids_needing_auth) =
             installation.app_ids_needing_auth
         {
@@ -1797,9 +1830,9 @@ impl PluginRequestProcessor {
         plugin_app_declarations: &[antex_plugin::AppDeclaration],
     ) -> Vec<AppSummary> {
         if plugin_app_declarations.is_empty()
-            || !config
-                .features
-                .apps_enabled_for_auth(auth.is_some_and(AntexAuth::is_chatgpt_auth))
+            || !config.features.apps_enabled_for_auth(
+                auth.is_some_and(|auth| auth.is_chatgpt_auth() && auth.uses_antex_backend()),
+            )
         {
             return Vec::new();
         }
@@ -2103,7 +2136,11 @@ impl PluginRequestProcessor {
         plugin_id: String,
     ) -> Result<PluginUninstallResponse, JSONRPCErrorError> {
         let config = self.load_latest_config(/*fallback_cwd*/ None).await?;
-        let auth = self.auth_manager.auth().await;
+        let auth = self
+            .auth_manager
+            .auth_for_request()
+            .await
+            .map_err(|_| internal_error("failed to resolve request authentication"))?;
         let outcome = self
             .thread_manager
             .plugins_manager()

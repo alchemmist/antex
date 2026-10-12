@@ -38,6 +38,12 @@ const LOGIN_ISSUER_OVERRIDE_ENV_VAR: &str = "ANTEX_APP_SERVER_LOGIN_ISSUER";
 #[cfg(debug_assertions)]
 const LOGIN_OPEN_APP_URL_OVERRIDE_ENV_VAR: &str = "ANTEX_APP_SERVER_DEV_OPEN_APP_URL";
 
+#[derive(Clone, Copy)]
+enum BrowserLoginMode {
+    LegacyCodex,
+    ChatgptDirect,
+}
+
 enum ActiveLogin {
     Browser {
         shutdown_handle: ShutdownHandle,
@@ -364,6 +370,16 @@ impl AccountRequestProcessor {
                 self.login_chatgpt_v2(request_id, antex_streamlined_login, login_success_page)
                     .await;
             }
+            LoginAccountParams::ChatgptDirect => {
+                let result = self
+                    .login_chatgpt_response(
+                        BrowserLoginMode::ChatgptDirect,
+                        /*antex_streamlined_login*/ false,
+                        LoginSuccessPage::default(),
+                    )
+                    .await;
+                self.outgoing.send_result(request_id, result).await;
+            }
             LoginAccountParams::ChatgptDeviceCode => {
                 self.login_chatgpt_device_code_v2(request_id).await;
             }
@@ -649,21 +665,29 @@ impl AccountRequestProcessor {
         login_success_page: LoginSuccessPage,
     ) {
         let result = self
-            .login_chatgpt_response(antex_streamlined_login, login_success_page)
+            .login_chatgpt_response(
+                BrowserLoginMode::LegacyCodex,
+                antex_streamlined_login,
+                login_success_page,
+            )
             .await;
         self.outgoing.send_result(request_id, result).await;
     }
 
     async fn login_chatgpt_response(
         &self,
+        mode: BrowserLoginMode,
         antex_streamlined_login: bool,
         login_success_page: LoginSuccessPage,
     ) -> Result<LoginAccountResponse, JSONRPCErrorError> {
         let opts = self
             .login_chatgpt_common(antex_streamlined_login, login_success_page)
             .await?;
-        let server = run_login_server(opts)
-            .map_err(|err| internal_error(format!("failed to start login server: {err}")))?;
+        let server = match mode {
+            BrowserLoginMode::LegacyCodex => run_login_server(opts),
+            BrowserLoginMode::ChatgptDirect => antex_login::run_direct_login_server(opts),
+        }
+        .map_err(|err| internal_error(format!("failed to start login server: {err}")))?;
         let login_id = Uuid::new_v4();
         let shutdown_handle = server.cancel_handle();
 
@@ -683,12 +707,22 @@ impl AccountRequestProcessor {
         let active_login = self.active_login.clone();
         let auth_url = server.auth_url.clone();
         let task = async move {
-            let (success, error_msg, onboarding_entrypoint) = match tokio::time::timeout(
-                LOGIN_CHATGPT_TIMEOUT,
-                server.block_until_done_with_callback_result(),
-            )
-            .await
-            {
+            // Direct login enforces its own deadline through credential publication.
+            // A second timeout here could report failure after its commit has won
+            // cancellation, while the detached publication still saves credentials.
+            let completion = match mode {
+                BrowserLoginMode::ChatgptDirect => {
+                    Ok(server.block_until_done_with_callback_result().await)
+                }
+                BrowserLoginMode::LegacyCodex => {
+                    tokio::time::timeout(
+                        LOGIN_CHATGPT_TIMEOUT,
+                        server.block_until_done_with_callback_result(),
+                    )
+                    .await
+                }
+            };
+            let (success, error_msg, onboarding_entrypoint) = match completion {
                 Ok(Ok(result)) => (
                     true,
                     None,
@@ -1122,6 +1156,22 @@ impl AccountRequestProcessor {
         let include_token = params.include_token.unwrap_or(false);
         let do_refresh = params.refresh_token.unwrap_or(false);
 
+        // A new status request can observe a replacement local login after a
+        // permanent failure. This is an explicit reload, not permission for an
+        // already-running request to adopt another owner's credentials.
+        if include_token
+            && !self.auth_manager.has_external_auth()
+            && self
+                .auth_manager
+                .auth_cached()
+                .as_ref()
+                .is_some_and(|auth| {
+                    matches!(auth, AntexAuth::Chatgpt(_))
+                        && self.auth_manager.refresh_failure_for_auth(auth).is_some()
+                })
+        {
+            self.auth_manager.reload().await;
+        }
         self.refresh_token_if_requested(do_refresh).await;
 
         // Determine whether auth is required based on the active model provider.
@@ -1137,7 +1187,21 @@ impl AccountRequestProcessor {
                 requires_openai_auth: Some(false),
             }
         } else {
-            let auth = if do_refresh {
+            let auth = if include_token {
+                match self.auth_manager.auth_for_request().await {
+                    Ok(auth) => auth,
+                    Err(_) => {
+                        // Status is metadata, not permission to use a cached credential.
+                        // Preserve the legacy response shape while never exporting a
+                        // token rejected by authoritative request resolution.
+                        return Ok(GetAuthStatusResponse {
+                            auth_method: self.auth_manager.auth_mode().map(auth_mode_to_api),
+                            auth_token: None,
+                            requires_openai_auth: Some(true),
+                        });
+                    }
+                }
+            } else if do_refresh {
                 self.auth_manager.auth_cached()
             } else {
                 self.auth_manager.auth().await
@@ -1152,6 +1216,7 @@ impl AccountRequestProcessor {
                             || matches!(
                                 auth,
                                 AntexAuth::Headers(_)
+                                    | AntexAuth::ChatgptDirect(_)
                                     | AntexAuth::AgentIdentity(_)
                                     | AntexAuth::PersonalAccessToken(_)
                             )
@@ -1193,8 +1258,11 @@ impl AccountRequestProcessor {
         &self,
         params: GetAccountRateLimitsParams,
     ) -> Result<GetAccountRateLimitsResponse, JSONRPCErrorError> {
-        let Some((auth, http_client_factory)) =
-            self.auth_manager.auth_with_http_client_factory().await
+        let Some((auth, http_client_factory)) = self
+            .auth_manager
+            .auth_for_request_with_http_client_factory()
+            .await
+            .map_err(|_| internal_error("failed to resolve request authentication"))?
         else {
             return Err(invalid_request(
                 "codex account authentication required to read rate limits",
@@ -1310,8 +1378,11 @@ impl AccountRequestProcessor {
             })
             .transpose()?;
 
-        let Some((auth, http_client_factory)) =
-            self.auth_manager.auth_with_http_client_factory().await
+        let Some((auth, http_client_factory)) = self
+            .auth_manager
+            .auth_for_request_with_http_client_factory()
+            .await
+            .map_err(|_| internal_error("failed to resolve request authentication"))?
         else {
             return Err(invalid_request(
                 "codex account authentication required to read token usage",
@@ -1397,8 +1468,11 @@ impl AccountRequestProcessor {
     async fn get_workspace_messages_response(
         &self,
     ) -> Result<GetWorkspaceMessagesResponse, JSONRPCErrorError> {
-        let Some((auth, http_client_factory)) =
-            self.auth_manager.auth_with_http_client_factory().await
+        let Some((auth, http_client_factory)) = self
+            .auth_manager
+            .auth_for_request_with_http_client_factory()
+            .await
+            .map_err(|_| internal_error("failed to resolve request authentication"))?
         else {
             return Err(invalid_request(
                 "codex account authentication required to read workspace messages",
@@ -1491,8 +1565,11 @@ impl AccountRequestProcessor {
         &self,
         params: SendAddCreditsNudgeEmailParams,
     ) -> Result<AddCreditsNudgeEmailStatus, JSONRPCErrorError> {
-        let Some((auth, http_client_factory)) =
-            self.auth_manager.auth_with_http_client_factory().await
+        let Some((auth, http_client_factory)) = self
+            .auth_manager
+            .auth_for_request_with_http_client_factory()
+            .await
+            .map_err(|_| internal_error("failed to resolve request authentication"))?
         else {
             return Err(invalid_request(
                 "codex account authentication required to notify workspace owner",

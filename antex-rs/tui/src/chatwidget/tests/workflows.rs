@@ -49,7 +49,7 @@ async fn workflow_optional_text_field_can_submit_empty_value() {
         "default": ""
     }))
     .expect("field");
-    chat.show_workflow_field("Demo", &field, 0, 1);
+    chat.show_workflow_field("Demo", &field, /*index*/ 0, /*total*/ 1);
 
     chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
 
@@ -150,9 +150,12 @@ async fn workflow_model_picker_uses_catalog_for_legacy_and_model_fields() {
             "id": id, "label": "Model", "type": kind, "default": ""
         }))
         .expect("field");
-        chat.show_workflow_field("Demo", &field, 0, 1);
+        chat.show_workflow_field("Demo", &field, /*index*/ 0, /*total*/ 1);
         if id == "model" {
-            assert_chatwidget_snapshot!("workflow_model_picker", render_bottom_popup(&chat, 90));
+            assert_chatwidget_snapshot!(
+                "workflow_model_picker",
+                render_bottom_popup(&chat, /*width*/ 90)
+            );
         }
         chat.handle_key_event(KeyCode::Down.into());
         chat.handle_key_event(KeyCode::Enter.into());
@@ -180,7 +183,7 @@ async fn workflow_model_picker_preserves_custom_default_and_optional_inheritance
             "default": "custom-workflow-model", "required": required
         }))
         .expect("field");
-        chat.show_workflow_field("Demo", &field, 0, 1);
+        chat.show_workflow_field("Demo", &field, /*index*/ 0, /*total*/ 1);
         if inherit {
             for ch in "Use current Antex model".chars() {
                 chat.handle_key_event(KeyCode::Char(ch).into());

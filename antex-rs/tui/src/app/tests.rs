@@ -74,18 +74,14 @@ mod history_hydration_tests;
 mod permission_shortcuts_tests;
 mod plugin_catalog;
 mod rate_limits;
-#[path = "tests/realtime_handoff_e2e.rs"]
-mod realtime_handoff_e2e;
-#[path = "tests/realtime_requests.rs"]
-mod realtime_requests;
-#[path = "tests/realtime_start.rs"]
-mod realtime_start;
 #[path = "tests/reasoning_resume_tests.rs"]
 mod reasoning_resume_tests;
 #[path = "tests/recap_generation_tests.rs"]
 mod recap_generation;
 #[path = "tests/resume_shutdown_tests.rs"]
 mod resume_shutdown_tests;
+#[path = "tests/retained_request_channels_tests.rs"]
+mod retained_request_channels_tests;
 mod safety_buffering;
 #[path = "tests/session_lifecycle_requests.rs"]
 mod session_lifecycle_requests;
@@ -607,19 +603,14 @@ async fn enqueue_primary_thread_session_replays_buffered_approval_after_attach()
         .expect("timed out waiting for buffered approval event")
         .expect("channel closed unexpectedly");
 
-    assert!(matches!(
-        &event,
-        ThreadBufferedEvent::Request(request)
-            if matches!(
-                request.as_ref(),
-                ServerRequest::CommandExecutionRequestApproval { params, .. }
-                    if params.turn_id == "turn-1"
-            )
-    ));
+    match &event {
+        ThreadBufferedEvent::Request(request) => assert_eq!(request.as_ref(), &approval_request),
+        other => panic!("expected the buffered approval request, got {other:?}"),
+    }
 
     app.handle_thread_event_now(event);
     let background_thread_id = ThreadId::new();
-    let mut background_request = approval_request;
+    let mut background_request = approval_request.clone();
     let ServerRequest::CommandExecutionRequestApproval { request_id, params } =
         &mut background_request
     else {
@@ -632,7 +623,6 @@ async fn enqueue_primary_thread_session_replays_buffered_approval_after_attach()
     app.enqueue_thread_request(background_thread_id, background_request.clone())
         .await?;
 
-    crate::chatwidget::activate_voice_for_thread(&mut app.chat_widget, thread_id);
     let mut tui = crate::tui::test_support::make_test_tui()?;
     app.replace_chat_widget_with_app_server_thread(
         &mut tui,
@@ -646,8 +636,35 @@ async fn enqueue_primary_thread_session_replays_buffered_approval_after_attach()
         /*initial_user_message*/ None,
     )
     .await?;
+    assert!(
+        app.thread_event_channels.contains_key(&thread_id),
+        "navigation must retain the channel belonging to a retained live approval"
+    );
     Box::pin(app.select_agent_thread(&mut tui, &mut app_server, thread_id)).await?;
 
+    assert_eq!(app.active_thread_id, Some(thread_id));
+    assert!(
+        requests
+            .lock()
+            .expect("request recorder lock")
+            .iter()
+            .all(|request| {
+                !matches!(request.method.as_str(), "thread/read" | "thread/resume")
+                    || request.params.as_ref().is_none_or(|params| {
+                        params["threadId"] != serde_json::json!(thread_id.to_string())
+                    })
+            }),
+        "a retained live approval must not depend on re-reading or resuming its thread"
+    );
+    assert!(
+        app.pending_app_server_requests
+            .contains_server_request(&approval_request),
+        "live reattach must restore response routing for the retained approval"
+    );
+    assert!(
+        app.chat_widget.has_active_view(),
+        "retained approval must be replayed before the background request is re-enqueued"
+    );
     assert!(
         !app.pending_app_server_requests
             .contains_server_request(&background_request)
@@ -657,18 +674,40 @@ async fn enqueue_primary_thread_session_replays_buffered_approval_after_attach()
     app.enqueue_thread_request(background_thread_id, background_request)
         .await?;
 
+    // Separate navigation/setup events from the keypress responses. Do not accidentally treat an
+    // unrelated thread operation as an approval, or silently skip an incorrectly routed approval.
+    let setup_ops = std::iter::from_fn(|| app_event_rx.try_recv().ok())
+        .filter_map(|event| match event {
+            AppEvent::SubmitThreadOp { thread_id, op } => Some((thread_id, op)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(setup_ops, Vec::new(), "unexpected setup thread operations");
+
     for expected_thread_id in [thread_id, background_thread_id] {
         assert!(app.chat_widget.has_active_view());
         app.chat_widget
             .handle_key_event(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
-        let (actual_thread_id, op) = std::iter::from_fn(|| app_event_rx.try_recv().ok())
-            .find_map(|event| match event {
+        let approval_ops = std::iter::from_fn(|| app_event_rx.try_recv().ok())
+            .filter_map(|event| match event {
                 AppEvent::SubmitThreadOp { thread_id, op } => Some((thread_id, op)),
                 _ => None,
             })
-            .expect("approval should submit a thread-scoped operation");
-        assert_eq!(actual_thread_id, expected_thread_id);
-        app.submit_thread_op(&mut app_server, expected_thread_id, op)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            approval_ops,
+            vec![(
+                expected_thread_id,
+                AppCommand::ExecApproval {
+                    id: "call-1".to_string(),
+                    turn_id: None,
+                    decision: antex_app_server_protocol::CommandExecutionApprovalDecision::Accept,
+                },
+            )],
+            "keypress must submit exactly the expected thread-scoped approval"
+        );
+        let (actual_thread_id, op) = approval_ops.into_iter().next().expect("approval observed");
+        app.submit_thread_op(&mut app_server, actual_thread_id, op)
             .await?;
     }
     assert!(!app.chat_widget.has_active_view());
@@ -1450,7 +1489,6 @@ async fn replayed_turn_complete_submits_restored_queued_follow_up() {
     while new_op_rx.try_recv().is_ok() {}
     app.replay_thread_snapshot(
         ThreadEventSnapshot {
-            delegated_turns: Vec::new(),
             session: None,
             turns: Vec::new(),
             events: vec![ThreadBufferedEvent::Notification(Box::new(
@@ -1515,7 +1553,6 @@ async fn replay_only_thread_keeps_restored_queue_visible() {
 
     app.replay_thread_snapshot(
         ThreadEventSnapshot {
-            delegated_turns: Vec::new(),
             session: None,
             turns: Vec::new(),
             events: vec![ThreadBufferedEvent::Notification(Box::new(
@@ -1568,7 +1605,6 @@ async fn replay_thread_snapshot_keeps_queue_when_running_state_only_comes_from_s
 
     app.replay_thread_snapshot(
         ThreadEventSnapshot {
-            delegated_turns: Vec::new(),
             session: None,
             turns: Vec::new(),
             events: vec![],
@@ -1619,7 +1655,6 @@ async fn replay_thread_snapshot_in_progress_turn_restores_running_queue_state() 
 
     app.replay_thread_snapshot(
         ThreadEventSnapshot {
-            delegated_turns: Vec::new(),
             session: None,
             turns: vec![test_turn("turn-1", TurnStatus::InProgress, Vec::new())],
             events: Vec::new(),
@@ -1651,7 +1686,6 @@ async fn replay_thread_snapshot_in_progress_turn_restores_running_state_without_
 
     app.replay_thread_snapshot(
         ThreadEventSnapshot {
-            delegated_turns: Vec::new(),
             session: None,
             turns: vec![test_turn("turn-1", TurnStatus::InProgress, Vec::new())],
             events: Vec::new(),
@@ -1706,7 +1740,6 @@ async fn replay_thread_snapshot_does_not_submit_queue_before_replay_catches_up()
 
     app.replay_thread_snapshot(
         ThreadEventSnapshot {
-            delegated_turns: Vec::new(),
             session: None,
             turns: Vec::new(),
             events: vec![
@@ -1864,7 +1897,6 @@ async fn replay_thread_snapshot_restores_collaboration_mode_for_draft_submit() {
 
     app.replay_thread_snapshot(
         ThreadEventSnapshot {
-            delegated_turns: Vec::new(),
             session: None,
             turns: Vec::new(),
             events: vec![],
@@ -1951,7 +1983,6 @@ async fn replay_thread_snapshot_restores_collaboration_mode_without_input() {
 
     app.replay_thread_snapshot(
         ThreadEventSnapshot {
-            delegated_turns: Vec::new(),
             session: None,
             turns: Vec::new(),
             events: vec![],
@@ -2011,7 +2042,6 @@ async fn replayed_interrupted_turn_restores_queued_input_to_composer() {
 
     app.replay_thread_snapshot(
         ThreadEventSnapshot {
-            delegated_turns: Vec::new(),
             session: None,
             turns: Vec::new(),
             events: vec![ThreadBufferedEvent::Notification(Box::new(
@@ -4130,7 +4160,6 @@ async fn replay_snapshot_with_pending_request_retains_warnings_without_covering_
 
     app.replay_thread_snapshot(
         ThreadEventSnapshot {
-            delegated_turns: Vec::new(),
             session: Some(test_thread_session(thread_id, test_path_buf("/tmp/main"))),
             turns: Vec::new(),
             events: vec![
@@ -4532,7 +4561,6 @@ async fn replayed_file_change_approval_recovers_snapshot_changes() {
     let cwd = test_path_buf("/tmp/project").abs();
     app.replay_thread_snapshot(
         ThreadEventSnapshot {
-            delegated_turns: Vec::new(),
             session: Some(test_thread_session(thread_id, cwd.clone().into_path_buf())),
             turns: vec![test_turn(
                 "turn-replayed-approval",
@@ -5495,7 +5523,6 @@ async fn side_thread_snapshot_does_not_refresh_from_fork_history() {
         .insert(side_thread_id, SideThreadState::new(parent_thread_id));
 
     let snapshot = ThreadEventSnapshot {
-        delegated_turns: Vec::new(),
         session: Some(ThreadSessionState {
             rollout_path: None,
             ..test_thread_session(side_thread_id, test_path_buf("/tmp/side"))
@@ -5525,7 +5552,6 @@ async fn side_thread_snapshot_skips_session_header_preamble() {
         .insert(side_thread_id, SideThreadState::new(parent_thread_id));
 
     let snapshot = ThreadEventSnapshot {
-        delegated_turns: Vec::new(),
         session: Some(ThreadSessionState {
             daybreak_enabled: false,
             windows_sandbox_host: crate::app::WindowsSandboxHost::Local,
@@ -5710,7 +5736,6 @@ async fn active_side_thread_renders_live_mcp_startup_notifications() {
     app.activate_thread_channel(side_thread_id).await;
     app.replay_thread_snapshot(
         ThreadEventSnapshot {
-            delegated_turns: Vec::new(),
             session: Some(test_thread_session(
                 side_thread_id,
                 test_path_buf("/tmp/side"),
@@ -6094,7 +6119,6 @@ async fn render_clear_ui_header_after_long_transcript_for_snapshot() -> String {
 
     let user_cell = |text: &str| -> Arc<dyn HistoryCell> {
         Arc::new(UserHistoryCell {
-            spoken: false,
             message: text.to_string(),
             text_elements: Vec::new(),
             local_image_paths: Vec::new(),
@@ -6337,11 +6361,6 @@ async fn make_test_app() -> Box<App> {
         pending_shutdown_exit_thread_id: None,
         windows_sandbox: WindowsSandboxState::default(),
         thread_event_channels: HashMap::new(),
-        pending_realtime_speech_replay: HashMap::new(),
-        pending_realtime_transcript_replay: HashMap::new(),
-        realtime_replay_order: VecDeque::new(),
-        background_voice: None,
-        background_voice_error: None,
         temporary_structured_requests: HashMap::new(),
         pending_thread_titles: HashMap::new(),
         thread_event_listener_tasks: HashMap::new(),
@@ -6464,11 +6483,6 @@ pub(super) async fn make_test_app_with_channels() -> (
             pending_shutdown_exit_thread_id: None,
             windows_sandbox: WindowsSandboxState::default(),
             thread_event_channels: HashMap::new(),
-            pending_realtime_speech_replay: HashMap::new(),
-            pending_realtime_transcript_replay: HashMap::new(),
-            realtime_replay_order: VecDeque::new(),
-            background_voice: None,
-            background_voice_error: None,
             temporary_structured_requests: HashMap::new(),
             pending_thread_titles: HashMap::new(),
             thread_event_listener_tasks: HashMap::new(),
@@ -6863,7 +6877,6 @@ async fn snapshot_thread_switch_discards_queued_previous_history() -> Result<()>
         &app_server,
         next_thread_id,
         ThreadEventSnapshot {
-            delegated_turns: Vec::new(),
             session: Some(test_thread_session(
                 next_thread_id,
                 test_path_buf("/tmp/next"),
@@ -7891,7 +7904,6 @@ async fn backtrack_selection_preserves_selected_prompt_and_requests_branch() {
                      remote_image_urls: Vec<String>|
      -> Arc<dyn HistoryCell> {
         Arc::new(UserHistoryCell {
-            spoken: false,
             message: text.to_string(),
             text_elements,
             local_image_paths,
@@ -9049,7 +9061,6 @@ async fn replay_thread_snapshot_replays_turn_history_in_order() {
     let thread_id = ThreadId::new();
     app.replay_thread_snapshot(
         ThreadEventSnapshot {
-            delegated_turns: Vec::new(),
             session: Some(test_thread_session(
                 thread_id,
                 test_path_buf("/home/user/project"),
@@ -9177,7 +9188,6 @@ async fn replace_chat_widget_reseeds_collab_agent_metadata_for_replay() {
 
     app.replay_thread_snapshot(
         ThreadEventSnapshot {
-            delegated_turns: Vec::new(),
             session: None,
             turns: Vec::new(),
             events: vec![ThreadBufferedEvent::Notification(Box::new(
@@ -9254,7 +9264,6 @@ async fn refreshed_snapshot_session_persists_resumed_turns() {
         ..initial_session.clone()
     };
     let mut snapshot = ThreadEventSnapshot {
-        delegated_turns: Vec::new(),
         session: Some(initial_session),
         turns: Vec::new(),
         events: Vec::new(),
@@ -10077,7 +10086,6 @@ async fn clear_only_ui_reset_preserves_chat_session_state() {
     app.chat_widget
         .apply_external_edit("draft prompt".to_string());
     app.transcript_cells = vec![Arc::new(UserHistoryCell {
-        spoken: false,
         message: "old message".to_string(),
         text_elements: Vec::new(),
         local_image_paths: Vec::new(),
@@ -10214,7 +10222,6 @@ async fn side_backtrack_rejection_reports_unavailable_message_snapshot() {
 fn interrupted_prompt_removal_removes_latest_matching_user_cell() {
     let user_cell = |message: &str| {
         Arc::new(UserHistoryCell {
-            spoken: false,
             message: message.to_string(),
             text_elements: Vec::new(),
             local_image_paths: Vec::new(),

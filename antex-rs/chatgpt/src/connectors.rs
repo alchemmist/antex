@@ -35,7 +35,7 @@ const DEFAULT_APPS_PRODUCT_SKU: &str = "codex";
 async fn apps_enabled(config: &Config) -> anyhow::Result<bool> {
     let auth_manager =
         AuthManager::shared_from_config(config, /*enable_antex_api_key_env*/ false).await?;
-    let auth = auth_manager.auth().await;
+    let auth = auth_manager.auth_for_request().await?;
     Ok(config
         .features
         .apps_enabled_for_auth(auth.as_ref().is_some_and(AntexAuth::uses_antex_backend)))
@@ -45,8 +45,8 @@ async fn connector_auth(config: &Config) -> anyhow::Result<AntexAuth> {
     let auth_manager =
         AuthManager::shared_from_config(config, /*enable_antex_api_key_env*/ false).await?;
     let auth = auth_manager
-        .auth()
-        .await
+        .auth_for_request()
+        .await?
         .ok_or_else(|| anyhow::anyhow!("ChatGPT auth not available"))?;
     anyhow::ensure!(
         auth.uses_antex_backend(),
@@ -135,7 +135,7 @@ pub struct ConnectorMetadataReadResult {
 /// The store is created before awaiting the backend request, so a response that arrives after an
 /// account or backend change can only commit to the scope under which it was requested.
 /// Capture `auth` and `config.application_network_policy` together using
-/// `AuthManager::auth_with_http_client_factory` so the request retains that account's policy.
+/// `AuthManager::auth_for_request_with_http_client_factory` so the request retains that account's policy.
 pub async fn read_connector_metadata(
     config: &Config,
     auth: &AntexAuth,

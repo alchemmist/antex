@@ -20,7 +20,11 @@ impl PluginRequestProcessor {
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
         let config = self.load_latest_config(/*fallback_cwd*/ None).await?;
         let plugins_input = config.plugins_config_input();
-        let auth = self.auth_manager.auth().await;
+        let auth = self
+            .auth_manager
+            .auth_for_request()
+            .await
+            .map_err(|_| internal_error("failed to resolve request authentication"))?;
         if !plugins_input.plugins_enabled
             || !auth.as_ref().is_some_and(AntexAuth::uses_antex_backend)
         {

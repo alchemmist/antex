@@ -423,8 +423,28 @@ other non-default provider fields are not supported"
         Ok(headers)
     }
 
+    /// Whether this provider consumes the managed direct ChatGPT grant, rather than explicit credentials.
+    pub fn uses_chatgpt_direct(&self, auth_mode: Option<AuthMode>) -> bool {
+        auth_mode == Some(AuthMode::ChatgptDirect)
+            && self.requires_openai_auth
+            && self.env_key.is_none()
+            && self.experimental_bearer_token.is_none()
+            && self.auth.is_none()
+            && self.aws.is_none()
+    }
+
     /// Builds an API provider with managed residency taking precedence over configured headers.
     pub fn to_api_provider(&self, auth_mode: Option<AuthMode>) -> AntexResult<ApiProvider> {
+        let direct = self.uses_chatgpt_direct(auth_mode);
+        if direct
+            && (self.base_url.as_deref().is_some_and(|url| {
+                url != "https://api.openai.com/v1" && url != "https://api.openai.com/v1/"
+            }) || self.gateway_oauth.is_some())
+        {
+            return Err(CodexErr::InvalidRequest(
+                "Direct ChatGPT authentication requires https://api.openai.com/v1 without gateway OAuth; use separate provider credentials for custom endpoints".to_string(),
+            ));
+        }
         let default_base_url = if matches!(
             auth_mode,
             Some(
@@ -445,6 +465,11 @@ other non-default provider fields are not supported"
             .unwrap_or_else(|| default_base_url.to_string());
 
         let mut headers = self.build_header_map()?;
+        if direct {
+            headers.remove("chatgpt-account-id");
+            headers.remove("x-openai-fedramp");
+            headers.remove("x-oai-attestation");
+        }
         if let Some(requirement) = read_managed_residency_requirement() {
             let value = match requirement {
                 ResidencyRequirement::Us => HeaderValue::from_static("us"),

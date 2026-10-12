@@ -52,10 +52,10 @@ fn toggling_vim_clears_visual_selection_and_unconsumed_yank() {
     let mut textarea = visual_textarea("alpha beta", /*cursor*/ 0);
     keys(&mut textarea, "veyv");
     assert!(textarea.is_vim_visual_mode());
-    textarea.set_vim_enabled(false);
+    textarea.set_vim_enabled(/*enabled*/ false);
     assert!(!textarea.is_vim_visual_mode());
     assert_eq!(textarea.take_system_clipboard_yank(), None);
-    textarea.set_vim_enabled(true);
+    textarea.set_vim_enabled(/*enabled*/ true);
     assert!(textarea.is_vim_normal_mode());
 }
 
@@ -169,7 +169,7 @@ fn visual_case_change_preserves_attachment_markers() {
     let mut textarea = visual_textarea("before ", /*cursor*/ 7);
     textarea.insert_element("[photo.png]");
     textarea.insert_str(" after");
-    textarea.set_cursor(0);
+    textarea.set_cursor(/*pos*/ 0);
     keys(&mut textarea, "v$g");
     textarea.input(KeyEvent::new(KeyCode::Char('U'), KeyModifiers::SHIFT));
     assert_eq!(textarea.text(), "BEFORE [photo.png] AFTER");

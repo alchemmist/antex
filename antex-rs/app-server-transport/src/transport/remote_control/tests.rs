@@ -120,6 +120,7 @@ fn remote_control_auth_dot_json(account_id: Option<&str>) -> AuthDotJson {
             access_token: "Access Token".to_string(),
             refresh_token: "refresh-token".to_string(),
             account_id: account_id.map(str::to_string),
+            direct: None,
         }),
         last_refresh: Some(chrono::Utc::now()),
         agent_identity: None,

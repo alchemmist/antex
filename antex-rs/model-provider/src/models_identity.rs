@@ -41,6 +41,10 @@ pub(crate) fn identity(
     field(&[u8::from(provider_info.has_command_auth())]);
     field(format!("{:?}", auth.map(AntexAuth::api_auth_mode)).as_bytes());
     if let Some(auth) = auth {
+        if let Some(client_id) = crate::chatgpt_direct::grant_id(auth) {
+            field(b"chatgpt-direct-grant");
+            field(client_id.as_bytes());
+        }
         field(format!("{:?}", auth.get_account_id()).as_bytes());
         field(format!("{:?}", auth.get_chatgpt_user_id()).as_bytes());
         field(format!("{:?}", auth.get_account_email()).as_bytes());

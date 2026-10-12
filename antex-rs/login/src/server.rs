@@ -131,8 +131,8 @@ impl ServerOptions {
 pub struct LoginServer {
     pub auth_url: String,
     pub actual_port: u16,
-    server_handle: tokio::task::JoinHandle<io::Result<LoginCallbackResult>>,
-    shutdown_handle: ShutdownHandle,
+    pub(crate) server_handle: tokio::task::JoinHandle<io::Result<LoginCallbackResult>>,
+    pub(crate) shutdown_handle: ShutdownHandle,
 }
 
 impl LoginServer {
@@ -164,12 +164,16 @@ impl LoginServer {
 /// Handle used to signal the login server loop to exit.
 #[derive(Clone, Debug)]
 pub struct ShutdownHandle {
-    shutdown_notify: Arc<tokio::sync::Notify>,
+    pub(crate) shutdown_notify: Arc<tokio::sync::Notify>,
+    pub(crate) direct_attempt: Option<Arc<crate::auth::login_publication::LoginAttempt>>,
 }
 
 impl ShutdownHandle {
     /// Signals the login loop to terminate.
     pub fn shutdown(&self) {
+        if let Some(attempt) = &self.direct_attempt {
+            attempt.cancel();
+        }
         self.shutdown_notify.notify_one();
     }
 }
@@ -320,7 +324,10 @@ pub fn run_login_server(opts: ServerOptions) -> io::Result<LoginServer> {
         auth_url,
         actual_port,
         server_handle,
-        shutdown_handle: ShutdownHandle { shutdown_notify },
+        shutdown_handle: ShutdownHandle {
+            shutdown_notify,
+            direct_attempt: None,
+        },
     })
 }
 
@@ -852,6 +859,7 @@ pub(crate) async fn persist_tokens_async(
                 access_token,
                 refresh_token,
                 account_id: None,
+                direct: None,
             };
             if let Some(acc) = jwt_auth_claims(&id_token)
                 .get("chatgpt_account_id")

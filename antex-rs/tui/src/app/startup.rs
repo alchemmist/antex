@@ -467,7 +467,7 @@ impl App {
         let feedback_audience = bootstrap.feedback_audience;
         let auth_mode = bootstrap.auth_mode;
         let has_chatgpt_account = bootstrap.has_chatgpt_account;
-        let has_antex_backend_auth = matches!(auth_mode, Some(TelemetryAuthMode::Chatgpt));
+        let has_antex_backend_auth = bootstrap.has_antex_backend_auth;
         let requires_openai_auth = bootstrap.requires_openai_auth;
         let status_account_display = bootstrap.status_account_display.clone();
         let initial_plan_type = bootstrap.plan_type;
@@ -876,6 +876,18 @@ See the Antex keymap documentation for supported actions and examples."
         #[cfg(not(debug_assertions))]
         crate::history_cell::set_startup_updates(crate::updates::get_startup_updates(&config));
 
+        tracing::debug!(
+            target: "antex_tui::startup_mascot",
+            has_motion = startup_draft.mascot_motion.is_some(),
+            animations = local_settings.tui.animations,
+            welcome_effect = local_settings.tui.effects.welcome,
+            skin = ?local_settings.tui.startup_panel.mascot_skin,
+            style = ?local_settings.tui.startup_panel.style,
+            "startup mascot handoff gates"
+        );
+        if let Some(motion) = startup_draft.mascot_motion.as_ref() {
+            motion.trace_handoff("draft_to_app");
+        }
         let startup_mascot_animation = startup_draft
             .mascot_motion
             .clone()
@@ -964,11 +976,6 @@ See the Antex keymap documentation for supported actions and examples."
                 ..Default::default()
             },
             thread_event_channels: HashMap::new(),
-            pending_realtime_speech_replay: HashMap::new(),
-            pending_realtime_transcript_replay: HashMap::new(),
-            realtime_replay_order: VecDeque::new(),
-            background_voice: None,
-            background_voice_error: None,
             temporary_structured_requests: HashMap::new(),
             pending_thread_titles: HashMap::new(),
             thread_event_listener_tasks: HashMap::new(),
@@ -1161,7 +1168,7 @@ See the Antex keymap documentation for supported actions and examples."
         // Kick off a non-blocking rate-limit prefetch so the first `/status`
         // already has data and available reset credits can be surfaced, without
         // delaying the initial frame render.
-        if requires_openai_auth && has_chatgpt_account {
+        if requires_openai_auth && has_antex_backend_auth {
             crate::security_setup::prefetch(
                 &app.config,
                 &app_server,

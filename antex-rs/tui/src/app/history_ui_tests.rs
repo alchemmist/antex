@@ -41,7 +41,6 @@ async fn interrupted_prompt_removal_prunes_native_queue_in_both_screen_modes() -
         tui.set_owned_screen(owned)?;
         let prompt = |message: &str| -> Arc<dyn HistoryCell> {
             Arc::new(history_cell::UserHistoryCell {
-                spoken: false,
                 message: message.to_string(),
                 text_elements: Vec::new(),
                 local_image_paths: Vec::new(),

@@ -60,7 +60,7 @@ type McpToolApprovalMetadataMap =
 pub(crate) struct Session {
     pub(crate) thread_id: ThreadId,
     pub(crate) installation_id: String,
-    pub(super) tx_event: Sender<Event>,
+    pub(crate) tx_event: Sender<Event>,
     pub(super) agent_status: watch::Sender<AgentStatus>,
     pub(super) state: Mutex<SessionState>,
     /// Orders accepted settings commits and their persisted events with compaction checkpoints.
@@ -87,8 +87,6 @@ pub(crate) struct Session {
     pub(super) mcp_prewarm_tx: async_channel::Sender<()>,
     pub(super) mcp_prewarm_shutdown: CancellationToken,
     pub(super) mcp_prewarm_task: std::sync::Mutex<Option<JoinHandle<()>>>,
-    pub(crate) conversation: Arc<RealtimeConversationManager>,
-    pub(crate) realtime_history: Option<Mutex<crate::realtime_history::RealtimeHistoryState>>,
     pub(crate) active_turn: Mutex<Option<ActiveTurn>>,
     pub(crate) async_hook_results: async_channel::Receiver<HookCompletedEvent>,
     pub(crate) input_queue: InputQueue,
@@ -1021,8 +1019,9 @@ impl Session {
         // - initialize thread persistence with new or resumed session info
         // - perform default shell discovery
         // - load history metadata (skipped for subagents)
-        let persistence_auth = futures::FutureExt::shared(auth_manager.auth());
-        let mcp_auth = persistence_auth.clone();
+        // Persistence records metadata; MCP setup must acquire request authority.
+        let persistence_auth = auth_manager.auth();
+        let mcp_auth_manager = Arc::clone(&auth_manager);
         let thread_persistence_fut = async {
             if config.ephemeral {
                 Ok::<_, anyhow::Error>((None, LiveThreadInitGuard::new(/*live_thread*/ None), None))
@@ -1168,7 +1167,7 @@ impl Session {
             .map(|cwd| cwd.to_path_buf())
             .unwrap_or_else(|| session_configuration.cwd().to_path_buf());
         let auth_and_mcp_fut = async move {
-            let auth = mcp_auth.await;
+            let auth = mcp_auth_manager.auth_for_request().await?;
             if config_for_mcp.features.plugin_recommendations_enabled() {
                 let plugins_config = config_for_mcp.plugins_config_input();
                 let auth_for_prewarm = auth.clone();
@@ -1199,7 +1198,7 @@ impl Session {
                     /*executor_capability_discovery*/ None,
                 )
                 .await;
-            (auth, mcp_projection)
+            Ok::<_, antex_login::RefreshTokenError>((auth, mcp_projection))
         }
         .instrument(info_span!(
             "session_init.auth_mcp",
@@ -1207,7 +1206,7 @@ impl Session {
         ));
 
         // Join all independent futures.
-        let (thread_persistence_result, state_db_ctx, (auth, mcp_projection)) =
+        let (thread_persistence_result, state_db_ctx, auth_and_mcp_result) =
             tokio::join!(thread_persistence_fut, state_db_fut, auth_and_mcp_fut);
 
         let (live_thread, mut live_thread_init, resume_context) = thread_persistence_result
@@ -1216,6 +1215,7 @@ impl Session {
                 e
             })?;
         let session_result: anyhow::Result<Arc<Self>> = async {
+            let (auth, mcp_projection) = auth_and_mcp_result?;
             if let InitialHistory::Resumed(resumed) = &mut initial_history
                 && let Some(history) = resume_context
             {
@@ -1830,11 +1830,6 @@ impl Session {
                 mcp_prewarm_tx,
                 mcp_prewarm_shutdown: CancellationToken::new(),
                 mcp_prewarm_task: std::sync::Mutex::new(None),
-                conversation: Arc::new(RealtimeConversationManager::new()),
-                realtime_history: (session_configuration.history_mode
-                    == ThreadHistoryMode::Paginated
-                    && services.live_thread.is_some())
-                .then(|| Mutex::new(Default::default())),
                 active_turn: Mutex::new(None),
                 async_hook_results,
                 input_queue: InputQueue::with_controller(
@@ -1894,7 +1889,7 @@ impl Session {
             if startup_auth_changed {
                 mcp_auth_changes.mark_unchanged();
             }
-            let latest_auth = sess.services.auth_manager.auth().await;
+            let latest_auth = sess.services.auth_manager.auth_for_request().await?;
             let resolved_environment_selections = resolved_environments.all_selections();
             let mcp_projection = if startup_auth_changed
                 || mcp_auth_changes.has_changed().unwrap_or(false)

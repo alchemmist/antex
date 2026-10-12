@@ -12,7 +12,6 @@ chrono = { workspace = true }
 antex-client = { workspace = true }
 antex-http-client = { workspace = true }
 antex-protocol = { workspace = true }
-antex-utils-rustls-provider = { workspace = true }
 antex-websocket-client = { workspace = true }
 futures = { workspace = true }
 http = { workspace = true }
@@ -34,8 +33,6 @@ uuid = { workspace = true }
 anyhow = { workspace = true }
 assert_matches = { workspace = true }
 pretty_assertions = { workspace = true }
-rcgen = { workspace = true }
-rustls = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
 tokio-test = { workspace = true }

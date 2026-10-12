@@ -328,7 +328,7 @@ mod tests {
             return;
         };
         let theme =
-            crate::render::highlight::resolve_theme_by_name("ada", /*antex_home*/ None).unwrap();
+            crate::render::highlight::resolve_theme_by_name("ada", /*codex_home*/ None).unwrap();
         crate::render::highlight::set_syntax_theme(theme);
         let (expected_level, expected_foreground) = match level.as_str() {
             "3" => (StdoutColorLevel::TrueColor, rgb_color((95, 175, 255))),

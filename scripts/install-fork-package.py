@@ -1,5 +1,4 @@
 import argparse
-import hashlib
 import json
 import os
 import shutil
@@ -24,22 +23,12 @@ def install_package(source, destination, target):
         "bin/antex",
         "bin/antex-code-mode-host",
         "antex-path/rg",
-        "antex-resources/voice/bin/antex-voice-host",
     ]
     if target.endswith("linux-gnu"):
         required.append("antex-resources/bwrap")
     for name in required:
         if not (source / name).is_file() or not os.access(source / name, os.X_OK):
             raise ValueError(f"release is missing executable {name}")
-    manifest = json.loads((source / "antex-resources/voice/manifest.json").read_text())
-    for name, expected_digest in manifest["sha256"].items():
-        file = source / name
-        if os.path.commonpath((file.resolve(), source.resolve())) != str(
-            source.resolve()
-        ):
-            raise ValueError("voice manifest contains an external path")
-        if hashlib.sha256(file.read_bytes()).hexdigest() != expected_digest:
-            raise ValueError(f"voice package checksum mismatch: {name}")
     destination.mkdir(parents=True, exist_ok=True)
     packages = destination / ".antex-packages"
     packages.mkdir(exist_ok=True)

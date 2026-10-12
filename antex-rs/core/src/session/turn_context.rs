@@ -324,7 +324,7 @@ pub(crate) struct NewTurnContextOptions {
 pub struct TurnContext {
     pub(crate) sub_id: String,
     pub(crate) trace_id: Option<String>,
-    /// Call state at turn creation; model requests use the `StepContext` snapshot.
+    /// Legacy persisted turn-context field; new turns always record inactive voice mode.
     pub(crate) realtime_active: bool,
     pub(crate) code_mode_available: bool,
     /// Turn-scoped configuration. Read step-specific settings such as service tier and
@@ -1377,7 +1377,6 @@ impl Session {
                 })
                 .collect(),
         );
-        turn_context.realtime_active = self.conversation.running_state().await.is_some();
 
         turn_context.final_output_json_schema = options.final_output_json_schema;
         turn_context.cyber_access_program = cyber_access_program::for_provider(

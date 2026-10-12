@@ -2,7 +2,7 @@ load("//:defs.bzl", "antex_rust_crate")
 load("//bazel/rules/testing/compat:exec_server_compat_test.bzl", "exec_server_compat_test")
 
 exports_files(
-    ["src/proto/codex.exec_server.relay.v1.rs"],
+    ["src/proto/antex.exec_server.relay.v1.rs"],
     visibility = ["//antex-rs/exec-server/tests/support:__pkg__"],
 )
 
@@ -20,11 +20,11 @@ antex_rust_crate(
     ],
     extra_binaries = [
         "//antex-rs/bwrap:bwrap",
-        "//antex-rs/windows-sandbox-rs:codex-command-runner",
+        "//antex-rs/windows-sandbox-rs:antex-command-runner",
         "//antex-rs/windows-sandbox-rs:antex-windows-sandbox-setup",
     ],
     integration_compile_data_extra = [
-        "src/proto/codex.exec_server.relay.v1.rs",
+        "src/proto/antex.exec_server.relay.v1.rs",
     ],
     # Keep the crate's tests single-threaded under Bazel because they install
     # process-global test-binary dispatch state, and the remote exec-server

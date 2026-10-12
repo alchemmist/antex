@@ -1220,7 +1220,13 @@ fn add_core_tool_sources(context: &CoreToolPlanContext<'_>, registry: &mut ToolR
 }
 
 fn standalone_web_search_enabled(turn_context: &TurnContext, model_info: &ModelInfo) -> bool {
-    turn_context.provider.capabilities().web_search
+    // Direct subscription grants support Responses-hosted search, not the standalone Codex endpoint.
+    !turn_context.provider.info().uses_chatgpt_direct(
+        turn_context
+            .auth_manager
+            .as_ref()
+            .and_then(|manager| manager.auth_mode()),
+    ) && turn_context.provider.capabilities().web_search
         && (model_info.use_responses_lite
             || turn_context
                 .config

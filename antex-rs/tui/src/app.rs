@@ -148,7 +148,6 @@ use antex_features::FeaturesToml;
 use antex_models_manager::model_presets::HIDE_GPT_5_1_CODEX_MAX_MIGRATION_PROMPT_CONFIG;
 use antex_models_manager::model_presets::HIDE_GPT5_1_MIGRATION_PROMPT_CONFIG;
 use antex_otel::SessionTelemetry;
-use antex_otel::TelemetryAuthMode;
 use antex_protocol::ThreadId;
 use antex_protocol::models::ActivePermissionProfile;
 use antex_protocol::models::BUILT_IN_PERMISSION_PROFILE_WORKSPACE;
@@ -249,8 +248,6 @@ mod pets;
 mod platform_actions;
 mod plugin_mentions;
 mod rate_limit_refresh;
-mod realtime_delivery;
-mod realtime_settings;
 mod reasoning_replay;
 mod recap;
 mod reconnect;
@@ -283,7 +280,6 @@ mod tui_mode_picker;
 mod user_verification;
 mod user_verification_errors;
 mod user_verification_requests;
-mod voice_owner;
 #[cfg(test)]
 #[path = "app/warnings_tests.rs"]
 mod warnings_tests;
@@ -626,12 +622,6 @@ pub(crate) struct App {
     windows_sandbox: WindowsSandboxState,
 
     thread_event_channels: HashMap<ThreadId, ThreadEventChannel>,
-    pending_realtime_speech_replay: HashMap<ThreadId, Vec<(String, ThreadItem)>>,
-    pending_realtime_transcript_replay:
-        HashMap<ThreadId, VecDeque<crate::chatwidget::RealtimeTranscriptRecord>>,
-    realtime_replay_order: VecDeque<ThreadId>,
-    background_voice: Option<Box<ChatWidget>>,
-    background_voice_error: Option<(ThreadId, String)>,
     temporary_structured_requests: HashMap<ThreadId, mpsc::UnboundedSender<ServerNotification>>,
     /// Track title generation across thread switches and deduplicate automatic requests.
     pending_thread_titles: HashMap<(ThreadId, ThreadTitleDestination), CancellationToken>,
@@ -977,21 +967,7 @@ impl App {
         };
 
         self.cancel_primed_browsing_for_event(&event);
-        let voice_toggle = |app: &Self, key: KeyEvent| {
-            key.kind == KeyEventKind::Press
-                && app
-                    .active_keymap_contexts()
-                    .contains_action(crate::keymap::KeymapActionId {
-                        context: crate::keymap::KeymapContext::Chat,
-                        action: "toggle_voice",
-                    })
-                && app.keymap.chat.toggle_voice.is_pressed(key)
-        };
-        // Find consumes otherwise-unhandled keys; let enabled voice controls reach App.
-        if !matches!(&event, TuiEvent::Key(key)
-            if voice_toggle(self, *key) && !self.transcript_view.owns_interaction_key(*key))
-            && self.handle_owned_transcript_event(tui, app_server, &event)?
-        {
+        if self.handle_owned_transcript_event(tui, app_server, &event)? {
             return Ok(AppRunControl::Continue);
         }
         // Leave browsing before unhandled editing input reaches shortcuts or offline input.
@@ -1015,27 +991,6 @@ impl App {
                 };
                 event = TuiEvent::Key(key);
             }
-        }
-        if let TuiEvent::Key(key_event) = &event
-            && voice_toggle(self, *key_event)
-        {
-            self.cancel_transcript_browsing(tui);
-            if !self.chat_widget.handle_startup_submission_key(*key_event) {
-                self.control_voice(crate::app_event::VoiceControl::Toggle);
-            }
-            return Ok(AppRunControl::Continue);
-        }
-        if let TuiEvent::Key(key_event) = &event
-            && key_event.kind == KeyEventKind::Press
-            && self
-                .active_keymap_contexts()
-                .contains(crate::keymap::KeymapContext::Voice)
-            && self.keymap.chat.toggle_voice_mute.is_pressed(*key_event)
-        {
-            if !self.chat_widget.handle_startup_submission_key(*key_event) {
-                self.control_voice(crate::app_event::VoiceControl::Mute);
-            }
-            return Ok(AppRunControl::Continue);
         }
         if self.reconnect.offline
             && !self.chat_widget.keymap_contexts().is_warnings()
@@ -1154,9 +1109,6 @@ impl App {
                     }
                     // Allow widgets to process any pending timers before rendering.
                     let had_active_modal = self.chat_widget.has_active_modal();
-                    if let Some(owner) = self.background_voice.as_mut() {
-                        owner.refresh_realtime_microphone_level();
-                    }
                     self.chat_widget.pre_draw_tick();
                     self.refresh_agents_overview_usage(app_server, tui.frame_requester());
                     let rendered_area = self.render_chat_widget_frame(tui, screen_size)?;

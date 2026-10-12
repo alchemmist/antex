@@ -6,8 +6,12 @@ mod bedrock_api_key;
 mod change_state;
 pub mod default_client;
 pub mod error;
+pub(crate) mod login_publication;
+mod mutation_revision;
 mod personal_access_token;
 mod storage;
+mod storage_ownership;
+mod storage_transaction;
 mod util;
 mod workload_identity;
 

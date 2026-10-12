@@ -78,7 +78,14 @@ impl Service {
         let auth_manager = Arc::clone(&self.auth_manager);
         let auth_changes = auth_manager.auth_change_receiver();
         let auth_revision = *auth_changes.borrow();
-        let Some(identity) = identity(&auth_manager).filter(|_| self.platform_supported) else {
+        let request_auth = auth_manager
+            .auth_for_request()
+            .await
+            .map_err(|_| unavailable())?;
+        let Some(identity) = request_auth
+            .and_then(|auth| auth.get_chatgpt_account_user_id())
+            .filter(|_| self.platform_supported)
+        else {
             return match operation {
                 NativeOperation::Status => Ok(GuardedResponse {
                     payload: rpc::UserVerificationStatusResponse {

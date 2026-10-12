@@ -69,11 +69,30 @@ impl McpEventStreamOpener {
             () = self.wait_for_access_change() => bail!("event subscription access changed"),
             result = async {
                 let connection = &self.connection;
+                let owner = connection.auth_manager.as_ref()
+                    .map(|manager| Arc::new(manager.unauthorized_recovery()));
+                let mut auth_provider = connection.auth_provider.clone();
                 if let Some(manager) = &connection.auth_manager {
-                    let auth = manager.auth().await;
+                    let auth = manager.auth_for_request().await?;
+                    if let Some(owner) = &owner {
+                        owner.ensure_same_owner()?;
+                    }
                     if !self.matches_auth(auth.as_ref()) {
                         bail!("event subscription account changed");
                     }
+                    // This is a NEW transport, even when the opener outlives its
+                    // runtime. Do not revive the old transport's header provider.
+                    // Preserve configured OAuth/env-token paths when it had none.
+                    if auth_provider.is_some()
+                        && let (Some(auth), Some(owner)) = (auth.as_ref(), owner.as_ref())
+                    {
+                        auth_provider = Some(crate::operation_auth::auth_for_operation(
+                            Arc::clone(manager), auth, Arc::clone(owner),
+                        ));
+                    }
+                }
+                if let Some(owner) = &owner {
+                    owner.ensure_same_owner()?;
                 }
 
                 let startup_timeout = connection.server.config().startup_timeout_sec
@@ -86,7 +105,7 @@ impl McpEventStreamOpener {
                     connection.oauth_refresh_mode,
                     connection.runtime_context.clone(),
                     connection.resolved_environment.clone(),
-                    connection.auth_provider.clone(),
+                    auth_provider,
                     connection.protocol_mode,
                 )).await??);
                 client.initialize(
@@ -103,13 +122,20 @@ impl McpEventStreamOpener {
                         })
                     })),
                 ).await?;
-                McpEventStream::open(
+                if let Some(owner) = &owner {
+                    owner.ensure_same_owner()?;
+                }
+                let stream = McpEventStream::open(
                     client,
                     self.cancellation_receiver.clone(),
                     event_name,
                     arguments,
                     request_meta,
-                ).await
+                ).await?;
+                if let Some(owner) = &owner {
+                    owner.ensure_same_owner()?;
+                }
+                Ok(stream)
             } => result,
         }
     }

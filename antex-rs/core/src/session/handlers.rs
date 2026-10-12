@@ -1,10 +1,5 @@
 use super::Submission;
 use crate::WithTurnExtensionData;
-use crate::realtime_conversation::handle_audio as handle_realtime_conversation_audio;
-use crate::realtime_conversation::handle_close as handle_realtime_conversation_close;
-use crate::realtime_conversation::handle_speech as handle_realtime_conversation_speech;
-use crate::realtime_conversation::handle_start as handle_realtime_conversation_start;
-use crate::realtime_conversation::handle_text as handle_realtime_conversation_text;
 use antex_otel::set_parent_from_w3c_trace_context;
 use async_channel::Receiver;
 use tracing::Instrument;
@@ -35,8 +30,6 @@ use antex_protocol::protocol::GuardianAssessmentEvent;
 use antex_protocol::protocol::GuardianAssessmentStatus;
 use antex_protocol::protocol::InterAgentCommunication;
 use antex_protocol::protocol::Op;
-use antex_protocol::protocol::RealtimeConversationListVoicesResponseEvent;
-use antex_protocol::protocol::RealtimeVoicesList;
 use antex_protocol::protocol::ReviewDecision;
 use antex_protocol::protocol::ReviewRequest;
 use antex_protocol::protocol::ThreadMemoryMode;
@@ -63,18 +56,6 @@ pub async fn interrupt(sess: &Arc<Session>) {
 
 pub async fn clean_background_terminals(sess: &Arc<Session>) {
     sess.close_unified_exec_processes().await;
-}
-
-pub async fn realtime_conversation_list_voices(sess: &Session, sub_id: String) {
-    sess.send_event_raw(Event {
-        id: sub_id,
-        msg: EventMsg::RealtimeConversationListVoicesResponse(
-            RealtimeConversationListVoicesResponseEvent {
-                voices: RealtimeVoicesList::builtin(),
-            },
-        ),
-    })
-    .await;
 }
 
 /// Queues an inter-agent message, then lets the shared pending-work scheduler
@@ -297,7 +278,6 @@ pub(super) async fn shutdown_session_runtime(sess: &Arc<Session>) {
     if let Some(startup_prewarm) = startup_prewarm {
         startup_prewarm.abort().await;
     }
-    let _ = sess.conversation.shutdown().await;
     sess.abort_all_tasks(TurnAbortReason::Interrupted).await;
     let shell_snapshot_prewarm = sess.state.lock().await.shell_snapshot_prewarm.take();
     if let Some(shell_snapshot_prewarm) = shell_snapshot_prewarm {
@@ -502,59 +482,34 @@ pub(super) async fn submission_loop(
                     clean_background_terminals(&sess).await;
                     false
                 }
-                Op::RealtimeConversationStart(params) => {
-                    if let Err(err) =
-                        handle_realtime_conversation_start(&sess, sub.id.clone(), params).await
-                    {
-                        sess.send_event_raw(Event {
-                            id: sub.id.clone(),
-                            msg: EventMsg::Error(ErrorEvent {
-                                misalignment: None,
-                                message: err.to_string(),
-                                codex_error_info: Some(CodexErrorInfo::Other),
-                            }),
-                        })
-                        .await;
-                    }
-                    false
-                }
-                Op::RealtimeConversationAttach { params, reply } => {
-                    let result =
-                        crate::realtime_conversation::handle_attach(&sess, sub.id, params).await;
-                    let _ = reply.send(result);
-                    false
-                }
-                Op::RealtimeConversationDetach {
-                    realtime_session_id,
-                    reply,
-                } => {
-                    crate::realtime_conversation::handle_detach(
-                        &sess,
-                        Some(&realtime_session_id),
-                        &sub.id,
-                    )
+                // Retain legacy operation shapes, but do not run a media session.
+                Op::RealtimeConversationStart(_)
+                | Op::RealtimeConversationAudio(_)
+                | Op::RealtimeConversationText(_)
+                | Op::RealtimeConversationSpeech(_)
+                | Op::RealtimeConversationClose
+                | Op::RealtimeConversationListVoices => {
+                    sess.send_event_raw(Event {
+                        id: sub.id.clone(),
+                        msg: EventMsg::Error(ErrorEvent {
+                            misalignment: None,
+                            message: "Voice mode has been removed from Antex".to_string(),
+                            codex_error_info: Some(CodexErrorInfo::Other),
+                        }),
+                    })
                     .await;
-                    let _ = reply.send(Ok(()));
                     false
                 }
-                Op::RealtimeConversationAudio(params) => {
-                    handle_realtime_conversation_audio(&sess, sub.id.clone(), params).await;
+                Op::RealtimeConversationAttach { reply, .. } => {
+                    let _ = reply.send(Err(CodexErr::UnsupportedOperation(
+                        "Voice mode has been removed from Antex".to_string(),
+                    )));
                     false
                 }
-                Op::RealtimeConversationText(params) => {
-                    handle_realtime_conversation_text(&sess, sub.id.clone(), params).await;
-                    false
-                }
-                Op::RealtimeConversationSpeech(params) => {
-                    handle_realtime_conversation_speech(&sess, sub.id.clone(), params).await;
-                    false
-                }
-                Op::RealtimeConversationClose => {
-                    handle_realtime_conversation_close(&sess, sub.id.clone()).await;
-                    false
-                }
-                Op::RealtimeConversationListVoices => {
-                    realtime_conversation_list_voices(&sess, sub.id.clone()).await;
+                Op::RealtimeConversationDetach { reply, .. } => {
+                    let _ = reply.send(Err(CodexErr::UnsupportedOperation(
+                        "Voice mode has been removed from Antex".to_string(),
+                    )));
                     false
                 }
                 Op::TurnInput {

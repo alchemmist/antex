@@ -34,7 +34,7 @@ const RESPONSES_LITE_METADATA_KEY: &str =
 const TURN_METADATA_KEY: &str = "x-codex-turn-metadata";
 
 pub(super) struct SamplingExecution {
-    pub(super) auth_owner_generation: Option<u64>,
+    pub(super) owner: Arc<super::request_owner::RequestOwner>,
     pub(super) cyber_access_program: Option<CyberAccessProgram>,
     pub(super) config: Arc<LunaSamplerConfig>,
     pub(super) connections: Arc<ConnectionPool>,
@@ -126,7 +126,8 @@ impl SamplingExecution {
         error: &LunaSamplerError,
         auth_recovery: &mut Option<UnauthorizedRecovery>,
         retries: &mut usize,
-    ) -> bool {
+    ) -> Result<bool, LunaSamplerError> {
+        self.owner.check()?;
         let retryable = match error {
             LunaSamplerError::ConnectionTimeout
             | LunaSamplerError::Api(
@@ -147,13 +148,25 @@ impl SamplingExecution {
             | LunaSamplerError::Api(ApiError::Api { status, .. }) => {
                 if *status == StatusCode::UNAUTHORIZED {
                     let Some(recovery) = auth_recovery.as_mut() else {
-                        return false;
+                        return Ok(false);
                     };
-                    if !recovery.has_next() || recovery.next().await.is_err() {
-                        return false;
+                    if !recovery.has_next() {
+                        return Ok(false);
                     }
+                    let result = tokio::select! {
+                        biased;
+                        _ = self.owner.changed() => {
+                            self.owner.check()?;
+                            return Ok(false);
+                        }
+                        result = recovery.next() => result,
+                    };
+                    self.owner.check()?;
+                    result.map_err(|error| {
+                        LunaSamplerError::Provider(std::io::Error::from(error).into())
+                    })?;
                     self.connections.clear();
-                    return true;
+                    return Ok(true);
                 } else {
                     status.is_server_error() || *status == StatusCode::TOO_MANY_REQUESTS
                 }
@@ -184,48 +197,28 @@ impl SamplingExecution {
         };
         if retryable && *retries < MAX_SAMPLING_RETRIES {
             *retries += 1;
-            return true;
+            return Ok(true);
         }
-        false
+        Ok(false)
     }
 
     pub(super) async fn run(
         &mut self,
         mut mode: SamplingMode<'_>,
     ) -> Result<String, LunaSamplerError> {
-        let auth_changes = self
-            .config
-            .provider
-            .auth_manager()
-            .filter(|_| self.config.provider.info().auth.is_none())
-            .map(|manager| manager.auth_change_state_receiver());
-        let owner_generation = self.auth_owner_generation;
+        let owner = Arc::clone(&self.owner);
         let account_changed_error = || {
-            LunaSamplerError::Provider(
-                std::io::Error::other("account changed during Luna classification").into(),
-            )
+            owner.check().err().unwrap_or_else(|| {
+                LunaSamplerError::Provider(
+                    std::io::Error::other(
+                        "authentication ownership monitor stopped during Luna classification",
+                    )
+                    .into(),
+                )
+            })
         };
-        let ensure_account_owner = || {
-            if auth_changes
-                .as_ref()
-                .map(|changes| changes.borrow().owner_generation)
-                != owner_generation
-            {
-                return Err(account_changed_error());
-            }
-            Ok(())
-        };
-        let mut owner_changes = auth_changes.clone();
-        let owner_changed = async move {
-            let Some(changes) = owner_changes.as_mut() else {
-                return std::future::pending::<()>().await;
-            };
-            while Some(changes.borrow_and_update().owner_generation) == owner_generation {
-                if changes.changed().await.is_err() {
-                    break;
-                }
-            }
-        };
+        let ensure_account_owner = || owner.check();
+        let owner_changed = owner.changed();
         tokio::pin!(owner_changed);
         let mut retries = 0;
         let mut auth_recovery = self
@@ -243,17 +236,19 @@ impl SamplingExecution {
                 completion.output = Some(Vec::new());
                 completion.remaining_tokens = retention_budget;
             }
-            let lease = match tokio::select! {
+            let lease = tokio::select! {
                 biased;
                 _ = &mut owner_changed => return Err(account_changed_error()),
                 _ = mode.superseded() => return Err(LunaSamplerError::Superseded),
                 lease = self.connections.lease() => lease,
-            } {
+            };
+            ensure_account_owner()?;
+            let lease = match lease {
                 Ok(lease) => lease,
                 Err(error) => {
                     if self
                         .retry_after_failure(&error, &mut auth_recovery, &mut retries)
-                        .await
+                        .await?
                     {
                         continue;
                     }
@@ -268,8 +263,9 @@ impl SamplingExecution {
                         biased;
                         _ = &mut owner_changed => return Err(account_changed_error()),
                         _ = mode.superseded() => return Err(LunaSamplerError::Superseded),
-                        auth = self.config.provider.auth() => auth,
-                    };
+                        auth = self.config.provider.auth_for_request() => auth,
+                    }
+                    .map_err(LunaSamplerError::Provider)?;
                     cyber_access_program::for_auth(
                         auth.as_ref(),
                         Some(program),
@@ -315,18 +311,20 @@ impl SamplingExecution {
                 client_metadata.insert("parent_response_id".to_owned(), parent_response_id.clone());
             }
             self.request.client_metadata = Some(client_metadata);
-            let mut stream = match tokio::select! {
+            let stream = tokio::select! {
                 biased;
                 _ = &mut owner_changed => return Err(account_changed_error()),
                 _ = mode.superseded() => return Err(LunaSamplerError::Superseded),
                 stream = lease.stream_request(&self.request) => stream,
-            } {
+            };
+            ensure_account_owner()?;
+            let mut stream = match stream {
                 Ok(stream) => stream,
                 Err(error) => {
                     let error = LunaSamplerError::Api(error);
                     if self
                         .retry_after_failure(&error, &mut auth_recovery, &mut retries)
-                        .await
+                        .await?
                     {
                         continue;
                     }
@@ -358,7 +356,7 @@ impl SamplingExecution {
                         }
                         if self
                             .retry_after_failure(&error, &mut auth_recovery, &mut retries)
-                            .await
+                            .await?
                         {
                             continue 'retry;
                         }
@@ -447,6 +445,7 @@ impl SamplingExecution {
                     scored.store(true, Ordering::Relaxed);
                 }
             }
+            ensure_account_owner()?;
             return Err(LunaSamplerError::MissingOutput);
         }
     }

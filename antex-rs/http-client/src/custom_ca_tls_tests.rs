@@ -1,4 +1,4 @@
-//! Handshake coverage for the custom trust path retained by Windows realtime connections.
+//! Handshake coverage for custom certificate trust and hostname validation.
 
 use super::ANTEX_CA_CERT_ENV;
 use super::ConfiguredCaBundle;

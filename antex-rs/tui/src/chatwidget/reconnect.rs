@@ -1,30 +1,15 @@
 //! Disconnects preserve input and reconcile confirmed submissions before resuming unsent queues.
 //! Unavailable threads retain uncertain prompts in recovered queues before clearing activity.
 
-use super::realtime::RealtimeConversationPhase;
 use super::*;
 use crate::bottom_pane::RestrictedInputMode;
 
 impl ChatWidget {
-    pub(crate) fn record_realtime_disconnect_failure(&mut self) {
-        if matches!(
-            self.realtime_conversation.phase,
-            RealtimeConversationPhase::Starting | RealtimeConversationPhase::Active
-        ) || self.realtime_retry_cleanup_pending()
-        {
-            self.record_realtime_failure(RealtimeFailureCause::AppServerDisconnect);
-        }
-    }
-
     pub(crate) fn pause_for_disconnect(&mut self) {
         self.permission_discovery = None;
         self.invalidate_permission_discovery();
         self.cancel_startup_submission();
         self.cancel_image_submission();
-        // The app-server transport can fail while the separate WebRTC helper
-        // still sends microphone audio. Retire local media before showing offline UI.
-        self.record_realtime_disconnect_failure();
-        let _ = self.reset_realtime_conversation();
         if let Some(questions) = &mut self.bottom_pane.questions {
             questions.delivery_enabled = false;
         }

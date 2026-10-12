@@ -69,19 +69,21 @@ impl AuthManager {
         let Some(resolver) = self.workspace_routing_resolver.get() else {
             return Ok(None);
         };
-        let auth_changes = self.auth_change_state_receiver();
-        let owner_generation = auth_changes.borrow().owner_generation;
+        let owner = super::recovery::RecoveryOwner::capture(self);
+        if !owner.matches_auth(Some(auth)) {
+            return Err(super::recovery::owner_changed().into());
+        }
         let resolver = resolver
             .upgrade()
             .ok_or_else(|| io::Error::other("workspace routing owner is unavailable"))?;
-        let routing = resolver.resolve(request).await?;
-        // Discovery may recover expired credentials for the same owner. Model
-        // client setup rebuilds routing and credentials after that revision change.
-        if auth_changes.borrow().owner_generation != owner_generation
-            || routing.as_ref().is_some_and(|routing| {
-                auth.get_account_id().as_deref() != Some(routing.chatgpt_account_id.as_str())
-            })
-        {
+        let routing = resolver.resolve(request).await;
+        // Discovery may rotate sparse external credentials within the original
+        // source installation. A public generation alone is not its identity.
+        owner.check(self).map_err(io::Error::from)?;
+        let routing = routing?;
+        if routing.as_ref().is_some_and(|routing| {
+            auth.get_account_id().as_deref() != Some(routing.chatgpt_account_id.as_str())
+        }) {
             return Err(io::Error::other(
                 "account changed during workspace routing discovery",
             ));

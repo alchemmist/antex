@@ -23,7 +23,7 @@ use antex_config::CloudConfigBundleSnapshot;
 use antex_login::AntexAuth;
 use antex_login::AuthManager;
 use antex_login::RefreshTokenError;
-use antex_login::UnauthorizedRecovery;
+use antex_login::auth::CloudConfigRecovery;
 use antex_protocol::account::PlanType;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -199,7 +199,18 @@ where
     async fn load_startup_bundle(
         &self,
     ) -> Result<Option<CloudConfigBundle>, CloudConfigBundleLoadError> {
-        let Some(auth) = self.auth_manager.auth().await else {
+        let Some(auth) = self
+            .auth_manager
+            .auth_for_request()
+            .await
+            .map_err(|error| {
+                CloudConfigBundleLoadError::new(
+                    CloudConfigBundleLoadErrorCode::Auth,
+                    /*status_code*/ None,
+                    error.to_string(),
+                )
+            })?
+        else {
             return Ok(None);
         };
         if !cloud_config_eligible_auth(&auth) {
@@ -261,11 +272,34 @@ where
     ) -> Result<Option<CloudConfigBundle>, CloudConfigBundleLoadError> {
         let mut attempt = 1;
         let mut last_status_code: Option<u16> = None;
-        let mut auth_recovery = self.auth_manager.unauthorized_recovery();
+        // This fixed metadata GET alone retains the legacy same-workspace
+        // user-rebind behavior; payload-bearing requests use strict recovery.
+        let mut auth_recovery = CloudConfigRecovery::new(self.auth_manager.clone(), &auth)
+            .map_err(|error| {
+                CloudConfigBundleLoadError::new(
+                    CloudConfigBundleLoadErrorCode::Auth,
+                    /*status_code*/ None,
+                    error.to_string(),
+                )
+            })?;
 
         while attempt <= CLOUD_CONFIG_BUNDLE_MAX_ATTEMPTS {
+            auth_recovery.ensure_same_owner().map_err(|error| {
+                CloudConfigBundleLoadError::new(
+                    CloudConfigBundleLoadErrorCode::Auth,
+                    last_status_code,
+                    error.to_string(),
+                )
+            })?;
             match self.client.get_bundle(&auth).await {
                 Ok(bundle) => {
+                    auth_recovery.ensure_same_owner().map_err(|error| {
+                        CloudConfigBundleLoadError::new(
+                            CloudConfigBundleLoadErrorCode::Auth,
+                            last_status_code,
+                            error.to_string(),
+                        )
+                    })?;
                     return self
                         .validate_and_cache_remote_bundle(&auth, trigger, attempt, bundle)
                         .await;
@@ -408,7 +442,7 @@ where
     async fn handle_unauthorized(
         &self,
         auth: &mut AntexAuth,
-        auth_recovery: &mut UnauthorizedRecovery,
+        auth_recovery: &mut CloudConfigRecovery,
         trigger: &'static str,
         attempt: usize,
         status_code: Option<u16>,
@@ -422,8 +456,8 @@ where
                 "Cloud config bundle request was unauthorized; attempting auth recovery"
             );
             match auth_recovery.next().await {
-                Ok(_) => {
-                    let Some(refreshed_auth) = self.auth_manager.auth().await else {
+                Ok(refreshed_auth) => {
+                    let Some(refreshed_auth) = refreshed_auth else {
                         tracing::error!(
                             "Auth recovery succeeded but no auth is available for cloud config bundle"
                         );
@@ -538,17 +572,20 @@ where
     }
 
     async fn refresh_cache_once(&self) -> bool {
-        let Some(auth) = self.auth_manager.auth().await else {
-            return false;
+        let result = match self.auth_manager.auth_for_request().await {
+            Ok(Some(auth)) if cloud_config_eligible_auth(&auth) => {
+                self.fetch_remote_bundle_and_update_cache_with_retries(auth, "refresh")
+                    .await
+            }
+            Ok(_) => return false,
+            Err(error) => Err(CloudConfigBundleLoadError::new(
+                CloudConfigBundleLoadErrorCode::Auth,
+                /*status_code*/ None,
+                error.to_string(),
+            )),
         };
-        if !cloud_config_eligible_auth(&auth) {
-            return false;
-        }
 
-        match self
-            .fetch_remote_bundle_and_update_cache_with_retries(auth, "refresh")
-            .await
-        {
+        match result {
             Ok(bundle) => {
                 emit_load_metric("refresh", "success", bundle.as_ref());
                 self.publish_refresh_result(Ok(bundle)).await;

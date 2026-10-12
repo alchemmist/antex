@@ -18,7 +18,7 @@ async fn selected_usage_is_cached_and_account_changes_discard_old_results() -> R
         /*status_account_display*/ None,
         Some(PlanType::Business),
         /*has_chatgpt_account*/ false,
-        /*has_codex_backend_auth*/ true,
+        /*has_antex_backend_auth*/ true,
     );
     let selected = ThreadId::from_u128(/*value*/ 1);
     let other = ThreadId::new();

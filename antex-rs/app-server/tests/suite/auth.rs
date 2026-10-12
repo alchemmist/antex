@@ -426,7 +426,8 @@ async fn get_auth_status_omits_token_after_proactive_refresh_failure() -> Result
                 "code": "refresh_token_reused"
             }
         })))
-        .expect(2)
+        // A cached permanent rejection must not replay the rejected refresh token.
+        .expect(1)
         .mount(&server)
         .await;
 
@@ -462,6 +463,16 @@ async fn get_auth_status_omits_token_after_proactive_refresh_failure() -> Result
         }
     );
 
+    let repeated_request = mcp
+        .send_get_auth_status_request(GetAuthStatusParams {
+            include_token: Some(true),
+            refresh_token: Some(false),
+        })
+        .await?;
+    let repeated: GetAuthStatusResponse =
+        timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(repeated_request)).await??;
+    assert_eq!(repeated, status);
+
     server.verify().await;
     Ok(())
 }
@@ -489,7 +500,8 @@ async fn get_auth_status_returns_token_after_proactive_refresh_recovery() -> Res
                 "code": "refresh_token_reused"
             }
         })))
-        .expect(2)
+        // A cached permanent rejection must not replay the rejected refresh token.
+        .expect(1)
         .mount(&server)
         .await;
 
