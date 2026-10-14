@@ -1,3 +1,10 @@
+# Fork maintenance
+
+For syncing Antex with upstream OpenAI Codex, or removing/re-removing voice mode,
+read [.agents/skills/sync-fork/SKILL.md](.agents/skills/sync-fork/SKILL.md) first.
+It covers fork invariants, voice dependency removal, validation and separately
+authorized release/installation; it does not grant publication permission.
+
 # Rust/antex-rs
 
 In the antex-rs folder where the rust code lives:
