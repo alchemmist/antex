@@ -30,7 +30,6 @@ chrono = { workspace = true, features = ["serde"] }
 clap = { workspace = true, features = ["derive"] }
 antex-ansi-escape = { workspace = true }
 antex-app-server-client = { workspace = true }
-antex-app-server-daemon = { workspace = true }
 antex-app-server-protocol = { workspace = true }
 antex-arg0 = { workspace = true }
 antex-backend-client = { workspace = true }

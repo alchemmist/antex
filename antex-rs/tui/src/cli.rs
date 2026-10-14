@@ -1,4 +1,3 @@
-use antex_utils_absolute_path::AbsolutePathBuf;
 use antex_utils_cli::ApprovalModeCliArg;
 use antex_utils_cli::CliConfigOverrides;
 use antex_utils_cli::SharedCliOptions;
@@ -9,10 +8,6 @@ use clap::Parser;
 #[derive(Parser, Clone, Debug)]
 #[command(version)]
 pub struct Cli {
-    /// Internal: launching CLI that handles daemon updates after the TUI exits.
-    #[clap(skip)]
-    pub daemon_cli_executable: Option<AbsolutePathBuf>,
-
     /// Optional user prompt to start the session.
     #[arg(value_name = "PROMPT", value_hint = clap::ValueHint::Other)]
     pub prompt: Option<String>,
@@ -42,7 +37,7 @@ pub struct Cli {
     #[clap(skip)]
     pub resume_include_non_interactive: bool,
 
-    /// Internal: open the daemon-wide agents overview instead of starting a thread.
+    /// Internal: open the explicit remote server's agents overview instead of starting a thread.
     #[clap(skip)]
     pub agents_overview: bool,
 
@@ -80,8 +75,8 @@ pub struct Cli {
     #[arg(long = "no-alt-screen", default_value_t = false)]
     pub no_alt_screen: bool,
 
-    /// Run without the shared background server, even if it is already running.
-    #[arg(long)]
+    /// Compatibility no-op. Local sessions always run in-process.
+    #[arg(long, hide = true)]
     pub no_daemon: bool,
 
     #[clap(skip)]

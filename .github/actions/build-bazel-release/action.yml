@@ -5,7 +5,7 @@ inputs:
     description: Rust release target triple.
     required: true
   bundle:
-    description: Binary bundle (combined, primary, app-server, or helpers).
+    description: Binary bundle (combined, primary, or helpers).
     default: combined
   release-dir:
     description: Directory where the archive is extracted for signing and packaging.

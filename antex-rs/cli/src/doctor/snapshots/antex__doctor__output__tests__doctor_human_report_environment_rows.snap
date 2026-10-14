@@ -69,11 +69,8 @@ Connectivity
   ✓ websocket    Responses WebSocket handshake succeeded
   ✓ reachability active provider endpoints are reachable over HTTP
 
-Background Server
-  ✓ app-server   background server is not running
-
 ─────────────────────────────────────────────────────────────
-16 ok · 5 notes · 3 warn · 1 fail failed
+15 ok · 5 notes · 3 warn · 1 fail failed
 
 --summary compact output           --all expand truncated lists
 --json redacted report

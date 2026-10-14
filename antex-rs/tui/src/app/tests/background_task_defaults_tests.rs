@@ -541,12 +541,11 @@ async fn command_center_new_read_failure_keeps_overview_and_does_not_start() -> 
     ] {
         let (mut app, mut events, _) = make_test_app_with_channels().await;
         if capability == HistoryCapabilities::ThreadStartDuringLegacyShutdown {
-            app.app_server_target = AppServerTarget::LocalDaemon {
+            app.app_server_target = AppServerTarget::Remote {
                 endpoint: crate::RemoteAppServerEndpoint::WebSocket {
                     websocket_url: "ws://127.0.0.1:1".into(),
                     auth_token: None,
                 },
-                allow_embedded_fallback: false,
             };
         }
         trust_launch_folder(&mut app);

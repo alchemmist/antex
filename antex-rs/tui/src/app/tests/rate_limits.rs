@@ -109,6 +109,9 @@ fn deliver_usage_limit_error(app: &mut App) {
 async fn backend_banner_state_survives_widget_replacement() -> Result<()> {
     for dismiss in [false, true] {
         let (mut app, _rx, _op_rx) = make_test_app_with_channels().await;
+        // Match normal embedded startup before comparing the replacement widget.
+        app.chat_widget
+            .set_agents_navigation_enabled(/*enabled*/ true);
         set_chatgpt_auth(&mut app.chat_widget);
         let mut response = account_rate_limits_response(rate_limit_snapshot(
             /*used_percent*/ 100, /*rate_limit_reached_type*/ None,

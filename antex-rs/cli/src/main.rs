@@ -1,6 +1,3 @@
-use antex_app_server_daemon::BootstrapOptions as AppServerBootstrapOptions;
-use antex_app_server_daemon::LifecycleCommand as AppServerLifecycleCommand;
-use antex_app_server_daemon::RemoteControlMode as AppServerRemoteControlMode;
 use antex_arg0::Arg0DispatchPaths;
 use antex_arg0::arg0_dispatch_or_else;
 use antex_chatgpt::apply_command::ApplyCommand;
@@ -54,8 +51,6 @@ static ALLOCATOR: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod app_cmd;
 mod cloud_config;
-mod daemon_install;
-mod daemon_telemetry;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod desktop_app;
 mod doctor;
@@ -75,7 +70,6 @@ mod mcp_login;
 mod migrate_rollouts;
 mod plugin_cmd;
 mod queue_cmd;
-mod remote_control_cmd;
 #[cfg(target_os = "windows")]
 mod sandbox_setup;
 mod sandbox_uninstall;
@@ -88,7 +82,6 @@ use crate::mcp_cmd::McpCli;
 use crate::plugin_cmd::PluginCli;
 use crate::plugin_cmd::PluginSubcommand;
 use crate::queue_cmd::QueueCommand;
-use crate::remote_control_cmd::RemoteControlCommand;
 use doctor::DoctorCommand;
 use state_db_recovery as local_state_db;
 
@@ -105,7 +98,6 @@ use antex_features::Stage;
 use antex_features::is_known_feature_key;
 use antex_home::AntexHomeUserInstructionsProvider;
 use antex_login::AuthManager;
-use antex_login::is_workload_identity_selected;
 use antex_memories_write::clear_memory_roots_contents;
 use antex_models_manager::bundled_models_response;
 use antex_models_manager::manager::RefreshStrategy;
@@ -136,9 +128,6 @@ struct MultitoolCli {
     pub feature_toggles: FeatureToggles,
 
     #[clap(flatten)]
-    remote: InteractiveRemoteOptions,
-
-    #[clap(flatten)]
     interactive: TuiCli,
 
     #[clap(subcommand)]
@@ -149,9 +138,6 @@ struct MultitoolCli {
 enum Subcommand {
     #[command(about = "Inspect or migrate existing Codex data into an independent Antex home")]
     Migrate(home_migration::MigrationCommand),
-    /// Browse all agent sessions on the shared local app-server daemon.
-    Agents(AgentsCommand),
-
     /// Internal: forward a local TCP socket through an HTTP/3 CONNECT proxy.
     #[clap(hide = true)]
     TcpTunnel(antex_tcp_tunnel::Args),
@@ -176,9 +162,6 @@ enum Subcommand {
 
     /// [experimental] Run the app server or related tooling.
     AppServer(AppServerCommand),
-
-    /// [experimental] Manage the app-server daemon with remote control enabled.
-    RemoteControl(RemoteControlCommand),
 
     /// Launch the Desktop app (opens the app installer if missing).
     #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -338,23 +321,6 @@ struct DebugTraceReduceCommand {
 }
 
 #[derive(Debug, Parser)]
-struct AgentsCommand {
-    /// The agents overview requires a shared server; this option is rejected.
-    #[arg(long, hide = true)]
-    no_daemon: bool,
-    #[clap(flatten)]
-    remote: InteractiveRemoteOptions,
-
-    /// Use this directory for new tasks on a remote server.
-    #[arg(long = "cd", short = 'C', value_name = "DIR")]
-    cwd: Option<PathBuf>,
-
-    /// Disable alternate screen mode.
-    #[arg(long = "no-alt-screen", default_value_t = false)]
-    no_alt_screen: bool,
-}
-
-#[derive(Debug, Parser)]
 struct ResumeCommand {
     /// Session id (UUID) or session name. UUIDs take precedence if it parses.
     /// If omitted, use --last to pick the most recent recorded session.
@@ -374,9 +340,6 @@ struct ResumeCommand {
     include_non_interactive: bool,
 
     #[clap(flatten)]
-    remote: InteractiveRemoteOptions,
-
-    #[clap(flatten)]
     config_overrides: SessionTuiCli,
 }
 
@@ -385,9 +348,6 @@ struct SessionArchiveCommand {
     /// Session id (UUID) or session name. UUIDs take precedence if it parses.
     #[arg(value_name = "SESSION")]
     target: String,
-
-    #[clap(flatten)]
-    remote: InteractiveRemoteOptions,
 
     #[clap(flatten)]
     config_overrides: SessionArchiveConfigOverrides,
@@ -430,9 +390,6 @@ struct ForkCommand {
     /// Show all sessions (disables cwd filtering and shows CWD column).
     #[arg(long = "all", default_value_t = false)]
     all: bool,
-
-    #[clap(flatten)]
-    remote: InteractiveRemoteOptions,
 
     #[clap(flatten)]
     config_overrides: SessionTuiCli,
@@ -589,26 +546,9 @@ struct AppServerCommand {
     #[arg(long = "strict-config", default_value_t = false)]
     strict_config: bool,
 
-    /// Transport endpoint URL. Supported values: `stdio://` (default),
-    /// `unix://`, `unix://PATH`, `ws://IP:PORT`, `off`.
-    #[arg(
-        long = "listen",
-        value_name = "URL",
-        default_value = antex_app_server::AppServerTransport::DEFAULT_LISTEN_URL
-    )]
-    listen: antex_app_server::AppServerTransport,
-
-    /// Use stdio as the transport (equivalent to `--listen stdio://`).
-    #[arg(long = "stdio", conflicts_with = "listen")]
+    /// Use the on-demand stdio transport (the default).
+    #[arg(long = "stdio")]
     stdio: bool,
-
-    /// Enable remote control for this app-server process without changing persistence.
-    #[arg(long = "remote-control", hide = true)]
-    remote_control: bool,
-
-    /// Save loaded threads during managed daemon shutdown.
-    #[arg(long, hide = true)]
-    managed_daemon: bool,
 
     /// Controls whether analytics are enabled by default.
     ///
@@ -627,20 +567,11 @@ struct AppServerCommand {
     /// See https://developers.openai.com/codex/config-advanced/#metrics for more details.
     #[arg(long = "analytics-default-enabled")]
     analytics_default_enabled: bool,
-
-    #[command(flatten)]
-    auth: antex_websocket_auth::WebsocketAuthArgs,
 }
 
 #[derive(Debug, clap::Subcommand)]
 #[allow(clippy::enum_variant_names)]
 enum AppServerSubcommand {
-    /// Manage the local app-server daemon.
-    Daemon(AppServerDaemonCommand),
-
-    /// Proxy stdio bytes to the running app-server control socket.
-    Proxy(AppServerProxyCommand),
-
     /// [experimental] Generate TypeScript bindings for the app server protocol.
     GenerateTs(GenerateTsCommand),
 
@@ -650,78 +581,6 @@ enum AppServerSubcommand {
     /// [internal] Generate internal JSON Schema artifacts for Antex tooling.
     #[clap(hide = true)]
     GenerateInternalJsonSchema(GenerateInternalJsonSchemaCommand),
-}
-
-#[derive(Debug, Args)]
-struct AppServerDaemonCommand {
-    #[command(subcommand)]
-    subcommand: AppServerDaemonSubcommand,
-}
-
-#[derive(Debug, clap::Subcommand)]
-enum AppServerDaemonSubcommand {
-    /// Install durable local app-server management for SSH-driven use.
-    Bootstrap(AppServerBootstrapCommand),
-
-    /// Start the local app server daemon if it is not already running.
-    Start(AppServerDaemonStartCommand),
-
-    /// Restart the local app server daemon.
-    Restart,
-
-    /// Update the daemon package (may interrupt running work).
-    Update {
-        /// Copy and pin this CLI package.
-        #[arg(long)]
-        from_cli: bool,
-        /// Confirm replacing the daemon package without an interactive prompt.
-        #[arg(short = 'y', long, requires = "from_cli")]
-        yes: bool,
-    },
-
-    /// Enable remote control for future starts and a currently running managed daemon.
-    EnableRemoteControl,
-
-    /// Disable remote control for future starts and a currently running managed daemon.
-    DisableRemoteControl,
-
-    /// Stop the local app server daemon.
-    Stop,
-
-    /// Print local CLI and running app-server versions as JSON.
-    Version,
-
-    /// [internal] Run the detached pid-backed standalone updater loop.
-    #[clap(hide = true)]
-    PidUpdateLoop {
-        /// Check support for daemon-owned packages without starting the updater.
-        #[arg(long, hide = true)]
-        check_package_ownership: bool,
-        /// Authorize one production restoration of this selected release.
-        #[arg(long, hide = true)]
-        restore_release: Option<String>,
-    },
-}
-
-#[derive(Debug, Args)]
-struct AppServerDaemonStartCommand {
-    /// Antex executable used to launch app-server instead of the managed standalone install.
-    #[arg(long, value_name = "PATH", value_parser = parse_socket_path)]
-    antex_bin: Option<AbsolutePathBuf>,
-}
-
-#[derive(Debug, Args)]
-struct AppServerProxyCommand {
-    /// Path to the app-server Unix domain socket to connect to.
-    #[arg(long = "sock", value_name = "SOCKET_PATH", value_parser = parse_socket_path)]
-    socket_path: Option<AbsolutePathBuf>,
-}
-
-#[derive(Debug, Args)]
-struct AppServerBootstrapCommand {
-    /// Launch the managed app-server with remote control enabled.
-    #[arg(long = "remote-control")]
-    remote_control: bool,
 }
 
 #[derive(Debug, Args)]
@@ -770,10 +629,7 @@ fn parse_socket_path(raw: &str) -> Result<AbsolutePathBuf, String> {
 }
 
 /// Handle the app exit and print the results. Optionally run the update action.
-fn handle_app_exit(
-    exit_info: AppExitInfo,
-    cli_executable: Option<&std::path::Path>,
-) -> anyhow::Result<()> {
+fn handle_app_exit(exit_info: AppExitInfo) -> anyhow::Result<()> {
     let is_fatal = match &exit_info.exit_reason {
         ExitReason::Fatal(message) => {
             eprintln!("ERROR: {message}");
@@ -786,42 +642,22 @@ fn handle_app_exit(
     };
 
     let update_action = exit_info.update_action;
-    if !matches!(update_action, Some(UpdateAction::Daemon(_))) {
-        let color_enabled = supports_color::on(Stream::Stdout).is_some();
-        for line in exit_info.format_exit_messages(color_enabled) {
-            println!("{line}");
-        }
+    let color_enabled = supports_color::on(Stream::Stdout).is_some();
+    for line in exit_info.format_exit_messages(color_enabled) {
+        println!("{line}");
     }
     if is_fatal {
         std::io::stdout().flush()?;
         std::process::exit(1);
     }
     if let Some(action) = update_action {
-        run_update_action(action, cli_executable)?;
+        run_update_action(action)?;
     }
     Ok(())
 }
 
 /// Run the update action and print the result.
-fn run_update_action(
-    action: UpdateAction,
-    cli_executable: Option<&std::path::Path>,
-) -> anyhow::Result<()> {
-    if let UpdateAction::Daemon(source) = action {
-        let executable = cli_executable
-            .ok_or_else(|| anyhow::anyhow!("Cannot locate the launching Codex CLI"))?;
-        println!("Updating the local background server...");
-        let status = std::process::Command::new(executable)
-            .args(source.command_args())
-            .env(antex_app_server_daemon::telemetry::HANDOFF_ENV, "1")
-            .status()?;
-        anyhow::ensure!(
-            status.success(),
-            "Daemon update failed with status {status}"
-        );
-        println!("Relaunch Codex to reconnect.");
-        return Ok(());
-    }
+fn run_update_action(action: UpdateAction) -> anyhow::Result<()> {
     println!();
     let cmd_str = action.command_str();
     println!("Updating Antex via `{cmd_str}`...");
@@ -902,7 +738,7 @@ fn run_update_command() -> anyhow::Result<()> {
                 "Could not detect the Antex installation method. Please update manually: https://github.com/alchemmist/antex"
             );
         };
-        run_update_action(action, /*cli_executable*/ None)
+        run_update_action(action)
     }
 }
 
@@ -915,28 +751,21 @@ async fn run_session_archive_cli_command(
     cmd: SessionArchiveCommand,
     mut interactive: TuiCli,
     root_config_overrides: CliConfigOverrides,
-    root_remote: Option<String>,
-    root_remote_auth_token_env: Option<String>,
     arg0_paths: Arg0DispatchPaths,
 ) -> anyhow::Result<String> {
     let SessionArchiveCommand {
         target,
-        remote,
         config_overrides,
     } = cmd;
     interactive =
         finalize_session_archive_interactive(interactive, root_config_overrides, config_overrides);
-    let explicit_remote_endpoint = resolve_remote_endpoint(
-        remote.remote.or(root_remote),
-        remote.remote_auth_token_env.or(root_remote_auth_token_env),
-    )?;
     antex_tui::run_session_archive_command(
         action,
         target,
         antex_tui::SessionArchiveCommandOptions {
             cli: interactive,
             arg0_paths,
-            explicit_remote_endpoint,
+            explicit_remote_endpoint: None,
         },
     )
     .await
@@ -973,20 +802,6 @@ struct FeatureToggles {
     /// Disable a feature (repeatable). Equivalent to `-c features.<name>=false`.
     #[arg(long = "disable", value_name = "FEATURE", action = clap::ArgAction::Append, global = true)]
     disable: Vec<String>,
-}
-
-#[derive(Debug, Default, Parser, Clone)]
-struct InteractiveRemoteOptions {
-    /// Connect the TUI to a remote app server endpoint.
-    ///
-    /// Accepted forms: `ws://host:port`, `wss://host:port`, `unix://`, or `unix://PATH`.
-    #[arg(long = "remote", value_name = "ADDR")]
-    remote: Option<String>,
-
-    /// Name of the environment variable containing the bearer token to send to
-    /// a remote app server websocket.
-    #[arg(long = "remote-auth-token-env", value_name = "ENV_VAR")]
-    remote_auth_token_env: Option<String>,
 }
 
 impl FeatureToggles {
@@ -1050,59 +865,24 @@ fn main() -> anyhow::Result<()> {
     }
     home_migration::guard_initial_start()?;
     antex_build_info::initialize!();
-    let remote_control_disabled = antex_app_server::take_remote_control_disabled_env();
     arg0_dispatch_or_else(move |arg0_paths: Arg0DispatchPaths| async move {
         // Keep the CLI dispatcher off the runtime's stack while the TUI rebuilds a thread.
-        Box::pin(cli_main(arg0_paths, remote_control_disabled)).await?;
+        Box::pin(cli_main(arg0_paths)).await?;
         Ok(())
     })
 }
 
-async fn cli_main(
-    arg0_paths: Arg0DispatchPaths,
-    remote_control_disabled: bool,
-) -> anyhow::Result<()> {
+async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
     let MultitoolCli {
         config_overrides: mut root_config_overrides,
         feature_toggles,
-        remote,
         mut interactive,
         subcommand,
     } = MultitoolCli::parse();
-    // Retain the launch target through TUI exit, even if a launcher changes selection.
-    let daemon_cli_executable = arg0_paths
-        .antex_self_exe
-        .as_ref()
-        .and_then(|path| path.canonicalize().ok());
-    interactive.daemon_cli_executable = daemon_cli_executable
-        .clone()
-        .and_then(|path| AbsolutePathBuf::from_absolute_path(path).ok());
     reject_unsupported_worktree_for_subcommand(interactive.shared.worktree, &subcommand)?;
     // Fold --enable/--disable into config overrides so they flow to all subcommands.
     let toggle_overrides = feature_toggles.to_overrides()?;
     root_config_overrides.raw_overrides.extend(toggle_overrides);
-    let agents_options = match &subcommand {
-        Some(Subcommand::Agents(options)) => Some(options),
-        _ => None,
-    };
-    if let Some(options) = agents_options
-        && let Some(root_endpoint) = &remote.remote
-        && let Some(agents_endpoint) = &options.remote.remote
-        && root_endpoint != agents_endpoint
-    {
-        anyhow::bail!("`antex agents` received conflicting remote server endpoints");
-    }
-    let root_remote = agents_options
-        .and_then(|options| options.remote.remote.clone())
-        .or(remote.remote);
-    let root_remote_auth_token_env = agents_options
-        .and_then(|options| options.remote.remote_auth_token_env.clone())
-        .or(remote.remote_auth_token_env);
-    if let Some(options) = agents_options {
-        interactive.cwd = options.cwd.clone().or(interactive.cwd.take());
-        interactive.no_alt_screen |= options.no_alt_screen;
-        interactive.no_daemon |= options.no_daemon;
-    }
     let root_strict_config = interactive.strict_config;
     interactive
         .shared
@@ -1112,72 +892,22 @@ async fn cli_main(
         profile_v2_for_subcommand(&interactive, subcommand)?;
     }
 
-    let open_agents_overview = matches!(&subcommand, Some(Subcommand::Agents(_)));
     match subcommand {
         Some(Subcommand::Migrate(_)) => {
             anyhow::bail!("migration must run before runtime initialization")
         }
-        None | Some(Subcommand::Agents(_)) => {
+        None => {
             prepend_config_flags(
                 &mut interactive.config_overrides,
                 root_config_overrides.clone(),
             );
-            if open_agents_overview {
-                if interactive.prompt.is_some() || !interactive.images.is_empty() {
-                    anyhow::bail!("`antex agents` does not accept an initial prompt or images");
-                }
-                if root_remote.is_some()
-                    && (interactive.oss
-                        || interactive.oss_provider.is_some()
-                        || !interactive.add_dir.is_empty()
-                        || interactive
-                            .config_overrides
-                            .parse_overrides()
-                            .map_err(anyhow::Error::msg)?
-                            .iter()
-                            .any(|(key, value)| {
-                                key == "sandbox_workspace_write.writable_roots"
-                                    || (key == "sandbox_workspace_write"
-                                        && value.get("writable_roots").is_some())
-                            }))
-                {
-                    anyhow::bail!(
-                        "`antex agents` cannot apply local provider or additional-directory overrides to a remote server"
-                    );
-                }
-                if is_workload_identity_selected() {
-                    anyhow::bail!(
-                        "`antex agents` is unavailable while workload identity is active"
-                    );
-                }
-                if root_remote.is_none() {
-                    resolve_remote_endpoint(
-                        /*remote*/ None,
-                        root_remote_auth_token_env.clone(),
-                    )?;
-                    #[cfg(not(any(unix, windows)))]
-                    anyhow::bail!("`antex agents` requires `--remote` on this platform");
-                }
-                interactive.agents_overview = true;
-            }
-            let exit_info = run_interactive_tui(
-                interactive,
-                root_remote.clone(),
-                root_remote_auth_token_env.clone(),
-                arg0_paths.clone(),
-            )
-            .await?;
-            handle_app_exit(exit_info, daemon_cli_executable.as_deref())?;
+            let exit_info = run_interactive_tui(interactive, arg0_paths.clone()).await?;
+            handle_app_exit(exit_info)?;
         }
         Some(Subcommand::TcpTunnel(args)) => {
             return antex_tcp_tunnel::run(args).await;
         }
         Some(Subcommand::Exec(mut exec_cli)) => {
-            reject_remote_mode_for_subcommand(
-                root_remote.as_deref(),
-                root_remote_auth_token_env.as_deref(),
-                "exec",
-            )?;
             exec_cli
                 .shared
                 .inherit_exec_root_options(&interactive.shared);
@@ -1192,11 +922,6 @@ async fn cli_main(
             strict_config,
             args: review_args,
         })) => {
-            reject_remote_mode_for_subcommand(
-                root_remote.as_deref(),
-                root_remote_auth_token_env.as_deref(),
-                "review",
-            )?;
             let mut exec_cli = ExecCli::try_parse_from(["antex", "exec"])?;
             exec_cli
                 .shared
@@ -1210,11 +935,6 @@ async fn cli_main(
             antex_exec::run_main(exec_cli, arg0_paths.clone()).await?;
         }
         Some(Subcommand::Mcp(mut mcp_cli)) => {
-            reject_remote_mode_for_subcommand(
-                root_remote.as_deref(),
-                root_remote_auth_token_env.as_deref(),
-                "mcp",
-            )?;
             // Propagate any root-level config overrides (e.g. `-c key=value`).
             prepend_config_flags(&mut mcp_cli.config_overrides, root_config_overrides.clone());
             let loader_overrides =
@@ -1222,11 +942,6 @@ async fn cli_main(
             mcp_cli.run(loader_overrides).await?;
         }
         Some(Subcommand::Plugin(plugin_cli)) => {
-            reject_remote_mode_for_subcommand(
-                root_remote.as_deref(),
-                root_remote_auth_token_env.as_deref(),
-                "plugin",
-            )?;
             let PluginCli {
                 mut config_overrides,
                 subcommand,
@@ -1262,43 +977,15 @@ async fn cli_main(
                 subcommand,
                 code_mode_host,
                 strict_config: app_server_strict_config,
-                listen,
-                stdio,
-                remote_control,
-                managed_daemon,
+                stdio: _,
                 analytics_default_enabled,
-                auth,
             } = app_server_cli;
             let strict_config = app_server_strict_config || root_strict_config;
             reject_strict_config_for_app_server_subcommand(strict_config, subcommand.as_ref())?;
-            reject_remote_mode_for_app_server_subcommand(
-                root_remote.as_deref(),
-                root_remote_auth_token_env.as_deref(),
-                subcommand.as_ref(),
-            )?;
             match subcommand {
                 None => {
-                    let transport = if stdio {
-                        antex_app_server::AppServerTransport::Stdio
-                    } else {
-                        listen
-                    };
-                    let auth = auth.try_into_settings()?;
                     let runtime_options = antex_app_server::AppServerRuntimeOptions {
                         code_mode_host_transport: code_mode_host.into(),
-                        managed_daemon,
-                        remote_control_startup_mode: match (remote_control, remote_control_disabled)
-                        {
-                            (true, _) => {
-                                antex_app_server::RemoteControlStartupMode::EnabledEphemeral
-                            }
-                            (false, true) => {
-                                antex_app_server::RemoteControlStartupMode::DisabledEphemeral
-                            }
-                            (false, false) => {
-                                antex_app_server::RemoteControlStartupMode::ResolvePersisted
-                            }
-                        },
                         ..Default::default()
                     };
                     let exit = antex_app_server::run_main_with_transport_options(
@@ -1307,9 +994,9 @@ async fn cli_main(
                         LoaderOverrides::default(),
                         strict_config,
                         analytics_default_enabled,
-                        transport,
+                        antex_app_server::AppServerTransport::Stdio,
                         antex_protocol::protocol::SessionSource::VSCode,
-                        auth,
+                        antex_websocket_auth::WebsocketAuthSettings::default(),
                         runtime_options,
                     )
                     .await?;
@@ -1317,126 +1004,6 @@ async fn cli_main(
                         // Runtime teardown can wait forever for blocked rollout I/O.
                         std::process::exit(0);
                     }
-                }
-                Some(AppServerSubcommand::Daemon(daemon_cli)) => match daemon_cli.subcommand {
-                    AppServerDaemonSubcommand::Start(start_cli) => {
-                        if let Some(antex_bin) = start_cli.antex_bin {
-                            let output =
-                                antex_app_server_daemon::start_with_antex_bin(antex_bin.as_path())
-                                    .await?;
-                            println!("{}", serde_json::to_string(&output)?);
-                        } else {
-                            print_app_server_daemon_output(AppServerLifecycleCommand::Start)
-                                .await?;
-                        }
-                    }
-                    AppServerDaemonSubcommand::Bootstrap(bootstrap_cli) => {
-                        let output =
-                            antex_app_server_daemon::bootstrap(AppServerBootstrapOptions {
-                                remote_control_enabled: bootstrap_cli.remote_control,
-                            })
-                            .await?;
-                        println!("{}", serde_json::to_string(&output)?);
-                    }
-                    AppServerDaemonSubcommand::Restart => {
-                        print_app_server_daemon_output(AppServerLifecycleCommand::Restart).await?;
-                    }
-                    AppServerDaemonSubcommand::Update {
-                        from_cli: true,
-                        yes,
-                    } => {
-                        let result = antex_app_server_daemon::update_from_cli(|request| {
-                            daemon_install::confirm_install(request, yes)
-                        })
-                        .await;
-                        daemon_telemetry::record_command(
-                            &root_config_overrides,
-                            analytics_default_enabled,
-                            "this_cli",
-                            &result,
-                        )
-                        .await;
-                        if let Some(output) = result? {
-                            println!("{}", serde_json::to_string(&output)?);
-                        }
-                    }
-                    AppServerDaemonSubcommand::EnableRemoteControl => {
-                        print_app_server_remote_control_output(AppServerRemoteControlMode::Enabled)
-                            .await?;
-                    }
-                    AppServerDaemonSubcommand::DisableRemoteControl => {
-                        print_app_server_remote_control_output(
-                            AppServerRemoteControlMode::Disabled,
-                        )
-                        .await?;
-                    }
-                    AppServerDaemonSubcommand::Stop => {
-                        print_app_server_daemon_output(AppServerLifecycleCommand::Stop).await?;
-                    }
-                    AppServerDaemonSubcommand::Version => {
-                        print_app_server_daemon_output(AppServerLifecycleCommand::Version).await?;
-                    }
-                    AppServerDaemonSubcommand::PidUpdateLoop {
-                        check_package_ownership: true,
-                        ..
-                    } => return Ok(()),
-                    AppServerDaemonSubcommand::Update {
-                        from_cli: false, ..
-                    }
-                    | AppServerDaemonSubcommand::PidUpdateLoop {
-                        check_package_ownership: false,
-                        ..
-                    } => {
-                        let cli_overrides = root_config_overrides
-                            .parse_overrides()
-                            .map_err(anyhow::Error::msg)?;
-                        let config = ConfigBuilder::default()
-                            .cli_overrides(cli_overrides)
-                            .build()
-                            .await
-                            .map_err(anyhow::Error::from);
-                        let http_client_factory = updater_http_client_factory(config)?;
-                        if matches!(
-                            daemon_cli.subcommand,
-                            AppServerDaemonSubcommand::Update { .. }
-                        ) {
-                            let result = antex_app_server_daemon::update(http_client_factory)
-                                .await
-                                .map(Some);
-                            daemon_telemetry::record_command(
-                                &root_config_overrides,
-                                analytics_default_enabled,
-                                "public_stable",
-                                &result,
-                            )
-                            .await;
-                            if let Some(output) = result? {
-                                println!("{}", serde_json::to_string(&output)?);
-                            }
-                        } else {
-                            let AppServerDaemonSubcommand::PidUpdateLoop {
-                                restore_release, ..
-                            } = daemon_cli.subcommand
-                            else {
-                                unreachable!()
-                            };
-                            antex_app_server_daemon::run_pid_update_loop(
-                                http_client_factory,
-                                restore_release,
-                            )
-                            .await?;
-                        }
-                    }
-                },
-                Some(AppServerSubcommand::Proxy(proxy_cli)) => {
-                    let socket_path = match proxy_cli.socket_path {
-                        Some(socket_path) => socket_path,
-                        None => {
-                            let codex_home = find_antex_home()?;
-                            antex_app_server::app_server_control_socket_path(&codex_home)?
-                        }
-                    };
-                    antex_stdio_to_uds::run(socket_path.as_path()).await?;
                 }
                 Some(AppServerSubcommand::GenerateTs(gen_cli)) => {
                     let options = antex_app_server_protocol::GenerateTsOptions {
@@ -1460,28 +1027,8 @@ async fn cli_main(
                 }
             }
         }
-        Some(Subcommand::RemoteControl(mut remote_control_cli)) => {
-            remote_control_cli.no_daemon |= interactive.no_daemon;
-            let subcommand_name = remote_control_cli.subcommand_name();
-            reject_remote_mode_for_subcommand(
-                root_remote.as_deref(),
-                root_remote_auth_token_env.as_deref(),
-                subcommand_name,
-            )?;
-            remote_control_cmd::run(
-                remote_control_cli,
-                arg0_paths.clone(),
-                root_config_overrides,
-            )
-            .await?;
-        }
         #[cfg(any(target_os = "macos", target_os = "windows"))]
         Some(Subcommand::App(app_cli)) => {
-            reject_remote_mode_for_subcommand(
-                root_remote.as_deref(),
-                root_remote_auth_token_env.as_deref(),
-                "app",
-            )?;
             app_cmd::run_app(app_cli).await?;
         }
         Some(Subcommand::Resume(ResumeCommand {
@@ -1489,7 +1036,6 @@ async fn cli_main(
             last,
             all,
             include_non_interactive,
-            remote,
             config_overrides,
         })) => {
             let SessionTuiCli(config_overrides) = config_overrides;
@@ -1502,16 +1048,8 @@ async fn cli_main(
                 include_non_interactive,
                 config_overrides,
             );
-            let exit_info = run_interactive_tui(
-                interactive,
-                remote.remote.or(root_remote.clone()),
-                remote
-                    .remote_auth_token_env
-                    .or(root_remote_auth_token_env.clone()),
-                arg0_paths.clone(),
-            )
-            .await?;
-            handle_app_exit(exit_info, daemon_cli_executable.as_deref())?;
+            let exit_info = run_interactive_tui(interactive, arg0_paths.clone()).await?;
+            handle_app_exit(exit_info)?;
         }
         Some(Subcommand::Archive(cmd)) => {
             let output = run_session_archive_cli_command(
@@ -1519,8 +1057,6 @@ async fn cli_main(
                 cmd,
                 interactive,
                 root_config_overrides.clone(),
-                root_remote.clone(),
-                root_remote_auth_token_env.clone(),
                 arg0_paths.clone(),
             )
             .await?;
@@ -1531,8 +1067,6 @@ async fn cli_main(
                 cmd,
                 interactive,
                 root_config_overrides.clone(),
-                root_remote.clone(),
-                root_remote_auth_token_env.clone(),
                 arg0_paths.clone(),
             )
             .await?;
@@ -1545,19 +1079,12 @@ async fn cli_main(
                 session,
                 interactive,
                 root_config_overrides.clone(),
-                root_remote.clone(),
-                root_remote_auth_token_env.clone(),
                 arg0_paths.clone(),
             )
             .await?;
             println!("{output}");
         }
         Some(Subcommand::MigrateRollouts(command)) => {
-            reject_remote_mode_for_subcommand(
-                root_remote.as_deref(),
-                root_remote_auth_token_env.as_deref(),
-                "migrate-rollouts",
-            )?;
             migrate_rollouts::run(command, root_config_overrides).await?;
         }
         Some(Subcommand::Unarchive(cmd)) => {
@@ -1566,8 +1093,6 @@ async fn cli_main(
                 cmd,
                 interactive,
                 root_config_overrides.clone(),
-                root_remote.clone(),
-                root_remote_auth_token_env.clone(),
                 arg0_paths.clone(),
             )
             .await?;
@@ -1577,7 +1102,6 @@ async fn cli_main(
             session_id,
             last,
             all,
-            remote,
             config_overrides,
         })) => {
             let SessionTuiCli(config_overrides) = config_overrides;
@@ -1589,23 +1113,10 @@ async fn cli_main(
                 all,
                 config_overrides,
             );
-            let exit_info = run_interactive_tui(
-                interactive,
-                remote.remote.or(root_remote.clone()),
-                remote
-                    .remote_auth_token_env
-                    .or(root_remote_auth_token_env.clone()),
-                arg0_paths.clone(),
-            )
-            .await?;
-            handle_app_exit(exit_info, daemon_cli_executable.as_deref())?;
+            let exit_info = run_interactive_tui(interactive, arg0_paths.clone()).await?;
+            handle_app_exit(exit_info)?;
         }
         Some(Subcommand::Login(mut login_cli)) => {
-            reject_remote_mode_for_subcommand(
-                root_remote.as_deref(),
-                root_remote_auth_token_env.as_deref(),
-                "login",
-            )?;
             prepend_config_flags(
                 &mut login_cli.config_overrides,
                 root_config_overrides.clone(),
@@ -1647,11 +1158,6 @@ async fn cli_main(
             }
         }
         Some(Subcommand::Logout(mut logout_cli)) => {
-            reject_remote_mode_for_subcommand(
-                root_remote.as_deref(),
-                root_remote_auth_token_env.as_deref(),
-                "logout",
-            )?;
             prepend_config_flags(
                 &mut logout_cli.config_overrides,
                 root_config_overrides.clone(),
@@ -1659,27 +1165,12 @@ async fn cli_main(
             run_logout(logout_cli.config_overrides).await;
         }
         Some(Subcommand::Completion(completion_cli)) => {
-            reject_remote_mode_for_subcommand(
-                root_remote.as_deref(),
-                root_remote_auth_token_env.as_deref(),
-                "completion",
-            )?;
             print_completion(completion_cli);
         }
         Some(Subcommand::Update) => {
-            reject_remote_mode_for_subcommand(
-                root_remote.as_deref(),
-                root_remote_auth_token_env.as_deref(),
-                "update",
-            )?;
             run_update_command()?;
         }
         Some(Subcommand::Doctor(doctor_cli)) => {
-            reject_remote_mode_for_subcommand(
-                root_remote.as_deref(),
-                root_remote_auth_token_env.as_deref(),
-                "doctor",
-            )?;
             doctor::run_doctor(
                 doctor_cli,
                 root_config_overrides.clone(),
@@ -1689,11 +1180,6 @@ async fn cli_main(
             .await?;
         }
         Some(Subcommand::Cloud(mut cloud_cli)) => {
-            reject_remote_mode_for_subcommand(
-                root_remote.as_deref(),
-                root_remote_auth_token_env.as_deref(),
-                "cloud",
-            )?;
             prepend_config_flags(
                 &mut cloud_cli.config_overrides,
                 root_config_overrides.clone(),
@@ -1715,11 +1201,6 @@ async fn cli_main(
             );
             #[cfg(target_os = "windows")]
             if let Some(setup_cli) = sandbox_setup::parse_setup_command(&sandbox_cli.command)? {
-                reject_remote_mode_for_subcommand(
-                    root_remote.as_deref(),
-                    root_remote_auth_token_env.as_deref(),
-                    "sandbox setup",
-                )?;
                 let cli_overrides = sandbox_cli
                     .config_overrides
                     .parse_overrides()
@@ -1727,11 +1208,6 @@ async fn cli_main(
                 sandbox_setup::run(setup_cli, config_profile.cloned(), cli_overrides).await?;
                 return Ok(());
             }
-            reject_remote_mode_for_subcommand(
-                root_remote.as_deref(),
-                root_remote_auth_token_env.as_deref(),
-                "sandbox",
-            )?;
             if let Some(SandboxSubcommand::Uninstall(command)) = subcommand {
                 return command.run();
             }
@@ -1765,27 +1241,12 @@ async fn cli_main(
         }
         Some(Subcommand::Debug(DebugCommand { subcommand })) => match subcommand {
             DebugSubcommand::Models(cmd) => {
-                reject_remote_mode_for_subcommand(
-                    root_remote.as_deref(),
-                    root_remote_auth_token_env.as_deref(),
-                    "debug models",
-                )?;
                 run_debug_models_command(cmd, root_config_overrides).await?;
             }
             DebugSubcommand::AppServer(cmd) => {
-                reject_remote_mode_for_subcommand(
-                    root_remote.as_deref(),
-                    root_remote_auth_token_env.as_deref(),
-                    "debug app-server",
-                )?;
                 run_debug_app_server_command(cmd).await?;
             }
             DebugSubcommand::PromptInput(cmd) => {
-                reject_remote_mode_for_subcommand(
-                    root_remote.as_deref(),
-                    root_remote_auth_token_env.as_deref(),
-                    "debug prompt-input",
-                )?;
                 run_debug_prompt_input_command(
                     cmd,
                     root_config_overrides,
@@ -1795,38 +1256,16 @@ async fn cli_main(
                 .await?;
             }
             DebugSubcommand::TraceReduce(cmd) => {
-                reject_remote_mode_for_subcommand(
-                    root_remote.as_deref(),
-                    root_remote_auth_token_env.as_deref(),
-                    "debug trace-reduce",
-                )?;
                 run_debug_trace_reduce_command(cmd).await?;
             }
             DebugSubcommand::ClearMemories => {
-                reject_remote_mode_for_subcommand(
-                    root_remote.as_deref(),
-                    root_remote_auth_token_env.as_deref(),
-                    "debug clear-memories",
-                )?;
                 run_debug_clear_memories_command(&root_config_overrides).await?;
             }
         },
         Some(Subcommand::Execpolicy(ExecpolicyCommand { sub })) => match sub {
-            ExecpolicySubcommand::Check(cmd) => {
-                reject_remote_mode_for_subcommand(
-                    root_remote.as_deref(),
-                    root_remote_auth_token_env.as_deref(),
-                    "execpolicy check",
-                )?;
-                run_execpolicycheck(cmd)?
-            }
+            ExecpolicySubcommand::Check(cmd) => run_execpolicycheck(cmd)?,
         },
         Some(Subcommand::Apply(mut apply_cli)) => {
-            reject_remote_mode_for_subcommand(
-                root_remote.as_deref(),
-                root_remote_auth_token_env.as_deref(),
-                "apply",
-            )?;
             prepend_config_flags(
                 &mut apply_cli.config_overrides,
                 root_config_overrides.clone(),
@@ -1834,39 +1273,19 @@ async fn cli_main(
             run_apply_command(apply_cli, /*cwd*/ None).await?;
         }
         Some(Subcommand::ResponsesApiProxy(args)) => {
-            reject_remote_mode_for_subcommand(
-                root_remote.as_deref(),
-                root_remote_auth_token_env.as_deref(),
-                "responses-api-proxy",
-            )?;
             tokio::task::spawn_blocking(move || antex_responses_api_proxy::run_main(args))
                 .await??;
         }
         Some(Subcommand::StdioToUds(cmd)) => {
-            reject_remote_mode_for_subcommand(
-                root_remote.as_deref(),
-                root_remote_auth_token_env.as_deref(),
-                "stdio-to-uds",
-            )?;
             let socket_path = cmd.socket_path;
             antex_stdio_to_uds::run(socket_path.as_path()).await?;
         }
         Some(Subcommand::ExecServer(mut cmd)) => {
-            reject_remote_mode_for_subcommand(
-                root_remote.as_deref(),
-                root_remote_auth_token_env.as_deref(),
-                "exec-server",
-            )?;
             cmd.strict_config |= root_strict_config;
             cmd.run(&arg0_paths, &root_config_overrides).await?;
         }
         Some(Subcommand::Features(FeaturesCli { sub })) => match sub {
             FeaturesSubcommand::List => {
-                reject_remote_mode_for_subcommand(
-                    root_remote.as_deref(),
-                    root_remote_auth_token_env.as_deref(),
-                    "features list",
-                )?;
                 // Honor `--search` via the canonical web_search mode.
                 if interactive.web_search {
                     root_config_overrides
@@ -1895,19 +1314,9 @@ async fn cli_main(
                 }
             }
             FeaturesSubcommand::Enable(FeatureSetArgs { feature }) => {
-                reject_remote_mode_for_subcommand(
-                    root_remote.as_deref(),
-                    root_remote_auth_token_env.as_deref(),
-                    "features enable",
-                )?;
                 enable_feature_in_config(&feature).await?;
             }
             FeaturesSubcommand::Disable(FeatureSetArgs { feature }) => {
-                reject_remote_mode_for_subcommand(
-                    root_remote.as_deref(),
-                    root_remote_auth_token_env.as_deref(),
-                    "features disable",
-                )?;
                 disable_feature_in_config(&feature).await?;
             }
         },
@@ -1925,8 +1334,7 @@ fn profile_v2_for_subcommand<'a>(
     };
 
     match subcommand {
-        Subcommand::Agents(_)
-        | Subcommand::Exec(_)
+        Subcommand::Exec(_)
         | Subcommand::Review(_)
         | Subcommand::Resume(_)
         | Subcommand::Queue(_)
@@ -2193,24 +1601,6 @@ fn prepend_config_flags(
     subcommand_config_overrides.prepend_root_overrides(cli_config_overrides);
 }
 
-fn reject_remote_mode_for_subcommand(
-    remote: Option<&str>,
-    remote_auth_token_env: Option<&str>,
-    subcommand: &str,
-) -> anyhow::Result<()> {
-    if let Some(remote) = remote {
-        anyhow::bail!(
-            "`--remote {remote}` is only supported for interactive TUI commands, not `antex {subcommand}`"
-        );
-    }
-    if remote_auth_token_env.is_some() {
-        anyhow::bail!(
-            "`--remote-auth-token-env` is only supported for interactive TUI commands, not `antex {subcommand}`"
-        );
-    }
-    Ok(())
-}
-
 fn reject_unsupported_worktree_for_subcommand(
     root_worktree: bool,
     subcommand: &Option<Subcommand>,
@@ -2287,7 +1677,6 @@ fn unsupported_subcommand_name_for_strict_config(
 ) -> Option<&'static str> {
     match subcommand {
         None
-        | Some(Subcommand::Agents(_))
         | Some(Subcommand::Exec(_))
         | Some(Subcommand::Review(_))
         | Some(Subcommand::ExecServer(_))
@@ -2302,7 +1691,6 @@ fn unsupported_subcommand_name_for_strict_config(
         Some(Subcommand::AppServer(app_server)) => {
             Some(app_server_subcommand_name(app_server.subcommand.as_ref()))
         }
-        Some(Subcommand::RemoteControl(remote_control)) => Some(remote_control.subcommand_name()),
         Some(Subcommand::Mcp(_)) => Some("mcp"),
         Some(Subcommand::Plugin(_)) => Some("plugin"),
         Some(Subcommand::MigrateRollouts(_)) => Some("migrate-rollouts"),
@@ -2348,34 +1736,9 @@ fn reject_strict_config_for_unsupported_subcommand(
     Ok(())
 }
 
-fn reject_remote_mode_for_app_server_subcommand(
-    remote: Option<&str>,
-    remote_auth_token_env: Option<&str>,
-    subcommand: Option<&AppServerSubcommand>,
-) -> anyhow::Result<()> {
-    let subcommand_name = app_server_subcommand_name(subcommand);
-    reject_remote_mode_for_subcommand(remote, remote_auth_token_env, subcommand_name)
-}
-
 fn app_server_subcommand_name(subcommand: Option<&AppServerSubcommand>) -> &'static str {
     match subcommand {
         None => "app-server",
-        Some(AppServerSubcommand::Daemon(daemon)) => match daemon.subcommand {
-            AppServerDaemonSubcommand::Bootstrap(_) => "app-server daemon bootstrap",
-            AppServerDaemonSubcommand::Start(_) => "app-server daemon start",
-            AppServerDaemonSubcommand::Restart => "app-server daemon restart",
-            AppServerDaemonSubcommand::Update { .. } => "app-server daemon update",
-            AppServerDaemonSubcommand::EnableRemoteControl => {
-                "app-server daemon enable-remote-control"
-            }
-            AppServerDaemonSubcommand::DisableRemoteControl => {
-                "app-server daemon disable-remote-control"
-            }
-            AppServerDaemonSubcommand::Stop => "app-server daemon stop",
-            AppServerDaemonSubcommand::Version => "app-server daemon version",
-            AppServerDaemonSubcommand::PidUpdateLoop { .. } => "app-server daemon pid-update-loop",
-        },
-        Some(AppServerSubcommand::Proxy(_)) => "app-server proxy",
         Some(AppServerSubcommand::GenerateTs(_)) => "app-server generate-ts",
         Some(AppServerSubcommand::GenerateJsonSchema(_)) => "app-server generate-json-schema",
         Some(AppServerSubcommand::GenerateInternalJsonSchema(_)) => {
@@ -2384,66 +1747,10 @@ fn app_server_subcommand_name(subcommand: Option<&AppServerSubcommand>) -> &'sta
     }
 }
 
-async fn print_app_server_daemon_output(command: AppServerLifecycleCommand) -> anyhow::Result<()> {
-    let output = antex_app_server_daemon::run(command).await?;
-    println!("{}", serde_json::to_string(&output)?);
-    Ok(())
-}
-
-fn updater_http_client_factory(
-    config: anyhow::Result<antex_core::config::Config>,
-) -> anyhow::Result<antex_http_client::HttpClientFactory> {
-    let mut config = config?;
-    antex_app_server::in_process::EmbeddedNetworkPolicy::default().activate(&mut config);
-    Ok(config.http_client_factory())
-}
-
-async fn print_app_server_remote_control_output(
-    mode: AppServerRemoteControlMode,
-) -> anyhow::Result<()> {
-    let output = antex_app_server_daemon::set_remote_control(mode).await?;
-    println!("{}", serde_json::to_string(&output)?);
-    Ok(())
-}
-
-fn read_remote_auth_token_from_env_var_with<F>(
-    env_var_name: &str,
-    get_var: F,
-) -> anyhow::Result<String>
-where
-    F: FnOnce(&str) -> Result<String, std::env::VarError>,
-{
-    let auth_token = get_var(env_var_name)
-        .map_err(|_| anyhow::anyhow!("environment variable `{env_var_name}` is not set"))?;
-    let auth_token = auth_token.trim().to_string();
-    if auth_token.is_empty() {
-        anyhow::bail!("environment variable `{env_var_name}` is empty");
-    }
-    Ok(auth_token)
-}
-
-fn read_remote_auth_token_from_env_var(env_var_name: &str) -> anyhow::Result<String> {
-    read_remote_auth_token_from_env_var_with(env_var_name, |name| std::env::var(name))
-}
-
 async fn run_interactive_tui(
     mut interactive: TuiCli,
-    remote: Option<String>,
-    remote_auth_token_env: Option<String>,
     arg0_paths: Arg0DispatchPaths,
 ) -> std::io::Result<AppExitInfo> {
-    if interactive.no_daemon {
-        if interactive.agents_overview {
-            return Ok(AppExitInfo::fatal(
-                "--no-daemon cannot be used with antex agents. The agents overview requires a shared server. Use antex --no-daemon to work without it.",
-            ));
-        }
-        if remote.is_some() {
-            return Ok(AppExitInfo::fatal(
-                "--no-daemon cannot be used with --remote.",
-            ));
-        }
-    }
     if let Some(prompt) = interactive.prompt.take() {
         // Normalize CRLF/CR to LF so CLI-provided text can't leak `\r` into TUI state.
         interactive.prompt = Some(prompt.replace("\r\n", "\n").replace('\r', "\n"));
@@ -2467,46 +1774,19 @@ async fn run_interactive_tui(
         }
     }
 
-    #[cfg(any(unix, windows))]
-    if interactive.agents_overview && remote.is_none() {
-        if !std::io::stdin().is_terminal() {
-            return Ok(AppExitInfo::fatal("stdin is not a terminal"));
-        }
-        if !std::io::stdout().is_terminal() {
-            return Ok(AppExitInfo::fatal("stdout is not a terminal"));
-        }
-        cloud_config::load_config(&interactive.config_overrides, LoaderOverrides::default())
-            .await
-            .map_err(std::io::Error::other)?;
-        antex_app_server_daemon::run(AppServerLifecycleCommand::Start)
-            .await
-            .map_err(|err| std::io::Error::other(format!(
-                "{err:#}\nThe agents overview requires a shared server. Use antex --no-daemon to work without it."
-            )))?;
-    }
-
-    let remote_endpoint = match resolve_remote_endpoint(remote, remote_auth_token_env.clone()) {
-        Ok(remote_endpoint) => remote_endpoint,
-        Err(err) if is_remote_auth_usage_error(&err) => {
-            return Ok(AppExitInfo::fatal(err.to_string()));
-        }
-        Err(err) => return Err(err),
-    };
+    // Interactive CLI sessions always own an embedded app-server engine.
     let start_tui = || {
         antex_tui::run_main(
             interactive.clone(),
             arg0_paths.clone(),
             antex_config::LoaderOverrides::default(),
-            remote_endpoint.clone(),
+            /*explicit_remote_endpoint*/ None,
         )
     };
-    run_tui_with_recovery(start_tui, remote_auth_token_env.as_deref()).await
+    run_tui_with_recovery(start_tui).await
 }
 
-async fn run_tui_with_recovery<F, Fut>(
-    mut start_tui: F,
-    remote_auth_token_env: Option<&str>,
-) -> std::io::Result<AppExitInfo>
+async fn run_tui_with_recovery<F, Fut>(mut start_tui: F) -> std::io::Result<AppExitInfo>
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = std::io::Result<AppExitInfo>>,
@@ -2515,16 +1795,7 @@ where
     loop {
         // Keep the large TUI future out of the CLI dispatcher's stack frame.
         let err = match Box::pin(start_tui()).await {
-            Ok(mut exit_info) => {
-                if let Some(disconnect) = &mut exit_info.disconnect_info
-                    && let Some(env_var) = remote_auth_token_env
-                {
-                    disconnect
-                        .command
-                        .extend(["--remote-auth-token-env".to_string(), env_var.to_string()]);
-                }
-                return Ok(exit_info);
-            }
+            Ok(exit_info) => return Ok(exit_info),
             Err(err) => err,
         };
         let Some(startup_error) = local_state_db::startup_error(&err) else {
@@ -2554,46 +1825,6 @@ where
             }
         }
     }
-}
-
-fn resolve_remote_endpoint(
-    remote: Option<String>,
-    remote_auth_token_env: Option<String>,
-) -> std::io::Result<Option<antex_tui::RemoteAppServerEndpoint>> {
-    let mut remote_endpoint = remote
-        .as_deref()
-        .map(antex_tui::resolve_remote_addr)
-        .transpose()
-        .map_err(std::io::Error::other)?;
-    if let Some(remote_auth_token_env) = remote_auth_token_env {
-        let Some(endpoint) = remote_endpoint.as_mut() else {
-            return Err(std::io::Error::other(
-                "`--remote-auth-token-env` requires `--remote`.",
-            ));
-        };
-        if !antex_tui::remote_addr_supports_auth_token(endpoint) {
-            return Err(std::io::Error::other(
-                "`--remote-auth-token-env` requires a `wss://` or loopback `ws://` remote.",
-            ));
-        }
-        let auth_token = read_remote_auth_token_from_env_var(&remote_auth_token_env)
-            .map_err(std::io::Error::other)?;
-        let antex_tui::RemoteAppServerEndpoint::WebSocket {
-            auth_token: slot, ..
-        } = endpoint
-        else {
-            return Err(std::io::Error::other(
-                "`--remote-auth-token-env` requires a `wss://` or loopback `ws://` remote.",
-            ));
-        };
-        *slot = Some(auth_token);
-    }
-    Ok(remote_endpoint)
-}
-
-fn is_remote_auth_usage_error(err: &std::io::Error) -> bool {
-    err.to_string()
-        .starts_with("`--remote-auth-token-env` requires")
 }
 
 fn confirm(prompt: &str) -> std::io::Result<bool> {
@@ -2794,12 +2025,8 @@ mod tests {
 
     #[test]
     fn interactive_tui_future_stays_bounded() {
-        let future = run_interactive_tui(
-            TuiCli::parse_from(["antex"]),
-            /*remote*/ None,
-            /*remote_auth_token_env*/ None,
-            Arg0DispatchPaths::default(),
-        );
+        let future =
+            run_interactive_tui(TuiCli::parse_from(["antex"]), Arg0DispatchPaths::default());
         let size = std::mem::size_of_val(&future);
 
         assert!(size < 64 * 1024, "interactive TUI future is {size} bytes");
@@ -2848,83 +2075,6 @@ mod tests {
             format!(
                 "Could not find an absolute update command `{command}` on PATH. Please update manually: https://github.com/alchemmist/antex"
             )
-        );
-    }
-
-    #[tokio::test]
-    async fn updater_http_client_factory_honors_respect_system_proxy() {
-        let codex_home = tempfile::tempdir().expect("temporary Antex home");
-        let config = ConfigBuilder::default()
-            .codex_home(codex_home.path().to_path_buf())
-            .cli_overrides(vec![(
-                "features.respect_system_proxy".to_string(),
-                toml::Value::Boolean(true),
-            )])
-            .build()
-            .await
-            .expect("config should load");
-
-        assert_eq!(
-            updater_http_client_factory(Ok(config))
-                .expect("updater configuration")
-                .outbound_proxy_policy(),
-            antex_http_client::OutboundProxyPolicy::RespectSystemProxy
-        );
-    }
-
-    #[test]
-    fn updater_http_client_factory_propagates_config_errors() {
-        assert_eq!(
-            updater_http_client_factory(Err(anyhow::anyhow!("invalid config")))
-                .expect_err("invalid configuration must prevent updates")
-                .to_string(),
-            "invalid config"
-        );
-    }
-
-    #[tokio::test]
-    async fn updater_http_client_factory_enforces_application_requirements() {
-        let home = tempfile::tempdir().expect("temporary Codex home");
-        let requirements = home.path().join("requirements.toml");
-        std::fs::write(
-            &requirements,
-            r#"
-[application.network]
-enabled = true
-[application.network.domains]
-"bedrock-mantle.us-gov-west-1.api.aws" = "allow"
-"chatgpt.com" = "deny"
-"releases.openai.com" = "deny"
-"#,
-        )
-        .expect("write managed requirements");
-        let mut overrides = LoaderOverrides::without_managed_config_for_tests();
-        overrides.system_requirements_path = Some(requirements);
-        let config = ConfigBuilder::default()
-            .codex_home(home.path().to_path_buf())
-            .loader_overrides(overrides)
-            .build()
-            .await
-            .expect("load managed configuration");
-        let factory = updater_http_client_factory(Ok(config)).expect("updater configuration");
-        for host in ["chatgpt.com", "releases.openai.com", "unlisted.example"] {
-            assert_eq!(
-                factory
-                    .network_policy()
-                    .acquire(&format!("https://{host}/").parse().expect("URL"))
-                    .err(),
-                Some(antex_http_client::NetworkPolicyDenied::Destination)
-            );
-        }
-        assert!(
-            factory
-                .network_policy()
-                .acquire(
-                    &"https://bedrock-mantle.us-gov-west-1.api.aws/"
-                        .parse()
-                        .expect("URL")
-                )
-                .is_ok()
         );
     }
 
@@ -2992,7 +2142,6 @@ enabled = true
             config_overrides: mut root_overrides,
             subcommand,
             feature_toggles: _,
-            remote: _,
         } = cli;
         interactive
             .shared
@@ -3003,7 +2152,6 @@ enabled = true
             last,
             all,
             include_non_interactive,
-            remote: _,
             config_overrides: resume_cli,
         }) = subcommand.expect("resume present")
         else {
@@ -3029,7 +2177,6 @@ enabled = true
             config_overrides: mut root_overrides,
             subcommand,
             feature_toggles: _,
-            remote: _,
         } = cli;
         interactive
             .shared
@@ -3039,7 +2186,6 @@ enabled = true
             session_id,
             last,
             all,
-            remote: _,
             config_overrides: fork_cli,
         }) = subcommand.expect("fork present")
         else {
@@ -3066,19 +2212,17 @@ enabled = true
         exec
     }
 
-    fn finalize_archive_from_args(args: &[&str]) -> (String, TuiCli, InteractiveRemoteOptions) {
+    fn finalize_archive_from_args(args: &[&str]) -> (String, TuiCli) {
         let cli = MultitoolCli::try_parse_from(args).expect("parse");
         let MultitoolCli {
             interactive,
             config_overrides: root_overrides,
             subcommand,
             feature_toggles: _,
-            remote: _,
         } = cli;
 
         let Subcommand::Archive(SessionArchiveCommand {
             target,
-            remote,
             config_overrides: archive_cli,
         }) = subcommand.expect("archive present")
         else {
@@ -3088,7 +2232,6 @@ enabled = true
         (
             target,
             finalize_session_archive_interactive(interactive, root_overrides, archive_cli),
-            remote,
         )
     }
 
@@ -3461,12 +2604,6 @@ enabled = true
         app_server
     }
 
-    fn default_app_server_socket_path() -> AbsolutePathBuf {
-        let codex_home = find_antex_home().expect("antex home");
-        antex_app_server::app_server_control_socket_path(&codex_home)
-            .expect("default app-server socket path")
-    }
-
     #[test]
     fn debug_prompt_input_parses_prompt_and_images() {
         let cli = MultitoolCli::try_parse_from([
@@ -3638,14 +2775,12 @@ enabled = true
 
     #[test]
     fn archive_merges_scoped_tui_flags() {
-        let (target, interactive, remote) = finalize_archive_from_args(
+        let (target, interactive) = finalize_archive_from_args(
             [
                 "antex",
                 "-C",
                 "/root",
                 "archive",
-                "--remote",
-                "unix://archive.sock",
                 "--strict-config",
                 "--dangerously-bypass-hook-trust",
                 "-m",
@@ -3660,7 +2795,6 @@ enabled = true
         );
 
         assert_eq!(target, "my-thread");
-        assert_eq!(remote.remote.as_deref(), Some("unix://archive.sock"));
         assert_eq!(interactive.model.as_deref(), Some("gpt-5.1-test"));
         assert_eq!(interactive.config_profile_v2.as_deref(), Some("work"));
         assert_eq!(
@@ -3862,40 +2996,6 @@ enabled = true
         };
         let lines = exit_info.format_exit_messages(/*color_enabled*/ false);
         assert!(lines.is_empty());
-    }
-
-    #[tokio::test]
-    async fn format_exit_messages_preserves_auth_env_through_tui_runner() {
-        let exit_info = run_tui_with_recovery(
-            || async {
-                let mut exit_info = sample_exit_info(
-                    Some("123e4567-e89b-12d3-a456-426614174000"),
-                    /*thread_name*/ None,
-                );
-                exit_info.disconnect_info = Some(antex_tui::DisconnectInfo {
-                    command: vec![
-                        "antex".to_string(),
-                        "--remote".to_string(),
-                        "wss://example.com:443/".to_string(),
-                    ],
-                    stop_hint: "press ctrl + x".to_string(),
-                });
-                Ok(exit_info)
-            },
-            Some("ANTEX_REMOTE_TOKEN"),
-        )
-        .await
-        .unwrap();
-        assert_eq!(
-            exit_info.format_exit_messages(/*color_enabled*/ false),
-            vec![
-                "Disconnected from this task. Any running work continues.",
-                "To reconnect, run:",
-                "  antex --remote wss://example.com:443/ --remote-auth-token-env ANTEX_REMOTE_TOKEN resume 123e4567-e89b-12d3-a456-426614174000",
-                "Stop the current turn: run antex --remote wss://example.com:443/ --remote-auth-token-env ANTEX_REMOTE_TOKEN agents, select this task, and press ctrl + x.",
-                "Token usage so far: total=2 input=0 output=2",
-            ]
-        );
     }
 
     #[test]
@@ -4298,17 +3398,6 @@ enabled = true
     fn app_server_analytics_default_disabled_without_flag() {
         let app_server = app_server_from_args(["antex", "app-server"].as_ref());
         assert!(!app_server.analytics_default_enabled);
-        assert!(!app_server.remote_control);
-        assert_eq!(
-            app_server.listen,
-            antex_app_server::AppServerTransport::Stdio
-        );
-    }
-
-    #[test]
-    fn app_server_remote_control_startup_flag_enables_remote_control() {
-        let enabled = app_server_from_args(["antex", "app-server", "--remote-control"].as_ref());
-        assert!(enabled.remote_control);
     }
 
     #[test]
@@ -4363,7 +3452,6 @@ enabled = true
             "--use-agent-identity-auth",
         ])
         .expect("parse forward");
-        assert!(cli.remote.remote.is_none());
         assert!(!cli.interactive.strict_config);
         assert_matches!(cli.subcommand, Some(Subcommand::ExecServer(ExecServerCommand {
             command: Some(ExecServerSubcommand::Forward { connect }),
@@ -4425,215 +3513,39 @@ enabled = true
             err.to_string(),
             "`--strict-config` is not supported for `antex mcp`"
         );
-
-        let cli = MultitoolCli::try_parse_from(["antex", "--strict-config", "remote-control"])
-            .expect("parse");
-        let err = reject_root_strict_config_for_subcommand(
-            cli.interactive.strict_config,
-            &cli.subcommand,
-        )
-        .expect_err("remote-control should not support root --strict-config");
-
-        assert_eq!(
-            err.to_string(),
-            "`--strict-config` is not supported for `antex remote-control`"
-        );
     }
 
     #[test]
     fn app_server_subcommands_reject_strict_config() {
-        let app_server =
-            app_server_from_args(["antex", "app-server", "--strict-config", "proxy"].as_ref());
+        let app_server = app_server_from_args(&[
+            "antex",
+            "app-server",
+            "--strict-config",
+            "generate-ts",
+            "--out",
+            "out",
+        ]);
         let err = reject_strict_config_for_app_server_subcommand(
             app_server.strict_config,
             app_server.subcommand.as_ref(),
         )
-        .expect_err("app-server proxy should not support --strict-config");
+        .expect_err("schema tooling should not support --strict-config");
 
         assert_eq!(
             err.to_string(),
-            "`--strict-config` is not supported for `antex app-server proxy`"
+            "`--strict-config` is not supported for `antex app-server generate-ts`"
         );
     }
 
     #[test]
-    fn reject_remote_flag_for_remote_control() {
-        let cli = MultitoolCli::try_parse_from(["antex", "--remote", "unix://", "remote-control"])
-            .expect("parse");
-        let Some(Subcommand::RemoteControl(remote_control)) = &cli.subcommand else {
-            panic!("expected remote-control subcommand");
-        };
-        assert_eq!(remote_control.subcommand_name(), "remote-control");
-
-        let err = reject_remote_mode_for_subcommand(
-            cli.remote.remote.as_deref(),
-            cli.remote.remote_auth_token_env.as_deref(),
-            "remote-control",
-        )
-        .expect_err("remote-control should reject root --remote");
-
-        assert!(err.to_string().contains("remote-control"));
-    }
-
-    #[test]
-    fn remote_control_pair_parses() {
-        let cli = MultitoolCli::try_parse_from(["antex", "remote-control", "pair"]).expect("parse");
-        let Some(Subcommand::RemoteControl(remote_control)) = &cli.subcommand else {
-            panic!("expected remote-control subcommand");
-        };
-        assert_eq!(remote_control.subcommand_name(), "remote-control pair");
-    }
-
-    #[test]
-    fn remote_flag_parses_for_interactive_root() {
-        let cli = MultitoolCli::try_parse_from(["antex", "--remote", "unix://codex.sock"])
-            .expect("parse");
-        assert_eq!(cli.remote.remote.as_deref(), Some("unix://codex.sock"));
-    }
-
-    #[test]
-    fn remote_auth_token_env_flag_parses_for_interactive_root() {
-        let cli = MultitoolCli::try_parse_from([
-            "antex",
-            "--remote-auth-token-env",
-            "ANTEX_REMOTE_AUTH_TOKEN",
-            "--remote",
-            "ws://127.0.0.1:4500",
-        ])
-        .expect("parse");
-        assert_eq!(
-            cli.remote.remote_auth_token_env.as_deref(),
-            Some("ANTEX_REMOTE_AUTH_TOKEN")
-        );
-    }
-
-    #[test]
-    fn remote_flag_parses_for_resume_subcommand() {
-        let cli =
-            MultitoolCli::try_parse_from(["antex", "resume", "--remote", "unix://codex.sock"])
-                .expect("parse");
-        let Subcommand::Resume(ResumeCommand { remote, .. }) =
-            cli.subcommand.expect("resume present")
-        else {
-            panic!("expected resume subcommand");
-        };
-        assert_eq!(remote.remote.as_deref(), Some("unix://codex.sock"));
-    }
-
-    #[test]
-    fn agents_subcommand_accepts_remote_session_options() {
-        let cli = MultitoolCli::try_parse_from([
-            "antex",
-            "agents",
-            "--remote",
-            "ws://127.0.0.1:4500",
-            "--remote-auth-token-env",
-            "ANTEX_REMOTE_AUTH_TOKEN",
-            "--cd",
-            "/workspace",
-            "--no-alt-screen",
-        ])
-        .expect("parse");
-        let Some(Subcommand::Agents(options)) = cli.subcommand else {
-            panic!("expected agents subcommand");
-        };
-
-        assert_eq!(
-            options.remote.remote.as_deref(),
-            Some("ws://127.0.0.1:4500")
-        );
-        assert_eq!(
-            options.remote.remote_auth_token_env.as_deref(),
-            Some("ANTEX_REMOTE_AUTH_TOKEN")
-        );
-        assert_eq!(
-            options.cwd.as_deref(),
-            Some(std::path::Path::new("/workspace"))
-        );
-        assert!(options.no_alt_screen);
-    }
-
-    #[test]
-    fn reject_remote_mode_for_non_interactive_subcommands() {
-        let err = reject_remote_mode_for_subcommand(
-            Some("127.0.0.1:4500"),
-            /*remote_auth_token_env*/ None,
-            "exec",
-        )
-        .expect_err("non-interactive subcommands should reject --remote");
-        assert!(
-            err.to_string()
-                .contains("only supported for interactive TUI commands")
-        );
-    }
-
-    #[test]
-    fn reject_remote_auth_token_env_for_non_interactive_subcommands() {
-        let err = reject_remote_mode_for_subcommand(
-            /*remote*/ None,
-            Some("ANTEX_REMOTE_AUTH_TOKEN"),
-            "exec",
-        )
-        .expect_err("non-interactive subcommands should reject --remote-auth-token-env");
-        assert!(
-            err.to_string()
-                .contains("only supported for interactive TUI commands")
-        );
-    }
-
-    #[test]
-    fn reject_remote_auth_token_env_for_app_server_generate_internal_json_schema() {
-        let subcommand =
-            AppServerSubcommand::GenerateInternalJsonSchema(GenerateInternalJsonSchemaCommand {
-                out_dir: PathBuf::from("/tmp/out"),
-            });
-        let err = reject_remote_mode_for_app_server_subcommand(
-            /*remote*/ None,
-            Some("ANTEX_REMOTE_AUTH_TOKEN"),
-            Some(&subcommand),
-        )
-        .expect_err("non-interactive app-server subcommands should reject --remote-auth-token-env");
-        assert!(err.to_string().contains("generate-internal-json-schema"));
-    }
-
-    #[test]
-    fn read_remote_auth_token_from_env_var_reports_missing_values() {
-        let err = read_remote_auth_token_from_env_var_with("ANTEX_REMOTE_AUTH_TOKEN", |_| {
-            Err(std::env::VarError::NotPresent)
-        })
-        .expect_err("missing env vars should be rejected");
-        assert!(err.to_string().contains("is not set"));
-    }
-
-    #[test]
-    fn read_remote_auth_token_from_env_var_trims_values() {
-        let auth_token =
-            read_remote_auth_token_from_env_var_with("ANTEX_REMOTE_AUTH_TOKEN", |_| {
-                Ok("  bearer-token  ".to_string())
-            })
-            .expect("env var should parse");
-        assert_eq!(auth_token, "bearer-token");
-    }
-
-    #[test]
-    fn read_remote_auth_token_from_env_var_rejects_empty_values() {
-        let err = read_remote_auth_token_from_env_var_with("ANTEX_REMOTE_AUTH_TOKEN", |_| {
-            Ok(" \n\t ".to_string())
-        })
-        .expect_err("empty env vars should be rejected");
-        assert!(err.to_string().contains("is empty"));
-    }
-
-    #[test]
-    fn app_server_grpc_code_mode_host_url_parses_independently_of_listen_transport() {
+    fn app_server_grpc_code_mode_host_url_parses_with_stdio() {
         let app_server = app_server_from_args(
             [
                 "antex",
                 "app-server",
                 "--code-mode-host",
                 "https://example.test",
-                "--listen",
-                "ws://127.0.0.1:4500",
+                "--stdio",
             ]
             .as_ref(),
         );
@@ -4673,288 +3585,9 @@ enabled = true
     }
 
     #[test]
-    fn app_server_listen_websocket_url_parses() {
-        let app_server = app_server_from_args(
-            ["antex", "app-server", "--listen", "ws://127.0.0.1:4500"].as_ref(),
-        );
-        assert_eq!(
-            app_server.listen,
-            antex_app_server::AppServerTransport::WebSocket {
-                bind_address: "127.0.0.1:4500".parse().expect("valid socket address"),
-            }
-        );
-    }
-
-    #[test]
-    fn app_server_listen_stdio_url_parses() {
-        let app_server =
-            app_server_from_args(["antex", "app-server", "--listen", "stdio://"].as_ref());
-        assert_eq!(
-            app_server.listen,
-            antex_app_server::AppServerTransport::Stdio
-        );
-    }
-
-    #[test]
     fn app_server_stdio_flag_parses() {
         let app_server = app_server_from_args(["antex", "app-server", "--stdio"].as_ref());
         assert!(app_server.stdio);
-    }
-
-    #[test]
-    fn app_server_stdio_flag_conflicts_with_listen() {
-        let err = MultitoolCli::try_parse_from([
-            "antex",
-            "app-server",
-            "--stdio",
-            "--listen",
-            "stdio://",
-        ])
-        .expect_err("--stdio and --listen should be rejected together");
-        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
-    }
-
-    #[test]
-    fn app_server_listen_unix_socket_url_parses() {
-        let app_server =
-            app_server_from_args(["antex", "app-server", "--listen", "unix://"].as_ref());
-        assert_eq!(
-            app_server.listen,
-            antex_app_server::AppServerTransport::UnixSocket {
-                socket_path: default_app_server_socket_path()
-            }
-        );
-    }
-
-    #[test]
-    fn app_server_listen_unix_socket_path_parses() {
-        let app_server = app_server_from_args(
-            ["antex", "app-server", "--listen", "unix:///tmp/codex.sock"].as_ref(),
-        );
-        assert_eq!(
-            app_server.listen,
-            antex_app_server::AppServerTransport::UnixSocket {
-                socket_path: AbsolutePathBuf::from_absolute_path("/tmp/codex.sock")
-                    .expect("absolute path should parse")
-            }
-        );
-    }
-
-    #[test]
-    fn app_server_listen_off_parses() {
-        let app_server = app_server_from_args(["antex", "app-server", "--listen", "off"].as_ref());
-        assert_eq!(app_server.listen, antex_app_server::AppServerTransport::Off);
-    }
-
-    #[test]
-    fn app_server_listen_invalid_url_fails_to_parse() {
-        let parse_result =
-            MultitoolCli::try_parse_from(["antex", "app-server", "--listen", "http://foo"]);
-        assert!(parse_result.is_err());
-    }
-
-    #[test]
-    fn app_server_proxy_subcommand_parses() {
-        let app_server = app_server_from_args(["antex", "app-server", "proxy"].as_ref());
-        assert!(matches!(
-            app_server.subcommand,
-            Some(AppServerSubcommand::Proxy(AppServerProxyCommand {
-                socket_path: None
-            }))
-        ));
-    }
-
-    #[test]
-    fn app_server_daemon_subcommands_parse() {
-        assert!(matches!(
-            app_server_from_args(
-                [
-                    "antex",
-                    "app-server",
-                    "daemon",
-                    "bootstrap",
-                    "--remote-control"
-                ]
-                .as_ref()
-            )
-            .subcommand,
-            Some(AppServerSubcommand::Daemon(AppServerDaemonCommand {
-                subcommand: AppServerDaemonSubcommand::Bootstrap(AppServerBootstrapCommand {
-                    remote_control: true
-                })
-            }))
-        ));
-        assert!(matches!(
-            app_server_from_args(["antex", "app-server", "daemon", "start"].as_ref()).subcommand,
-            Some(AppServerSubcommand::Daemon(AppServerDaemonCommand {
-                subcommand: AppServerDaemonSubcommand::Start(AppServerDaemonStartCommand {
-                    antex_bin: None
-                })
-            }))
-        ));
-        let local_antex = AbsolutePathBuf::from_absolute_path("/tmp/local-codex").unwrap();
-        assert!(matches!(
-            app_server_from_args(
-                [
-                    "antex",
-                    "app-server",
-                    "daemon",
-                    "start",
-                    "--antex-bin",
-                    "/tmp/local-codex"
-                ]
-                .as_ref()
-            )
-            .subcommand,
-            Some(AppServerSubcommand::Daemon(AppServerDaemonCommand {
-                subcommand: AppServerDaemonSubcommand::Start(AppServerDaemonStartCommand {
-                    antex_bin: Some(path)
-                })
-            })) if path == local_antex
-        ));
-        assert!(matches!(
-            app_server_from_args(["antex", "app-server", "daemon", "restart"].as_ref()).subcommand,
-            Some(AppServerSubcommand::Daemon(AppServerDaemonCommand {
-                subcommand: AppServerDaemonSubcommand::Restart
-            }))
-        ));
-        assert!(matches!(
-            app_server_from_args(
-                ["antex", "app-server", "daemon", "enable-remote-control"].as_ref()
-            )
-            .subcommand,
-            Some(AppServerSubcommand::Daemon(AppServerDaemonCommand {
-                subcommand: AppServerDaemonSubcommand::EnableRemoteControl
-            }))
-        ));
-        assert!(matches!(
-            app_server_from_args(
-                ["antex", "app-server", "daemon", "disable-remote-control"].as_ref()
-            )
-            .subcommand,
-            Some(AppServerSubcommand::Daemon(AppServerDaemonCommand {
-                subcommand: AppServerDaemonSubcommand::DisableRemoteControl
-            }))
-        ));
-        assert!(matches!(
-            app_server_from_args(["antex", "app-server", "daemon", "stop"].as_ref()).subcommand,
-            Some(AppServerSubcommand::Daemon(AppServerDaemonCommand {
-                subcommand: AppServerDaemonSubcommand::Stop
-            }))
-        ));
-        assert!(matches!(
-            app_server_from_args(["antex", "app-server", "daemon", "version"].as_ref()).subcommand,
-            Some(AppServerSubcommand::Daemon(AppServerDaemonCommand {
-                subcommand: AppServerDaemonSubcommand::Version
-            }))
-        ));
-    }
-
-    #[test]
-    fn app_server_proxy_sock_path_parses() {
-        let app_server =
-            app_server_from_args(["antex", "app-server", "proxy", "--sock", "codex.sock"].as_ref());
-        let Some(AppServerSubcommand::Proxy(proxy)) = app_server.subcommand else {
-            panic!("expected proxy subcommand");
-        };
-        assert_eq!(
-            proxy.socket_path,
-            Some(
-                AbsolutePathBuf::relative_to_current_dir("codex.sock")
-                    .expect("relative path should resolve")
-            )
-        );
-    }
-
-    #[test]
-    fn reject_remote_auth_token_env_for_app_server_proxy() {
-        let subcommand = AppServerSubcommand::Proxy(AppServerProxyCommand { socket_path: None });
-        let err = reject_remote_mode_for_app_server_subcommand(
-            /*remote*/ None,
-            Some("ANTEX_REMOTE_AUTH_TOKEN"),
-            Some(&subcommand),
-        )
-        .expect_err("app-server proxy should reject --remote-auth-token-env");
-        assert!(err.to_string().contains("app-server proxy"));
-    }
-
-    #[test]
-    fn reject_remote_auth_token_env_for_app_server_version() {
-        let subcommand = AppServerSubcommand::Daemon(AppServerDaemonCommand {
-            subcommand: AppServerDaemonSubcommand::Version,
-        });
-        let err = reject_remote_mode_for_app_server_subcommand(
-            /*remote*/ None,
-            Some("ANTEX_REMOTE_AUTH_TOKEN"),
-            Some(&subcommand),
-        )
-        .expect_err("app-server daemon version should reject --remote-auth-token-env");
-        assert!(err.to_string().contains("app-server daemon version"));
-    }
-
-    #[test]
-    fn app_server_capability_token_flags_parse() {
-        let app_server = app_server_from_args(
-            [
-                "antex",
-                "app-server",
-                "--ws-auth",
-                "capability-token",
-                "--ws-token-file",
-                "/tmp/codex-token",
-            ]
-            .as_ref(),
-        );
-        assert_eq!(
-            app_server.auth.ws_auth,
-            Some(antex_websocket_auth::WebsocketAuthCliMode::CapabilityToken)
-        );
-        assert_eq!(
-            app_server.auth.ws_token_file,
-            Some(PathBuf::from("/tmp/codex-token"))
-        );
-    }
-
-    #[test]
-    fn app_server_signed_bearer_flags_parse() {
-        let app_server = app_server_from_args(
-            [
-                "antex",
-                "app-server",
-                "--ws-auth",
-                "signed-bearer-token",
-                "--ws-shared-secret-file",
-                "/tmp/codex-secret",
-                "--ws-issuer",
-                "issuer",
-                "--ws-audience",
-                "audience",
-                "--ws-max-clock-skew-seconds",
-                "9",
-            ]
-            .as_ref(),
-        );
-        assert_eq!(
-            app_server.auth.ws_auth,
-            Some(antex_websocket_auth::WebsocketAuthCliMode::SignedBearerToken)
-        );
-        assert_eq!(
-            app_server.auth.ws_shared_secret_file,
-            Some(PathBuf::from("/tmp/codex-secret"))
-        );
-        assert_eq!(app_server.auth.ws_issuer.as_deref(), Some("issuer"));
-        assert_eq!(app_server.auth.ws_audience.as_deref(), Some("audience"));
-        assert_eq!(app_server.auth.ws_max_clock_skew_seconds, Some(9));
-    }
-
-    #[test]
-    fn app_server_rejects_removed_insecure_non_loopback_flag() {
-        let parse_result = MultitoolCli::try_parse_from([
-            "antex",
-            "app-server",
-            "--allow-unauthenticated-non-loopback-ws",
-        ]);
-        assert!(parse_result.is_err());
     }
 
     #[test]
@@ -5091,7 +3724,3 @@ enabled = true
             .expect_err("feature should be rejected")
     }
 }
-
-#[cfg(all(test, unix))]
-#[path = "daemon_update_tests.rs"]
-mod daemon_update_tests;

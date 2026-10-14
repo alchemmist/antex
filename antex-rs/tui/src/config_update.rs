@@ -74,7 +74,7 @@ pub(crate) fn format_config_error(err: &impl Display) -> String {
     format!("{err:#}")
 }
 
-fn trusted_project_edit(project_path: &Path) -> ConfigEdit {
+pub(crate) fn trusted_project_edit(project_path: &Path) -> ConfigEdit {
     let project_key = project_trust_key(project_path)
         .replace('\\', "\\\\")
         .replace('"', "\\\"");

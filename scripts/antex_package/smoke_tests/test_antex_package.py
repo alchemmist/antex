@@ -2,8 +2,7 @@
 
 ROOT_OF_EXTRACTED_PACKAGE
 ├── bin
-│   ├── antex[.exe]                       # CLI package only
-│   ├── antex-app-server[.exe]            # app-server package only
+│   ├── antex[.exe]
 │   └── antex-code-mode-host[.exe]
 ├── antex-package.json
 ├── antex-path
@@ -14,7 +13,7 @@ ROOT_OF_EXTRACTED_PACKAGE
     ├── antex-windows-sandbox-setup.exe   # Windows only
 
 Debug symbols for all shipped binaries arrive in a separate companion archive.
-Each package contains one entrypoint, not both antex and antex-app-server.
+The CLI owns the embedded engine and the foreground stdio SDK entrypoint.
 """
 
 import json
@@ -66,34 +65,22 @@ def test_cli_version_matches_release_sources(package: SmokePackage) -> None:
     assert package.run("--version").stdout == f"antex-cli {version}\n"
 
 
-@pytest.mark.parametrize("entrypoint", ["antex", "antex-app-server"])
 def test_app_server_runs_code_mode_through_python_sdk(
     package: SmokePackage,
     responses_server: MockResponsesServer,
-    entrypoint: str,
 ) -> None:
-    """Both packages run their own ripgrep through sandboxed SDK code mode."""
+    """The CLI package runs its own ripgrep through sandboxed stdio SDK code mode."""
     windows = "windows" in package.target
     sandbox_config = ("--config", 'windows.sandbox="unelevated"') if windows else ()
-    if entrypoint == "antex":
-        executable = package.cli
-        package_root = package.cli_root
-        package_path_dir = package.cli_path_dir
-        config = AntexConfig(
-            antex_bin=str(executable),
-            config_overrides=sandbox_config[1:],
-            cwd=str(package.directory),
-            env=package.environment,
-        )
-    else:
-        executable = package.app_server
-        package_root = package.app_server_root
-        package_path_dir = package.app_server_path_dir
-        config = AntexConfig(
-            launch_args_override=(str(executable), *sandbox_config),
-            cwd=str(package.directory),
-            env=package.environment,
-        )
+    executable = package.cli
+    package_root = package.cli_root
+    package_path_dir = package.cli_path_dir
+    config = AntexConfig(
+        antex_bin=str(executable),
+        config_overrides=sandbox_config[1:],
+        cwd=str(package.directory),
+        env=package.environment,
+    )
     if windows:
         # TODO(anp): Assert resolved rg paths once Windows sandbox PATH finds them.
         ripgrep = str(package_path_dir / "rg.exe").replace("'", "''")

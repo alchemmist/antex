@@ -1,6 +1,6 @@
 //! Conservative authentication checks that run before the provisional composer appears.
 //!
-//! Existing configuration, daemon, or authentication state keeps the composer visible.
+//! Existing configuration or authentication state keeps the composer visible.
 
 use std::ffi::OsString;
 use std::io;
@@ -53,15 +53,6 @@ pub(super) fn should_delay_startup_composer_for_first_login(
                 if !matches!(codex_home.join(state_file).try_exists(), Ok(false)) {
                     return false;
                 }
-            }
-
-            let Ok(daemon_socket) =
-                antex_app_server_client::app_server_control_socket_path(codex_home)
-            else {
-                return false;
-            };
-            if !matches!(daemon_socket.as_path().try_exists(), Ok(false)) {
-                return false;
             }
         }
         Err(error)

@@ -26,12 +26,6 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         help="Assembled Antex CLI package archive in the selected format.",
     )
     group.addoption(
-        "--app-server-archive",
-        type=Path,
-        required=True,
-        help="Assembled app-server package archive in the selected format.",
-    )
-    group.addoption(
         "--symbols-archive",
         type=Path,
         required=True,

@@ -64,7 +64,7 @@ pub(super) async fn prepare_fresh_startup_config(
     environments: &EnvironmentManager,
 ) -> Result<FreshStartupDefaults> {
     let defaults_cwd = match app_server_target {
-        AppServerTarget::Embedded | AppServerTarget::LocalDaemon { .. } => config.cwd.as_path(),
+        AppServerTarget::Embedded => config.cwd.as_path(),
         AppServerTarget::Remote { .. } => {
             app_server.remote_cwd_override().unwrap_or(Path::new("."))
         }
@@ -248,10 +248,8 @@ impl App {
         startup_elapsed_before_app: Duration,
         startup_bootstrap: Option<AppServerBootstrap>,
         startup_hooks_browser: Option<HooksListEntry>,
-        daemon_startup_warning: Option<String>,
         mut startup_draft: StartupDraftPump,
         managed_worktree: Option<crate::ManagedTuiWorktree>,
-        daemon_cli_executable: Option<AbsolutePathBuf>,
     ) -> Result<AppExitInfo> {
         use tokio_stream::StreamExt;
 
@@ -444,19 +442,18 @@ impl App {
                 .cloud_config_bundle(cloud_config_bundle.clone()),
         ));
         let dynamic_tool_status_updates = tokio::sync::broadcast::channel(/*capacity*/ 64).0;
-        if matches!(
-            &app_server_target,
-            AppServerTarget::LocalDaemon { .. } | AppServerTarget::Embedded
-        ) && !crate::uses_remote_workspace_or_environment(
-            &app_server_target,
-            environment_manager.as_ref(),
-        ) && let Err(error) = app_server
-            .start_dynamic_tool_mcp(
-                config.clone(),
-                app_event_tx.clone(),
-                dynamic_tool_status_updates.clone(),
+        if matches!(&app_server_target, AppServerTarget::Embedded)
+            && !crate::uses_remote_workspace_or_environment(
+                &app_server_target,
+                environment_manager.as_ref(),
             )
-            .await
+            && let Err(error) = app_server
+                .start_dynamic_tool_mcp(
+                    config.clone(),
+                    app_event_tx.clone(),
+                    dynamic_tool_status_updates.clone(),
+                )
+                .await
         {
             tracing::warn!(%error, "TUI task delegation is unavailable without its MCP server");
         }
@@ -842,10 +839,7 @@ impl App {
             &app_server_target,
             environment_manager.as_ref(),
         ));
-        chat_widget.set_agents_navigation_enabled(matches!(
-            app_server_target,
-            AppServerTarget::LocalDaemon { .. }
-        ));
+        chat_widget.set_agents_navigation_enabled(/*enabled*/ true);
         let thread_and_widget_ms = thread_and_widget_started_at.elapsed().as_millis();
         chat_widget.windows_sandbox_local_server = !app_server_target.uses_remote_workspace()
             && app_server.app_server_platform_os() == Some("windows");
@@ -858,12 +852,6 @@ impl App {
                     started.session.windows_sandbox_host
                 })
         };
-        // This launch warning belongs to the TUI, independent of picker/trust client replacement.
-        if let Some(warning) = daemon_startup_warning {
-            app_event_tx.send(AppEvent::InsertHistoryCell(Box::new(
-                history_cell::StartupWarningsCell::new(vec![warning]),
-            )));
-        }
         let file_search = FileSearchManager::new(config.cwd.to_path_buf(), app_event_tx.clone());
         let runtime_keymap =
             RuntimeKeymap::from_config(&local_settings.tui.keymap).map_err(|err| {
@@ -967,7 +955,6 @@ See the Antex keymap documentation for supported actions and examples."
                     .map(|(_, key)| key.clone()),
                 ..Default::default()
             },
-            daemon_cli_executable,
             pending_update_action: None,
             pending_shutdown_exit_thread_id: None,
             windows_sandbox: WindowsSandboxState {

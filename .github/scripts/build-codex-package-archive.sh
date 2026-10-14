@@ -5,7 +5,7 @@ usage() {
   cat <<'EOF'
 Usage: build-codex-package-archive.sh \
   --target <rust-target> \
-  --bundle <primary|app-server> \
+  --bundle <primary> \
   --entrypoint-dir <dir> \
   --archive-dir <dir> \
   [--bwrap-bin <path>] \
@@ -103,11 +103,6 @@ case "$bundle" in
     entrypoint="antex"
     archive_stem="codex-package"
     ;;
-  app-server)
-    variant="antex-app-server"
-    entrypoint="antex-app-server"
-    archive_stem="codex-app-server-package"
-    ;;
   *)
     echo "No Codex package variant for bundle: $bundle" >&2
     exit 1
@@ -185,4 +180,4 @@ if ((${#resource_args[@]} > 0)); then
 fi
 python_args+=(--force)
 
-"$python_bin" "${python_args[@]}"
+ANTEX_REPO_ROOT="$repo_root" "$python_bin" "${python_args[@]}"

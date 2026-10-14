@@ -1,9 +1,3 @@
-#[path = "daemon_continuation.rs"]
-mod daemon_continuation;
-
-#[path = "daemon_snapshot.rs"]
-mod daemon_snapshot;
-
 use super::persisted_resume_settings::PersistedResumeSettings;
 use super::persisted_resume_settings::latest_persisted_resume_settings;
 use super::thread_enrichment::enrich_loaded_threads;
@@ -466,12 +460,6 @@ pub(crate) struct ThreadRequestProcessor {
     pub(super) initial_config_warnings: Arc<Vec<ConfigWarningNotification>>,
 }
 
-/// Whether resume attaches a client or restores a cold runtime during daemon startup.
-pub(crate) enum ThreadResumeTarget {
-    Client(ConnectionRequestId),
-    DaemonRecovery(Option<antex_app_server_transport::daemon_recovery::InterruptedTurn>),
-}
-
 /// Outcome of trying to satisfy a resume request from an already loaded thread.
 enum RunningThreadResumeResult {
     /// The request was delegated to the loaded thread.
@@ -559,7 +547,7 @@ impl ThreadRequestProcessor {
 
     pub(crate) async fn thread_resume(
         &self,
-        target: ThreadResumeTarget,
+        request_id: ConnectionRequestId,
         params: ThreadResumeParams,
         app_server_client_name: Option<String>,
         app_server_client_version: Option<String>,
@@ -568,7 +556,7 @@ impl ThreadRequestProcessor {
         let mut prepared_config = None;
         // Keep the resume future off the request handler's stack.
         while Box::pin(self.thread_resume_inner(
-            &target,
+            &request_id,
             &params,
             app_server_client_name.clone(),
             app_server_client_version.clone(),
@@ -3869,7 +3857,7 @@ impl ThreadRequestProcessor {
 
     async fn thread_resume_inner(
         &self,
-        target: &ThreadResumeTarget,
+        request_id: &ConnectionRequestId,
         params: &ThreadResumeParams,
         app_server_client_name: Option<String>,
         app_server_client_version: Option<String>,
@@ -3897,38 +3885,23 @@ impl ThreadRequestProcessor {
             should_redact_thread_resume_payloads(app_server_client_name.as_deref());
 
         let _thread_list_state_permit = self.acquire_thread_list_state_permit().await?;
-        let stored_thread_from_running_probe = match target {
-            ThreadResumeTarget::Client(request_id) => match self
-                .resume_running_thread(
-                    request_id,
-                    params,
-                    app_server_client_name.clone(),
-                    app_server_client_version.clone(),
-                    /*cold_resume_history*/ None,
-                )
-                .await?
-            {
-                RunningThreadResumeResult::Handled(completion) => {
-                    // The listener may need this permit to finish the response.
-                    drop(_thread_list_state_permit);
-                    let _ = completion.await;
-                    return Ok(ControlFlow::Break(()));
-                }
-                RunningThreadResumeResult::NotRunning(stored_thread) => stored_thread,
-            },
-            ThreadResumeTarget::DaemonRecovery(saved) => {
-                let thread_id = ThreadId::from_string(&params.thread_id)
-                    .map_err(|err| invalid_request(format!("invalid thread id: {err}")))?;
-                // Recheck under the same permit as client resume, including after config loading.
-                if self.thread_manager.get_thread(thread_id).await.is_ok() {
-                    if let Some(saved) = saved {
-                        self.continue_daemon_turn(&params.thread_id, saved.clone())
-                            .await;
-                    }
-                    return Ok(ControlFlow::Break(()));
-                }
-                None
+        let stored_thread_from_running_probe = match self
+            .resume_running_thread(
+                request_id,
+                params,
+                app_server_client_name.clone(),
+                app_server_client_version.clone(),
+                /*cold_resume_history*/ None,
+            )
+            .await?
+        {
+            RunningThreadResumeResult::Handled(completion) => {
+                // The listener may need this permit to finish the response.
+                drop(_thread_list_state_permit);
+                let _ = completion.await;
+                return Ok(ControlFlow::Break(()));
             }
+            RunningThreadResumeResult::NotRunning(stored_thread) => stored_thread,
         };
 
         let ThreadResumeParams {
@@ -4005,11 +3978,7 @@ impl ThreadRequestProcessor {
             matches!(thread.history_mode, ThreadHistoryMode::Paginated).then_some(thread.thread_id)
         });
         let paginated_resume = paginated_thread_id.is_some();
-        if paginated_resume
-            && include_turns
-            && prepared_config.is_none()
-            && let ThreadResumeTarget::Client(request_id) = target
-        {
+        if paginated_resume && include_turns && prepared_config.is_none() {
             self.send_deprecation_notice(
                 request_id.connection_id,
                 PAGINATED_FULL_HISTORY_DEPRECATION_SUMMARY,
@@ -4022,9 +3991,6 @@ impl ThreadRequestProcessor {
             && let Some((source, _)) = thread_history.get_resumed_session_sources()
             && !can_accept_direct_input(thread_history.get_multi_agent_version(), &source)
         {
-            let ThreadResumeTarget::Client(request_id) = target else {
-                return Ok(ControlFlow::Break(()));
-            };
             let child_thread_id = resumed_history.conversation_id;
             self.thread_manager
                 .ensure_multi_agent_v2_child_loaded(child_thread_id)
@@ -4216,12 +4182,7 @@ impl ThreadRequestProcessor {
                 config,
                 thread_history,
                 self.auth_manager.clone(),
-                match target {
-                    ThreadResumeTarget::Client(request_id) => {
-                        self.request_trace_context(request_id).await
-                    }
-                    ThreadResumeTarget::DaemonRecovery(_) => None,
-                },
+                self.request_trace_context(request_id).await,
                 client_mcp_extensions,
             )
             .await
@@ -4232,24 +4193,6 @@ impl ThreadRequestProcessor {
                 session_configured,
                 ..
             }) => {
-                let ThreadResumeTarget::Client(request_id) = target else {
-                    // Observe lifecycle events without attaching a client subscription.
-                    self.thread_watch_manager
-                        .upsert_thread(&thread_id.to_string())
-                        .await;
-                    // Invoke idle work before arming subscriber-based unloading.
-                    antex_thread
-                        .emit_thread_idle_lifecycle_if_idle(ThreadIdleCause::Completed)
-                        .await;
-                    if let ThreadResumeTarget::DaemonRecovery(Some(saved)) = target {
-                        self.continue_daemon_turn(&thread_id.to_string(), saved.clone())
-                            .await;
-                    }
-                    let state = self.thread_state_manager.thread_state(thread_id).await;
-                    self.ensure_listener_task_running(thread_id, Arc::clone(&antex_thread), state)
-                        .await?;
-                    return Ok(ControlFlow::Break(()));
-                };
                 let request_id = request_id.clone();
                 if let Err(err) = Self::set_app_server_client_info(
                     antex_thread.as_ref(),

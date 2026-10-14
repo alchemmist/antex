@@ -6,29 +6,14 @@ slow-timeout = { period = "30s", terminate-after = 2 }
 retries = 1
 
 [[profile.default.overrides]]
-# These cases cold-start a daemon before confirming a second launch with new settings.
-filter = 'package(antex-cli) & binary(daemon_startup) & test(requires_confirmation_to_disable_)'
-slow-timeout = { period = "1m", terminate-after = 2 }
-
-[[profile.default.overrides]]
-# This case validates and copies both the initial and replacement debug package.
-filter = 'package(antex-cli) & binary(app_server_daemon) & test(=packaged_daemon_start_and_explicit_replacement)'
-slow-timeout = { period = "1m", terminate-after = 3 }
-
-[[profile.default.overrides]]
-# These cases copy a full debug CLI package and launch its new executable.
-filter = 'package(antex-cli) & binary(app_server_daemon) & test(packaged_daemon_)'
-slow-timeout = { period = "1m", terminate-after = 2 }
-
-[[profile.default.overrides]]
 filter = 'package(antex-core) & test(=shell_snapshot::tests::snapshot_discovers_and_redacts_shell_initialized_credentials)'
 slow-timeout = { period = "30s", terminate-after = 4 }
 
 [[profile.default.overrides]]
-# Public direct OAuth uses port 1455. Real entrypoint tests must not overlap
-# legacy browser logins in other test processes, including the local profile.
-filter = '(package(antex-login) & test(occupied_port_is_not_canceled_or_replaced)) | (package(antex-app-server) & test(direct_browser_callback_validation_and_cancellation_preserve_legacy_auth))'
-threads-required = 'num-test-threads'
+# Share the default profile's existing single-slot app-server group with the
+# login tests that occupy OAuth port 1455. Do not reserve the global pool.
+filter = 'package(antex-login) & (test(=direct_server::tests::occupied_port_is_not_canceled_or_replaced) | test(=suite::login_server_e2e::falls_back_to_registered_fallback_port_when_default_port_is_in_use))'
+test-group = 'app_server_integration'
 
 [profile.default.junit]
 path = "junit.xml"
@@ -46,6 +31,11 @@ max-threads = 1
 # on common developer machines.
 [test-groups.app_server_integration_local]
 max-threads = 4
+
+# Legacy browser startup can cancel another listener on port 1455. Local
+# app-server concurrency must not overlap these tests across nextest processes.
+[test-groups.oauth_callback_port]
+max-threads = 1
 
 [test-groups.core_apply_patch_cli_integration]
 max-threads = 1
@@ -82,6 +72,28 @@ test-group = 'app_server_protocol_codegen'
 # Keep the library unit tests parallel.
 filter = 'package(antex-app-server) & kind(test)'
 test-group = 'app_server_integration'
+
+[[profile.local.overrides]]
+# Keep this before the general app-server override: the first matching group
+# wins. Include the fixed-port login tests and every app-server browser login.
+# Process-local serial_test locks do not serialize nextest test processes.
+filter = '''
+    (package(antex-login) & (
+        test(=direct_server::tests::occupied_port_is_not_canceled_or_replaced) |
+        test(=suite::login_server_e2e::falls_back_to_registered_fallback_port_when_default_port_is_in_use)
+    )) |
+    (package(antex-app-server) & (
+        test(=suite::v2::account::login_account_chatgpt_start_can_be_cancelled) |
+        test(=suite::v2::account::login_account_chatgpt_uses_oauth_overrides) |
+        test(=suite::v2::account::login_account_chatgpt_redirects_to_hosted_success_page) |
+        test(=suite::v2::account::set_auth_token_cancels_active_chatgpt_login) |
+        test(=suite::v2::account::login_account_chatgpt_includes_forced_workspace_query_param) |
+        test(=suite::v2::account::login_account_chatgpt_includes_forced_workspace_allowlist_query_param) |
+        test(=suite::v2::account::direct_tests::direct_browser_callback_validation_and_cancellation_preserve_legacy_auth) |
+        test(=suite::v2::account_system_proxy::browser_login_bootstraps_through_system_proxy)
+    ))
+'''
+test-group = 'oauth_callback_port'
 
 [[profile.local.overrides]]
 # Use up to four app-server subprocesses locally. The global nextest pool still

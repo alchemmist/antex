@@ -210,7 +210,7 @@ async fn daemon_socket_bind_mount_alias_rejects_sandbox_startup() {
         NetworkSandboxPolicy::Enabled,
     );
     let script = r#"
-import pathlib, socket, subprocess, sys
+import ctypes, os, pathlib, socket, subprocess, sys
 root, alias, endpoint, helper, profile = sys.argv[1:]
 mount = subprocess.run(['mount', '--bind', root, alias], capture_output=True)
 if mount.returncode:
@@ -223,7 +223,14 @@ try:
     assert b'unsupported host mount' in result.stderr, result
     assert b'command-started' not in result.stdout, result
 finally:
-    subprocess.run(['umount', alias], check=True)
+    # The namespace deliberately retains the non-root UID and CAP_SYS_ADMIN.
+    # util-linux's user mount policy can reject this cleanup before its syscall.
+    libc = ctypes.CDLL(None, use_errno=True)
+    libc.umount2.argtypes = [ctypes.c_char_p, ctypes.c_int]
+    libc.umount2.restype = ctypes.c_int
+    if libc.umount2(os.fsencode(alias), 0) != 0:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error), alias)
 "#;
     let output = tokio::process::Command::new("unshare")
         .args([

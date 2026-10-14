@@ -7,6 +7,14 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
+# Reject retired updater modes before downloads, locks, or filesystem/PATH changes.
+foreach ($retiredMode in @("ANTEX_INSTALL_DAEMON_ONLY", "ANTEX_INSTALL_DEFER_SELECTION", "ANTEX_INSTALL_IF_CURRENT")) {
+    $retiredValue = [Environment]::GetEnvironmentVariable($retiredMode)
+    if (-not [string]::IsNullOrEmpty($retiredValue) -and $retiredValue -ne "0") {
+        throw "$retiredMode is no longer supported; run the standalone installer manually."
+    }
+}
+
 if ([string]::IsNullOrWhiteSpace($Release)) {
     $Release = "latest"
 }
@@ -527,7 +535,7 @@ function Move-OldStandaloneBinIfApproved {
 
 function Add-JunctionSupportType {
     # Older installer types remain loaded when users rerun irm | iex in one session.
-    if (([System.Management.Automation.PSTypeName]'CodexInstaller.JunctionV2').Type) {
+    if (([System.Management.Automation.PSTypeName]'AntexInstaller.JunctionV2').Type) {
         return
     }
 
@@ -665,7 +673,7 @@ function Set-JunctionTarget {
     )
 
     Add-JunctionSupportType
-    [CodexInstaller.JunctionV2]::SetTarget($LinkPath, $TargetPath)
+    [AntexInstaller.JunctionV2]::SetTarget($LinkPath, $TargetPath)
 }
 
 function Test-IsJunction {
@@ -696,14 +704,14 @@ function Ensure-Junction {
     $item = Get-Item -LiteralPath $LinkPath -Force
     if (Test-IsJunction -Path $LinkPath) {
         Add-JunctionSupportType
-        $existingTarget = [CodexInstaller.JunctionV2]::ResolveDirectory($LinkPath)
+        $existingTarget = [AntexInstaller.JunctionV2]::ResolveDirectory($LinkPath)
         if (-not [string]::IsNullOrWhiteSpace($InstallerOwnedTargetPrefix)) {
-            $ownedTargetPrefix = [CodexInstaller.JunctionV2]::ResolveDirectory($InstallerOwnedTargetPrefix) + "\"
+            $ownedTargetPrefix = [AntexInstaller.JunctionV2]::ResolveDirectory($InstallerOwnedTargetPrefix) + "\"
             if (-not $existingTarget.StartsWith($ownedTargetPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
                 throw "Refusing to retarget junction at $LinkPath because it is not managed by this installer."
             }
         }
-        if ($existingTarget.Equals([CodexInstaller.JunctionV2]::ResolveDirectory($TargetPath), [System.StringComparison]::OrdinalIgnoreCase)) {
+        if ($existingTarget.Equals([AntexInstaller.JunctionV2]::ResolveDirectory($TargetPath), [System.StringComparison]::OrdinalIgnoreCase)) {
             return
         }
 
@@ -947,6 +955,44 @@ $antexHome = if ([string]::IsNullOrWhiteSpace($env:ANTEX_HOME)) {
 } else {
     $env:ANTEX_HOME
 }
+# Read-only compatibility guard: never let a running legacy updater replace the
+# foreground CLI. Do not stop the process or remove any of its state.
+foreach ($recordName in @("app-server-updater.pid", "daemon-updater.pid")) {
+    $updaterRecord = Join-Path $antexHome "app-server-daemon\$recordName"
+    if (-not (Test-Path -LiteralPath $updaterRecord)) { continue }
+    $updaterPid = $null
+    $updaterStartTime = $null
+    try {
+        $record = Get-Content -LiteralPath $updaterRecord -Raw | ConvertFrom-Json
+        $updaterPid = [long]$record.pid
+        $updaterStartTime = [string]$record.processStartTime
+    } catch {
+        # Empty or stale PID reservations must not block a manual install.
+    }
+    if ($null -eq $updaterPid -or $updaterPid -le 0) { continue }
+    $updaterProcess = Get-Process -Id $updaterPid -ErrorAction SilentlyContinue
+    if ($null -eq $updaterProcess) { continue }
+    $actualStartTime = $null
+    try { $actualStartTime = [string]$updaterProcess.StartTime.ToFileTimeUtc() } catch {}
+    if (-not [string]::IsNullOrEmpty($updaterStartTime) -and
+        -not [string]::IsNullOrEmpty($actualStartTime) -and
+        $updaterStartTime -ne $actualStartTime) { continue }
+    try {
+        $parentPid = (Get-CimInstance Win32_Process -Filter "ProcessId = $PID" -ErrorAction Stop).ParentProcessId
+        if ([long]$parentPid -le 0) { throw "Missing updater parent process." }
+    } catch {
+        try {
+            $parentPid = (Get-WmiObject Win32_Process -Filter "ProcessId = $PID" -ErrorAction Stop).ParentProcessId
+            if ([long]$parentPid -le 0) { throw "Missing updater parent process." }
+        } catch {
+            throw "Cannot verify whether the standalone installer was launched by an older updater."
+        }
+    }
+    if ($updaterPid -eq $parentPid) {
+        throw "Legacy daemon updater installation is no longer supported; run the standalone installer manually."
+    }
+}
+
 $legacyHome = if ([string]::IsNullOrWhiteSpace($env:CODEX_HOME)) {
     Join-Path $env:USERPROFILE ".codex"
 } else {
@@ -955,15 +1001,9 @@ $legacyHome = if ([string]::IsNullOrWhiteSpace($env:CODEX_HOME)) {
 if (-not (Test-Path -LiteralPath $antexHome) -and (Test-Path -LiteralPath $legacyHome -PathType Container) -and (Get-ChildItem -Force -LiteralPath $legacyHome | Select-Object -First 1)) {
     throw "Existing Codex data found at $legacyHome. Install the release binaries first and run antex migrate before using the managed installer."
 }
-$daemonOnly = $env:ANTEX_INSTALL_DAEMON_ONLY -eq "1"
-$standaloneRoot = Join-Path $antexHome $(if ($daemonOnly) { "packages\app-server-daemon" } else { "packages\standalone" })
+$standaloneRoot = Join-Path $antexHome "packages\standalone"
 $releasesDir = Join-Path $standaloneRoot "releases"
 $currentDir = Join-Path $standaloneRoot "current"
-$deferSelection = $env:ANTEX_INSTALL_DEFER_SELECTION -eq "1"
-if ($deferSelection) {
-    if (-not $daemonOnly) { throw "Deferred selection requires a daemon-only installation." }
-    $currentDir = Join-Path $standaloneRoot ".migration-current"
-}
 $autoUpdateVersion = Join-Path $standaloneRoot "auto-update-version"
 $lockPath = Join-Path $standaloneRoot "install.lock"
 
@@ -991,7 +1031,7 @@ if (-not [string]::IsNullOrWhiteSpace($currentVersion) -and $currentVersion -ne 
 Write-Step "Detected platform: $platformLabel"
 Write-Step "Resolved version: $resolvedVersion"
 
-$conflictingInstall = if ($daemonOnly) { $null } else { Get-ConflictingInstall -VisibleBinDir $visibleBinDir }
+$conflictingInstall = Get-ConflictingInstall -VisibleBinDir $visibleBinDir
 $oldStandaloneBackup = $null
 
 $checksumAsset = "antex-package_SHA256SUMS"
@@ -1006,56 +1046,19 @@ $guardRejected = $false
 
 try {
     Invoke-WithInstallLock -LockPath $lockPath -Script {
-        $updaterRecord = Join-Path $antexHome "app-server-daemon\app-server-updater.pid"
-        if ($daemonOnly) { $updaterRecord = Join-Path $antexHome "app-server-daemon\daemon-updater.pid" }
-        $oldUpdaterParent = $false
-        if ($Release -eq "latest" -and $env:ANTEX_INSTALL_IF_LATEST -ne "1" -and $env:ANTEX_INSTALL_IF_CURRENT -ne "1" -and (Test-Path -LiteralPath $updaterRecord)) {
-            $updaterPid = $null
-            $updaterStartTime = $null
-            try {
-                $record = Get-Content -LiteralPath $updaterRecord -Raw | ConvertFrom-Json
-                $updaterPid = [long]$record.pid
-                $updaterStartTime = [string]$record.processStartTime
-            } catch {
-                # Empty or stale PID reservations must not block a manual install.
-            }
-            if ($null -ne $updaterPid -and $updaterPid -gt 0 -and -not [string]::IsNullOrEmpty($updaterStartTime)) {
-                $updaterProcess = Get-Process -Id $updaterPid -ErrorAction SilentlyContinue
-                if ($null -ne $updaterProcess -and $updaterStartTime -eq [string]$updaterProcess.StartTime.ToFileTimeUtc()) {
-                    try {
-                        $parentPid = (Get-CimInstance Win32_Process -Filter "ProcessId = $PID" -ErrorAction Stop).ParentProcessId
-                        if ([long]$parentPid -le 0) { throw "Missing updater parent process." }
-                    } catch {
-                        try {
-                            $parentPid = (Get-WmiObject Win32_Process -Filter "ProcessId = $PID" -ErrorAction Stop).ParentProcessId
-                            if ([long]$parentPid -le 0) { throw "Missing updater parent process." }
-                        } catch {
-                            throw "Cannot verify whether the standalone installer was launched by an older updater."
-                        }
-                    }
-                    $oldUpdaterParent = $updaterPid -eq $parentPid
-                }
-            }
-        }
-        if ($env:ANTEX_INSTALL_IF_LATEST -eq "1" -or $env:ANTEX_INSTALL_IF_CURRENT -eq "1" -or $oldUpdaterParent) {
-            $previousRelease = if ($oldUpdaterParent -and (Test-Path -LiteralPath $autoUpdateVersion)) {
-                [System.IO.File]::ReadAllText($autoUpdateVersion)
-            } else {
-                $env:ANTEX_UPDATE_FROM_RELEASE
-            }
+        if ($env:ANTEX_INSTALL_IF_LATEST -eq "1") {
+            $previousRelease = $env:ANTEX_UPDATE_FROM_RELEASE
             Add-JunctionSupportType
             $currentTarget = if (Test-Path -LiteralPath $currentDir) { (Get-Item -LiteralPath $currentDir).Target } else { $null }
             if ($Release -ne "latest" -or [string]::IsNullOrEmpty($previousRelease) -or [string]::IsNullOrEmpty($currentTarget) -or
                 -not (Test-Path -LiteralPath (Join-Path $releasesDir $previousRelease)) -or
-                [CodexInstaller.JunctionV2]::ResolveDirectory($currentDir) -ne [CodexInstaller.JunctionV2]::ResolveDirectory((Join-Path $releasesDir $previousRelease))) {
-                if ($env:ANTEX_INSTALL_IF_CURRENT -eq "1") { throw "Daemon selection changed; retry the update." }
+                [AntexInstaller.JunctionV2]::ResolveDirectory($currentDir) -ne [AntexInstaller.JunctionV2]::ResolveDirectory((Join-Path $releasesDir $previousRelease))) {
                 $script:guardRejected = $true
                 return
             }
-            # Explicit daemon updates may leave a local or pinned release.
-            if ($env:ANTEX_INSTALL_IF_CURRENT -ne "1" -and
-                (-not (Test-Path -LiteralPath $autoUpdateVersion) -or
-                [System.IO.File]::ReadAllText($autoUpdateVersion) -cne $previousRelease)) {
+            # A guarded standalone update must still follow the latest channel.
+            if (-not (Test-Path -LiteralPath $autoUpdateVersion) -or
+                [System.IO.File]::ReadAllText($autoUpdateVersion) -cne $previousRelease) {
                 $script:guardRejected = $true
                 return
             }
@@ -1064,7 +1067,6 @@ try {
 
         if (-not (Test-ReleaseIsComplete -ReleaseDir $releaseDir -ExpectedVersion $resolvedVersion -ExpectedTarget $target -Layout $installLayout)) {
             if (Test-Path -LiteralPath $releaseDir) {
-                if ($daemonOnly) { throw "Refusing to overwrite existing daemon release $releaseDir." }
                 Write-WarningStep "Found incomplete existing release at $releaseDir. Reinstalling."
             }
 
@@ -1126,16 +1128,6 @@ try {
         }
 
         New-Item -ItemType Directory -Force -Path $standaloneRoot | Out-Null
-        if ($deferSelection -and (Get-Item -LiteralPath (Join-Path $standaloneRoot "current") -Force -ErrorAction SilentlyContinue)) {
-            throw "A dedicated daemon is already selected; retry the update."
-        }
-        if ($daemonOnly -and -not $deferSelection) {
-            $installedCodex = Join-Path $releaseDir $(if ($installLayout -eq "Package") { "bin\antex.exe" } else { "antex.exe" })
-            & $installedCodex app-server daemon pid-update-loop --check-package-ownership | Out-Null
-            if ($LASTEXITCODE -ne 0) {
-                throw "The production release does not support daemon-owned packages; the current selection was left unchanged."
-            }
-        }
         Ensure-Junction -LinkPath $currentDir -TargetPath $releaseDir -InstallerOwnedTargetPrefix $releasesDir
         if ($Release -eq "latest") {
             $tempMarker = "$autoUpdateVersion.tmp.$PID"
@@ -1147,7 +1139,6 @@ try {
             }
         }
 
-        if ($daemonOnly) { return }
         $visibleParent = Split-Path -Parent $visibleBinDir
         $currentBinDir = if ($installLayout -eq "Package") {
             Join-Path $currentDir "bin"
@@ -1175,7 +1166,7 @@ try {
 } finally {
     Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
 }
-if ($guardRejected -or $daemonOnly) { return }
+if ($guardRejected) { return }
 
 Maybe-HandleConflictingInstall -Conflict $conflictingInstall
 

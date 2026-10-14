@@ -1,4 +1,5 @@
-//! Drives automatic reconnect through the real binary and terminal event loop.
+//! Drives explicit remote reconnect through the real binary and terminal event loop.
+//! Recovered remote permissions remain server-owned, unlike explicit local launch policies.
 
 use super::focus_palette::PtyAntex;
 use super::focus_palette::write_test_config;
@@ -52,15 +53,10 @@ async fn automatic_reconnect_restores_draft_and_routes_new_notifications() -> Re
             "status": {"type": "active", "activeFlags": []}, "cwd": server_cwd,
             "cliVersion": "0.0.0", "source": "cli", "turns": [{"id": "running", "items": [], "status": "inProgress", "error": null}]
         });
-        // The first connection checks daemon compatibility before TUI startup.
-        for connection in -1..7 {
-            let mut socket = loop {
-                let (stream, _) = listener.accept().await?;
-                // Startup probes the default daemon socket before opening its WebSocket.
-                if let Ok(socket) = tokio_tungstenite::accept_async(stream).await {
-                    break socket;
-                }
-            };
+        // An explicit fixture endpoint connects directly, without daemon discovery.
+        for connection in 0..7 {
+            let (stream, _) = listener.accept().await?;
+            let mut socket = tokio_tungstenite::accept_async(stream).await?;
             loop {
                 let frame = tokio::select! {
                     _ = &mut complete_rx, if connection == 6 && !recovered_completed => {
@@ -89,6 +85,18 @@ async fn automatic_reconnect_restores_draft_and_routes_new_notifications() -> Re
                 if connection == 1 && request.method == "initialize" {
                     restore_rx.take().unwrap().await?;
                 }
+                if request.method == "thread/resume" {
+                    let params = request.params.as_ref().unwrap();
+                    // Every recovery attempt must reattach without changing server permissions.
+                    assert_eq!(
+                        json!([
+                            params["approvalPolicy"],
+                            params["sandbox"],
+                            params["permissions"]
+                        ]),
+                        json!([null, null, null])
+                    );
+                }
                 // Keep failing past the original five-attempt limit.
                 if (1..=5).contains(&connection) && request.method == "thread/resume" {
                     socket
@@ -105,7 +113,7 @@ async fn automatic_reconnect_restores_draft_and_routes_new_notifications() -> Re
                 }
                 let result = match request.method.as_str() {
                     "initialize" => json!({"userAgent": "reconnect-pty"}),
-                    // An older daemon can omit the client's default-disabled features.
+                    // An older server can omit the client's default-disabled features.
                     "experimentalFeature/list" => {
                         json!({"data": (["api_key_model_discovery", "code_mode_host", "auth_elicitation"].map(|name| json!({
                         "name": name, "stage": "stable", "displayName": null,
@@ -128,15 +136,17 @@ async fn automatic_reconnect_restores_draft_and_routes_new_notifications() -> Re
                     "configRequirements/read" => json!({"requirements": null}),
                     "thread/start" | "thread/resume" => {
                         let starting = request.method == "thread/start";
-                        if !starting {
+                        if starting {
                             let params = request.params.as_ref().unwrap();
+                            // --yolo still applies when creating the thread; remote recovery
+                            // must not turn that launch choice into a persistent override.
                             assert_eq!(
                                 json!([
                                     params["approvalPolicy"],
                                     params["sandbox"],
                                     params["permissions"]
                                 ]),
-                                json!([null, null, null])
+                                json!(["never", "danger-full-access", null])
                             );
                         }
                         json!({"thread": thread, "model": "gpt-5.6-terra", "modelProvider": "openai",
@@ -146,13 +156,15 @@ async fn automatic_reconnect_restores_draft_and_routes_new_notifications() -> Re
                     "turn/start" => {
                         let params = request.params.as_ref().unwrap();
                         assert_eq!(params["input"][0]["text"], "preserved-draft!");
+                        // Resume returned on-request/readOnly. Use its approval policy and
+                        // preserve its sandbox instead of replaying --yolo or a legacy projection.
                         assert_eq!(
                             json!([
                                 params["approvalPolicy"],
                                 params["sandboxPolicy"],
                                 params["permissions"]
                             ]),
-                            json!(["never", {"type": "dangerFullAccess"}, null])
+                            json!(["on-request", null, null])
                         );
                         json!({"turn": {"id": "fresh", "items": [], "status": "inProgress", "error": null}})
                     }
@@ -202,8 +214,12 @@ async fn automatic_reconnect_restores_draft_and_routes_new_notifications() -> Re
         }
         Ok::<_, anyhow::Error>(methods)
     });
-    let mut terminal =
-        PtyAntex::start(&workspace_path, codex_home, &["--yolo", "--no-alt-screen"])?;
+    let endpoint = format!("unix://{}", socket.as_path().display());
+    let mut terminal = PtyAntex::start(
+        &workspace_path,
+        codex_home,
+        &["--test-remote", &endpoint, "--yolo", "--no-alt-screen"],
+    )?;
     terminal.wait_for_startup()?;
     let mut disconnect_tx = Some(disconnect_tx);
     let mut restore_tx = Some(restore_tx);

@@ -104,8 +104,8 @@ Run in disposable homes using the existing scripts:
 
 - `scripts/smoke-tui-startup.py <packaged-cli>` — ordinary TUI reaches the composer;
 - `scripts/smoke-code-mode-host.py <packaged-host>` — JS, nested tool, result, shutdown;
-- `scripts/smoke-daemon-package.py <packaged-cli>` — real package installation,
-  startup, protocol/version match, resources and shutdown;
+- embedded engine and foreground stdio SDK checks — startup, subagent messaging,
+  questions, resume/fork and shutdown without probing a legacy daemon socket;
 - a harmless real platform sandbox command, plus installer/package tests.
 
 Inspect that smoke isolation really addresses disposable state. Keep production
@@ -119,43 +119,41 @@ credential backups local and access-restricted; never put them in the repository
 ordinary build artifacts or a remote build host. Preserve user history; do not
 blindly restore an old auth backup over a newer login during rollback.
 
-Inspect the **live daemon** immediately before switching. Current CLI provides
-`antex app-server daemon version`, not an invented `status` command. It does not
-show active work. Use its existing WebSocket-over-Unix protocol: initialize,
-`thread/loaded/list` with pagination, then metadata-only `thread/read`. Inspect
-statuses without dumping IDs, titles or conversation contents. Loaded idle threads
-are not active turns. Active/waiting/error/unknown states or an unreadable inventory
-block automatic restart; agree a safe window. If concurrent work cannot be excluded,
-ask the user to pause clients rather than treating an old inventory as a lock.
+The new CLI owns its embedded engine; there is no second server package to update.
+Do not terminate existing foreground clients during installation. If an older
+release still has a live daemon, leave it untouched unless retirement was separately
+authorized. Before that one-time retirement, use the old version's actual interface
+to inspect live work without dumping conversation contents. Active/waiting/error/
+unknown states or an unreadable inventory block automatic termination. A stale idle
+inventory is not a lock; agree a quiescent window with the user.
 
 Put the **entire mutating sequence** in one strict shell/script. This is the required
 control-flow shape, not executable commands to paste with guessed helper names:
 
 ```text
 set -euo pipefail
-inventory live work → require approved idle/quiescent state
+confirm installation consent and backup complete current selection
 install complete accepted package → verify installed hashes/manifest/version
-recheck live work → require approved idle/quiescent state
-update daemon from the verified new CLI → verify running version and package
+verify a new foreground launch uses the new embedded engine
+leave existing foreground clients and legacy daemon processes untouched
 ```
 
 A guarded `check && install` followed by an unguarded newline `restart` is unsafe:
 failed checks must prevent **every** later mutation. If a step fails, stop and inspect
 actual state; do not assume the preceding installation happened.
 
-Current supported switch: `antex app-server daemon update --from-cli --yes`, only
-after verifying the new CLI/package. It copies and **pins** the whole package and
-may restart the daemon; disclose the pinning policy. Recheck installed startup,
-code-mode and version/resource agreement, retaining rollback. Old running frontend
-processes need a new invocation to load the new binary.
+Do not run obsolete daemon lifecycle commands from the new CLI. Recheck installed
+startup, code-mode and version/resource agreement, retaining rollback. Old running
+frontend processes need a new invocation to load the new binary. Retiring old
+service registrations/packages is a separate, explicitly approved migration.
 
 ## Live authentication/model verification — separate permission
 
 Use the user's own `antex login --chatgpt-direct` browser flow when authorized;
 never borrow Pi credentials, export tokens to Linux or override production endpoints
-with test authorities. Preserve legacy login/API-key alternatives. CLI login can
-leave an existing daemon's account/catalog cache stale: inspect `account/read` and
-`model/list`; refresh it through a supported idle-only restart when authorized.
+with test authorities. Preserve legacy login/API-key alternatives. Verify account
+and catalog state in the new foreground process; never use an old shared daemon's
+cached catalog as evidence for the embedded runtime.
 
 Prove entitlement with a minimal actual request, not a catalog list. Use ephemeral
 sessions and a temporary working directory, request a short exact answer with no

@@ -171,8 +171,7 @@ async fn archiving_selects_the_next_displayed_task() -> Result<()> {
                     crate::start_embedded_app_server_for_picker(&app.config).await?;
                 let mut tui = crate::tui::test_support::make_test_tui()?;
                 tui.pause_events();
-                app.app_server_target = AppServerTarget::LocalDaemon {
-                    allow_embedded_fallback: true,
+                app.app_server_target = AppServerTarget::Remote {
                     endpoint: crate::RemoteAppServerEndpoint::UnixSocket {
                         socket_path: test_path_buf("/tmp/unused.sock").abs(),
                     },
@@ -816,8 +815,7 @@ async fn lifecycle_removes_background_and_current_tasks_without_losing_the_dashb
                 ThreadStatus::Idle,
             )),
         );
-        app.app_server_target = AppServerTarget::LocalDaemon {
-            allow_embedded_fallback: true,
+        app.app_server_target = AppServerTarget::Remote {
             endpoint: crate::RemoteAppServerEndpoint::UnixSocket {
                 socket_path: test_path_buf("/tmp/unused.sock").abs(),
             },

@@ -20,24 +20,28 @@ struct TopCli {
 
     #[clap(flatten)]
     inner: Cli,
+
+    /// Explicit protocol fixture for this non-distributed developer binary only.
+    #[arg(long, hide = true)]
+    test_remote: Option<String>,
 }
 
 fn main() -> anyhow::Result<()> {
     antex_build_info::initialize!();
     arg0_dispatch_or_else(|arg0_paths: Arg0DispatchPaths| async move {
         let top_cli = TopCli::parse();
+        let endpoint = top_cli
+            .test_remote
+            .as_deref()
+            .map(antex_tui::resolve_remote_addr)
+            .transpose()
+            .map_err(anyhow::Error::msg)?;
         let mut inner = top_cli.inner;
         inner
             .config_overrides
             .raw_overrides
             .splice(0..0, top_cli.config_overrides.raw_overrides);
-        let exit_info = run_main(
-            inner,
-            arg0_paths,
-            LoaderOverrides::default(),
-            /*explicit_remote_endpoint*/ None,
-        )
-        .await?;
+        let exit_info = run_main(inner, arg0_paths, LoaderOverrides::default(), endpoint).await?;
         let is_fatal = match &exit_info.exit_reason {
             ExitReason::Fatal(message) => {
                 eprintln!("ERROR: {message}");

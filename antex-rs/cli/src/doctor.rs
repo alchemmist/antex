@@ -72,7 +72,6 @@ use http::Method;
 use serde::Serialize;
 use supports_color::Stream;
 
-mod background;
 mod desktop;
 mod disk;
 mod filesystem_paths;
@@ -94,7 +93,6 @@ mod windows_dev_drive;
 #[path = "doctor/desktop_tests.rs"]
 mod desktop_tests;
 
-use background::background_server_check;
 use git::git_check;
 use output::HumanOutputOptions;
 use output::redact_detail;
@@ -420,7 +418,6 @@ async fn build_report(
                 terminal_title_check,
                 state_check,
                 thread_inventory_check,
-                background_server_check,
                 reachability_check,
             ) = tokio::join!(
                 async {
@@ -481,11 +478,6 @@ async fn build_report(
                     thread_inventory_check(config),
                 ),
                 run_async_check(
-                    "app-server",
-                    progress.clone(),
-                    background_server_check(config)
-                ),
-                run_async_check(
                     "provider reachability",
                     progress.clone(),
                     provider_reachability_check(reachability_plan),
@@ -511,7 +503,6 @@ async fn build_report(
                 terminal_title_check,
                 state_check,
                 thread_inventory_check,
-                background_server_check,
                 reachability_check,
             ]);
         }

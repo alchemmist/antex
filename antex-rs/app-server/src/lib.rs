@@ -35,7 +35,6 @@ use crate::plugin_config_reload::PluginStartupConfig;
 use crate::transport::CHANNEL_CAPACITY;
 use crate::transport::ConnectionOrigin;
 use crate::transport::ConnectionState;
-use crate::transport::DaemonShutdownAccess;
 use crate::transport::OutboundConnectionState;
 use crate::transport::RemoteControlPolicy;
 use crate::transport::RemoteControlStartConfig;
@@ -53,7 +52,6 @@ use antex_app_server_protocol::JSONRPCMessage;
 use antex_app_server_protocol::ServerNotification;
 use antex_app_server_protocol::TextPosition as AppTextPosition;
 use antex_app_server_protocol::TextRange as AppTextRange;
-use antex_app_server_transport::daemon_recovery_file_path;
 use antex_config::ConfigLayerSource;
 use antex_config::ConfigLoadError;
 use antex_config::TextRange as CoreTextRange;
@@ -108,7 +106,6 @@ mod config_manager_service;
 mod connection_cleanup;
 mod connection_rpc_gate;
 mod current_time;
-mod daemon_thread_recovery;
 mod dynamic_tools;
 mod effective_plugin_change;
 mod error_code;
@@ -122,8 +119,6 @@ mod gateway_oauth_notifications;
 mod image_url;
 pub mod in_process;
 mod log_write_warning;
-#[cfg(unix)]
-mod managed_daemon;
 mod mcp_refresh;
 mod message_processor;
 mod model_catalog;
@@ -152,7 +147,6 @@ pub use crate::error_code::INVALID_PARAMS_ERROR_CODE;
 pub use crate::transport::AppServerTransport;
 pub use crate::transport::RemoteControlStartupMode;
 pub use crate::transport::app_server_control_socket_path;
-pub use crate::transport::take_remote_control_disabled_env;
 
 const LOG_FORMAT_ENV_VAR: &str = "LOG_FORMAT";
 const OTEL_SERVICE_NAME: &str = "antex-app-server";
@@ -234,7 +228,7 @@ async fn shutdown_signal() -> IoResult<ShutdownSignal> {
     {
         let console_signal = async {
             if tokio::signal::ctrl_c().await.is_err() {
-                // A detached daemon has no console; keep its local control path active.
+                // A host without a console must still honor transport cancellation.
                 std::future::pending::<()>().await;
             }
         };
@@ -457,7 +451,7 @@ pub async fn run_main(
     .map(|_| ())
 }
 
-/// Reports whether shutdown finished or the managed daemon must exit without waiting for I/O.
+/// Reports whether shutdown finished or the executable must exit without waiting for I/O.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppServerExit {
     Graceful,
@@ -477,7 +471,6 @@ pub struct AppServerRuntimeOptions {
     pub plugin_startup_tasks: PluginStartupTasks,
     pub remote_control_startup_mode: RemoteControlStartupMode,
     pub install_shutdown_signal_handler: bool,
-    pub managed_daemon: bool,
 }
 
 impl Default for AppServerRuntimeOptions {
@@ -485,9 +478,8 @@ impl Default for AppServerRuntimeOptions {
         Self {
             code_mode_host_transport: CodeModeHostTransport::Local,
             plugin_startup_tasks: PluginStartupTasks::Start,
-            remote_control_startup_mode: RemoteControlStartupMode::ResolvePersisted,
+            remote_control_startup_mode: RemoteControlStartupMode::DisabledEphemeral,
             install_shutdown_signal_handler: true,
-            managed_daemon: false,
         }
     }
 }
@@ -506,10 +498,6 @@ pub async fn run_main_with_transport_options(
 ) -> IoResult<AppServerExit> {
     #[cfg(target_os = "windows")]
     let _registered_core = antex_windows_sandbox::registered_core_requested();
-    let managed_daemon = matches!(&transport, AppServerTransport::UnixSocket { .. })
-        && runtime_options.managed_daemon;
-    #[cfg(unix)]
-    let nofile_limit_result = managed_daemon.then(managed_daemon::raise_nofile_limit);
     let loader_overrides = loader_overrides_with_test_user_config_file(
         loader_overrides,
         test_user_config_file_from_env(),
@@ -765,10 +753,6 @@ pub async fn run_main_with_transport_options(
         .with(log_db_layer)
         .with(otel_layers)
         .try_init();
-    #[cfg(unix)]
-    if let Some(Err(err)) = nofile_limit_result {
-        warn!(%err, "failed to raise managed app-server file descriptor limit");
-    }
     for warning in &config_warnings {
         match &warning.details {
             Some(details) => error!("{} {}", warning.summary, details),
@@ -825,14 +809,6 @@ pub async fn run_main_with_transport_options(
                 socket_path.clone(),
                 transport_event_tx.clone(),
                 transport_shutdown_token.clone(),
-                if cfg!(windows)
-                    && std::env::var_os(antex_app_server_transport::DAEMON_SHUTDOWN_SOCKET_ENV)
-                        .is_some()
-                {
-                    DaemonShutdownAccess::Managed
-                } else {
-                    DaemonShutdownAccess::Disabled
-                },
             )
             .await?;
             transport_accept_handles.push(accept_handle);
@@ -985,18 +961,11 @@ pub async fn run_main_with_transport_options(
         info!("outbound router task exited (channel closed)");
     });
 
-    let recovery_file = daemon_recovery_file_path(&config.codex_home);
-    let daemon_settings_file = managed_daemon.then(|| {
-        config
-            .codex_home
-            .as_path()
-            .join("app-server-daemon/settings.json")
-    });
     let processor_handle = tokio::spawn({
         let auth_manager = Arc::clone(&auth_manager);
         let initialize_notification_sender = outgoing_message_sender.clone();
         let outbound_control_tx = outbound_control_tx;
-        let mut processor = MessageProcessor::new(MessageProcessorArgs {
+        let processor = MessageProcessor::new(MessageProcessorArgs {
             outgoing: outgoing_message_sender,
             analytics_events_client,
             arg0_paths,
@@ -1022,7 +991,6 @@ pub async fn run_main_with_transport_options(
             )
             .then_some(plugin_startup_config),
         });
-        processor.remote_control_processor.daemon_settings_file = daemon_settings_file;
         let processor = Arc::new(processor);
         let mut thread_created_rx = processor.thread_created_receiver();
         let mut running_turn_count_rx = processor.subscribe_running_assistant_turn_count();
@@ -1034,38 +1002,7 @@ pub async fn run_main_with_transport_options(
         let mut remote_control_status = remote_control_status_rx.borrow().clone();
         let transport_shutdown_token = transport_shutdown_token.clone();
         async move {
-            let recovery_task = if managed_daemon {
-                match daemon_thread_recovery::start_recovery(
-                    recovery_file.clone(),
-                    Arc::clone(&processor),
-                )
-                .await
-                {
-                    Ok(task) => Some(task),
-                    Err(err) => {
-                        warn!("failed to consume daemon recovery snapshot: {err}");
-                        None
-                    }
-                }
-            } else {
-                None
-            };
             let mut listen_for_threads = true;
-            // Keep force signals and daemon control events responsive while saving.
-            let mut snapshot = Box::pin(async {
-                let processor = Arc::clone(&processor);
-                let recovery_file = recovery_file.clone();
-                // Run independently: snapshot locks can require the event loop to make progress.
-                let task = tokio::spawn(async move {
-                    let saved = processor.daemon_recovery_snapshot().await;
-                    if let Err(err) = daemon_thread_recovery::snapshot(recovery_file, saved).await {
-                        warn!("failed to save threads during daemon shutdown: {err}");
-                    }
-                });
-                let _ = tokio_util::task::AbortOnDropHandle::new(task).await;
-            });
-            let mut snapshot_finished = !managed_daemon;
-            let mut clients_disconnected = false;
             let mut shutdown_state = ShutdownState::default();
             let mut shutdown_signal_future = Box::pin(shutdown_signal());
             let exit_reason = loop {
@@ -1078,31 +1015,17 @@ pub async fn run_main_with_transport_options(
                     ShutdownAction::Finish
                 );
                 if ready_to_exit {
-                    if let Some(task) = &recovery_task {
-                        task.abort();
-                    }
-                    let finished = snapshot_finished || shutdown_state.forced();
-                    if finished {
-                        transport_shutdown_token.cancel();
-                    }
-                    if managed_daemon && shutdown_state.forced() {
+                    transport_shutdown_token.cancel();
+                    if shutdown_state.forced() {
                         break "forced_shutdown_requested";
                     }
-                    if !clients_disconnected {
-                        let _ = outbound_control_tx
-                            .send(OutboundControlEvent::DisconnectAll)
-                            .await;
-                        clients_disconnected = true;
-                    }
-                    if finished {
-                        break "shutdown_requested";
-                    }
+                    let _ = outbound_control_tx
+                        .send(OutboundControlEvent::DisconnectAll)
+                        .await;
+                    break "shutdown_requested";
                 }
 
                 tokio::select! {
-                    _ = &mut snapshot, if shutdown_state.requested() && active_admissions == 0 && !snapshot_finished => {
-                        snapshot_finished = true;
-                    }
                     shutdown_signal_result = &mut shutdown_signal_future, if graceful_signal_restart_enabled && !shutdown_state.forced() => {
                         shutdown_signal_future.set(shutdown_signal());
                         let signal = match shutdown_signal_result {
@@ -1129,16 +1052,7 @@ pub async fn run_main_with_transport_options(
                         let Some(event) = event else {
                             break "transport_channel_closed";
                         };
-                        if ready_to_exit && !matches!(event, TransportEvent::DaemonShutdown) {
-                            if let TransportEvent::ConnectionOpened { disconnect_sender: Some(token), .. } = event {
-                                token.cancel();
-                            }
-                            continue;
-                        }
                         match event {
-                            TransportEvent::DaemonShutdown => {
-                                shutdown_state.on_signal(ShutdownSignal::Forceable, connections.len(), *running_turn_count_rx.borrow(), &processor.turn_admission);
-                            }
                             TransportEvent::ConnectionOpened {
                                 connection_id,
                                 origin,
@@ -1318,7 +1232,7 @@ pub async fn run_main_with_transport_options(
                                     }
                                 }
                                 let processor = Arc::clone(&processor);
-                                // Attachment can wait on snapshot locks; keep force shutdown responsive.
+                                // Listener attachment must not block force shutdown.
                                 thread_listener_tasks.spawn(async move {
                                     processor
                                         .try_attach_thread_listener(
@@ -1343,10 +1257,6 @@ pub async fn run_main_with_transport_options(
                 }
             };
 
-            if let Some(task) = recovery_task {
-                task.abort();
-            }
-            drop(snapshot);
             drop(thread_listener_tasks);
             if !shutdown_state.forced() {
                 futures::future::join_all(connections.iter().map(
@@ -1367,7 +1277,7 @@ pub async fn run_main_with_transport_options(
                 shutdown_forced = shutdown_state.forced(),
                 "processor task exited"
             );
-            if managed_daemon && shutdown_state.forced() {
+            if shutdown_state.forced() {
                 AppServerExit::Forced
             } else {
                 AppServerExit::Graceful

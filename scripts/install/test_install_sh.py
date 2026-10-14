@@ -227,7 +227,7 @@ class InstallShTest(unittest.TestCase):
                 ],
             )
 
-    def test_daemon_install_preserves_visible_cli_and_profile(self) -> None:
+    def test_standalone_update_guard_preserves_changed_selection(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir).resolve()
             archive, checksum, metadata = create_package_release(root)
@@ -237,86 +237,44 @@ class InstallShTest(unittest.TestCase):
                 checksum_path=checksum,
                 force_macos=True,
             )
-            pinned, _ = run_installer_in(root, VERSION, **options)
-            self.assertEqual(pinned.returncode, 0, pinned.stderr)
-            visible = root / "install-bin/antex"
-            original = visible.resolve()
-            pending = visible.with_name(".antex.12345")
-            pending.symlink_to(original)
+            installed, _ = run_installer_in(root, "latest", **options)
+            self.assertEqual(installed.returncode, 0, installed.stderr)
+            standalone = root / "antex-home/packages/standalone"
+            release_name = f"{VERSION}-aarch64-apple-darwin"
+            current = standalone / "current"
+            marker = standalone / "auto-update-version"
+            local = standalone / "releases/local-development"
+            local.mkdir()
+            current.unlink()
+            current.symlink_to(local)
+            pending = standalone / "releases/.staging.concurrent"
+            pending.mkdir()
             profile = root / "home/.profile"
             profile.write_text("unchanged profile\n")
 
-            installed, _ = run_installer_in(root, "latest", daemon_only=True, **options)
-            self.assertEqual(installed.returncode, 0, installed.stderr)
-            daemon = root / "antex-home/packages/app-server-daemon"
-            release_name = f"{VERSION}-aarch64-apple-darwin"
-            self.assertEqual(
-                (daemon / "current").resolve(), daemon / "releases" / release_name
+            raced, _ = run_installer_in(
+                root, "latest", update_guard_from_release=release_name, **options
             )
-            self.assertEqual((daemon / "auto-update-version").read_text(), release_name)
-            options["daemon_only"] = True
-            local = daemon / "releases/local-development"
-            local.mkdir()
-            (daemon / "current").unlink()
-            (daemon / "current").symlink_to(local)
-            marker = daemon / "auto-update-version"
-            marker.unlink()
+            self.assertEqual(raced.returncode, 0, raced.stderr)
+            self.assertEqual(current.resolve(), local)
+            self.assertEqual(marker.read_text(), release_name)
+            self.assertTrue(pending.is_dir())
 
-            scheduled, _ = run_installer_in(
+            marker.unlink()
+            pinned, _ = run_installer_in(
                 root, "latest", update_guard_from_release=local.name, **options
             )
-            self.assertEqual(scheduled.returncode, 0, scheduled.stderr)
-            self.assertEqual((daemon / "current").resolve(), local)
+            self.assertEqual(pinned.returncode, 0, pinned.stderr)
+            self.assertEqual(current.resolve(), local)
             self.assertFalse(marker.exists())
-
-            raced, _ = run_installer_in(
-                root,
-                "latest",
-                update_guard_from_release="a-different-release",
-                manual_update=True,
-                **options,
-            )
-            self.assertNotEqual(raced.returncode, 0, raced.stderr)
-            self.assertEqual((daemon / "current").resolve(), local)
-            self.assertFalse(marker.exists())
-
-            binary = daemon / "releases" / release_name / "bin/antex"
-            contents = binary.read_text()
-            binary.write_text(
-                '#!/bin/sh\n[ "$1" = "--version" ] || exit 2\n'
-                f"echo codex-cli {VERSION}\n"
-            )
-            incompatible, _ = run_installer_in(
-                root,
-                "latest",
-                update_guard_from_release=local.name,
-                manual_update=True,
-                **options,
-            )
-            self.assertNotEqual(incompatible.returncode, 0)
-            self.assertIn("does not support daemon-owned packages", incompatible.stderr)
-            self.assertEqual((daemon / "current").resolve(), local)
-            self.assertFalse(marker.exists())
-            binary.write_text(contents)
-
-            restored, _ = run_installer_in(
-                root,
-                "latest",
-                update_guard_from_release=local.name,
-                manual_update=True,
-                **options,
-            )
-            self.assertEqual(restored.returncode, 0, restored.stderr)
-            self.assertEqual(
-                (daemon / "current").resolve(), daemon / "releases" / release_name
-            )
-            self.assertEqual(marker.read_text(), release_name)
-            self.assertEqual(visible.resolve(), original)
-            self.assertTrue(pending.is_symlink())
+            self.assertTrue(pending.is_dir())
             self.assertEqual(profile.read_text(), "unchanged profile\n")
-            self.assertFalse(
-                (root / "antex-home/packages/standalone/auto-update-version").exists()
-            )
+
+            restored, _ = run_installer_in(root, "latest", **options)
+            self.assertEqual(restored.returncode, 0, restored.stderr)
+            self.assertEqual(current.resolve(), standalone / "releases" / release_name)
+            self.assertEqual(marker.read_text(), release_name)
+            self.assertTrue((root / "install-bin/antex").is_file())
 
     def test_explicit_release_pins_even_the_current_latest_version(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -350,8 +308,11 @@ class InstallShTest(unittest.TestCase):
             old_updater, _ = run_installer_in(
                 root, "latest", old_updater_parent_pid=os.getpid(), **options
             )
-            self.assertEqual(old_updater.returncode, 0, old_updater.stderr)
+            self.assertNotEqual(old_updater.returncode, 0)
+            self.assertIn("Legacy daemon updater", old_updater.stderr)
             self.assertFalse(marker.exists())
+            # The following invocation represents a foreground caller, not the updater.
+            updater_record.unlink()
 
             skipped, _ = run_installer_in(
                 root, "latest", update_guard_from_release=release_name, **options
@@ -367,6 +328,7 @@ class InstallShTest(unittest.TestCase):
             )
             self.assertEqual(latest_again.returncode, 0, latest_again.stderr)
             self.assertEqual(marker.read_text(), release_name)
+            updater_record.unlink()
 
             managed = (
                 root
@@ -411,7 +373,8 @@ class InstallShTest(unittest.TestCase):
                 fail_ps=True,
                 **options,
             )
-            self.assertEqual(attempted.returncode, 0, attempted.stderr)
+            self.assertNotEqual(attempted.returncode, 0)
+            self.assertIn("Cannot verify whether an older updater", attempted.stderr)
             self.assertFalse(
                 (root / "antex-home/packages/standalone/auto-update-version").exists()
             )
@@ -797,8 +760,6 @@ def run_installer_in(
     update_guard_from_release: str | None = None,
     old_updater_parent_pid: int | None = None,
     fail_ps: bool = False,
-    daemon_only: bool = False,
-    manual_update: bool = False,
     script_input: str | None = None,
     script_args: tuple[str, ...] = (),
     interactive: bool = False,
@@ -936,7 +897,9 @@ def run_installer_in(
             "ANTEX_INSTALL_DIR": str(root / "install-bin"),
             "ANTEX_NON_INTERACTIVE": "0" if interactive else "1",
             "ANTEX_RELEASE": release,
-            "ANTEX_INSTALL_DAEMON_ONLY": "1" if daemon_only else "0",
+            "ANTEX_INSTALL_DAEMON_ONLY": "0",
+            "ANTEX_INSTALL_DEFER_SELECTION": "0",
+            "ANTEX_INSTALL_IF_CURRENT": "0",
             "ANTEX_TEST_ARCHIVE_PATH": str(archive_path or ""),
             "ANTEX_TEST_CHECKSUM_PATH": str(checksum_path or ""),
             "ANTEX_TEST_RELEASES_CHECKSUM_PATH": str(
@@ -961,12 +924,11 @@ def run_installer_in(
             "SHELL": "/bin/sh",
         }
     )
-    env["ANTEX_INSTALL_IF_CURRENT"] = "1" if manual_update else "0"
     if update_guard_from_release is None:
         env.pop("ANTEX_INSTALL_IF_LATEST", None)
         env.pop("ANTEX_UPDATE_FROM_RELEASE", None)
     else:
-        env["ANTEX_INSTALL_IF_LATEST"] = "0" if manual_update else "1"
+        env["ANTEX_INSTALL_IF_LATEST"] = "1"
         env["ANTEX_UPDATE_FROM_RELEASE"] = update_guard_from_release
     if old_updater_parent_pid is not None:
         env["CODEX_TEST_PARENT_PID"] = str(old_updater_parent_pid)

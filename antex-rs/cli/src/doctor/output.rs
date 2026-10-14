@@ -46,10 +46,6 @@ const GROUPS: &[OutputGroup] = &[
         title: "Connectivity",
         keys: &["network", "websocket", "reachability"],
     },
-    OutputGroup {
-        title: "Background Server",
-        keys: &["app-server"],
-    },
 ];
 
 struct OutputGroup {
@@ -271,16 +267,6 @@ struct DoctorNote {
 }
 
 fn display_status(check: &DoctorCheck) -> DisplayStatus {
-    if check.category == "app-server"
-        && check.status == CheckStatus::Ok
-        && check
-            .details
-            .iter()
-            .any(|detail| detail == "status: not running")
-    {
-        return DisplayStatus::Idle;
-    }
-
     match check.status {
         CheckStatus::Ok => DisplayStatus::Ok,
         CheckStatus::Warning => DisplayStatus::Warning,
@@ -655,7 +641,6 @@ fn display_summary(check: &DoctorCheck, options: HumanOutputOptions) -> String {
         "sandbox" => sandbox_summary(check),
         "network" => network_summary(check),
         "websocket" => websocket_summary(check),
-        "app-server" => app_server_summary(check),
         _ => check.summary.clone(),
     }
 }
@@ -789,15 +774,6 @@ fn websocket_summary(check: &DoctorCheck) -> String {
         .map(|value| value.replace("000 ms", "s").replace(" ms", "ms"));
     match (status, timeout) {
         (Some(status), Some(timeout)) => format!("connected ({status}) · {timeout} timeout"),
-        _ => check.summary.clone(),
-    }
-}
-
-fn app_server_summary(check: &DoctorCheck) -> String {
-    let status = detail::detail_value(check, "status");
-    let mode = detail::detail_value(check, "mode");
-    match (status, mode) {
-        (Some(status), Some(mode)) => format!("{status} ({mode} mode)"),
         _ => check.summary.clone(),
     }
 }
@@ -1328,12 +1304,6 @@ mod tests {
                 "Responses WebSocket handshake succeeded",
             ),
             DoctorCheck::new(
-                "app_server.status",
-                "app-server",
-                CheckStatus::Ok,
-                "background server is not running",
-            ),
-            DoctorCheck::new(
                 "network.provider_reachability",
                 "reachability",
                 CheckStatus::Ok,
@@ -1398,11 +1368,8 @@ Connectivity
   ✓ websocket    Responses WebSocket handshake succeeded
   ✓ reachability active provider endpoints are reachable over HTTP
 
-Background Server
-  ✓ app-server   background server is not running
-
 {}
-12 ok · 2 notes · 1 warn · 1 fail failed
+11 ok · 2 notes · 1 warn · 1 fail failed
 
 --summary compact output           --all expand truncated lists
 --json redacted report
@@ -1517,11 +1484,8 @@ Connectivity
   ✓ websocket    Responses WebSocket handshake succeeded
   ✓ reachability active provider endpoints are reachable over HTTP
 
-Background Server
-  ✓ app-server   background server is not running
-
 {}
-12 ok · 2 notes · 1 warn · 1 fail failed
+11 ok · 2 notes · 1 warn · 1 fail failed
 
 Run antex doctor without --summary for detailed diagnostics.
 --all expand truncated lists       --json redacted report
@@ -1625,11 +1589,8 @@ Connectivity
   [ok] websocket    Responses WebSocket handshake succeeded
   [ok] reachability active provider endpoints are reachable over HTTP
 
-Background Server
-  [ok] app-server   background server is not running
-
 {}
-12 ok | 2 notes | 1 warn | 1 fail failed
+11 ok | 2 notes | 1 warn | 1 fail failed
 
 Run antex doctor without --summary for detailed diagnostics.
 --all expand truncated lists       --json redacted report
@@ -1745,14 +1706,6 @@ Run antex doctor without --summary for detailed diagnostics.
                     "active provider endpoints are reachable over HTTP",
                 )
                 .detail("reachability mode: API key auth"),
-                DoctorCheck::new(
-                    "app_server.status",
-                    "app-server",
-                    CheckStatus::Ok,
-                    "background server is not running",
-                )
-                .detail("status: not running")
-                .detail("mode: ephemeral"),
             ],
         };
 
@@ -1766,8 +1719,7 @@ Run antex doctor without --summary for detailed diagnostics.
         assert!(rendered.contains(
             "⚠ auth         mixed auth signals: ChatGPT login plus API key env var; HTTP reachability uses API-key mode"
         ));
-        assert!(rendered.contains("○ app-server   not running (ephemeral mode)"));
-        assert!(rendered.contains("5 ok · 1 idle · 5 notes · 1 warn · 0 fail degraded"));
+        assert!(rendered.contains("5 ok · 5 notes · 1 warn · 0 fail degraded"));
     }
 
     #[test]

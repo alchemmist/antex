@@ -37,7 +37,7 @@ incidental part of source synchronization.
 | Surface | Preserve |
 | --- | --- |
 | Sandbox | Never alter `CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR` or `CODEX_SANDBOX_ENV_VAR` handling. Preserve Bash `--noprofile --norc -pc`, bubblewrap `--dev-no-fd`, descriptor denial and protected metadata masks; check current code and regression coverage. |
-| Product | Daemon/service/socket identities, chat, code-mode, subagents, permissions, stored history, generic widgets/manual plans, shared audio-file helpers and VoiceOver accessibility. |
+| Product | Embedded foreground engine, chat, code-mode, subagents, permissions, stored history, generic widgets/manual plans, shared audio-file helpers and VoiceOver accessibility. Do not reintroduce a managed background app-server or independently updated server package. |
 | Authentication | Direct ChatGPT OAuth/public Responses **and** legacy Codex/API-key modes. Do not turn an upstream Codex-only assumption into a fork-wide restriction. |
 | Request ownership | Old in-flight payloads, uploads and turn/tool context cannot silently switch account, user, workspace or auth source. New operations may bind new credentials. Preserve refresh leases, document CAS, publication/cancellation/ABA guards and canonical token destinations. |
 | Compatibility | Passive legacy config/DTO/history decoding can remain. Removed active operations must reject explicitly, not silently succeed. |
@@ -84,6 +84,8 @@ is not removal of the runtime.
 
 Classify findings before deleting. Finish with both a source/dependency audit and
 behavioral evidence, not a repository-wide ban on the words `voice` or `realtime`.
+Also preserve the [embedded-runtime boundary](references/embedded-runtime.md): an
+upstream merge must not restore daemon discovery, lifecycle commands or server-owned updates.
 
 ## 5. Validate the final source
 

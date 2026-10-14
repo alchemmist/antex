@@ -1176,20 +1176,6 @@ mod tests {
         let url = "https://example.test/authorize";
         for (target, expected) in [
             (crate::AppServerTarget::Embedded, true),
-            (
-                crate::AppServerTarget::LocalDaemon {
-                    endpoint: endpoint.clone(),
-                    allow_embedded_fallback: true,
-                },
-                true,
-            ),
-            (
-                crate::AppServerTarget::LocalDaemon {
-                    endpoint: endpoint.clone(),
-                    allow_embedded_fallback: false,
-                },
-                true,
-            ),
             (crate::AppServerTarget::Remote { endpoint }, false),
         ] {
             let mut opened_url = None;

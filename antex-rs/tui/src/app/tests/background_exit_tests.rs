@@ -225,14 +225,12 @@ async fn remote_disconnect_exit_summary_does_not_require_a_local_rollout_or_prin
     ));
     let exit_info = app.exit_info(ExitReason::Fatal("connection lost".to_string()));
     let lines = exit_info.format_exit_messages(/*color_enabled*/ false);
-    let command = shlex::split(&lines[2]).unwrap();
-    assert_eq!(
-        crate::resolve_remote_addr(&command[2]).unwrap(),
-        crate::RemoteAppServerEndpoint::WebSocket {
-            websocket_url: "wss://example.com/".to_string(),
-            auth_token: None,
-        }
-    );
+    let output = lines.join("\n");
+    assert!(output.contains(&thread_id.to_string()));
+    assert!(output.contains("use the client that opened thread"));
+    for forbidden in ["secret", "private", "user:", "--remote", "codex agents"] {
+        assert!(!output.contains(forbidden), "{output}");
+    }
     assert_snapshot!("remote_disconnect_exit", lines.join("\n"));
 }
 
@@ -263,8 +261,7 @@ async fn embedded_exit_keeps_the_session_summary() {
 }
 
 fn prepare_local_daemon_thread(app: &mut App) -> Result<ThreadId> {
-    app.app_server_target = AppServerTarget::LocalDaemon {
-        allow_embedded_fallback: true,
+    app.app_server_target = AppServerTarget::Remote {
         endpoint: crate::RemoteAppServerEndpoint::UnixSocket {
             socket_path: AbsolutePathBuf::relative_to_current_dir("codex.sock")?,
         },

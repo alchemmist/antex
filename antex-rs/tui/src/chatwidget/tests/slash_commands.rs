@@ -3175,10 +3175,6 @@ async fn slash_delete_confirmation_requests_current_thread_delete() {
     let endpoint = crate::resolve_remote_addr("ws://127.0.0.1:4500").unwrap();
     for target in [
         crate::AppServerTarget::Embedded,
-        crate::AppServerTarget::LocalDaemon {
-            allow_embedded_fallback: true,
-            endpoint: endpoint.clone(),
-        },
         crate::AppServerTarget::Remote { endpoint },
     ] {
         let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;

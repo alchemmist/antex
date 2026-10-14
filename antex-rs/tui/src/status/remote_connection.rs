@@ -9,13 +9,11 @@ use url::Url;
 pub(crate) struct RemoteConnectionStatus {
     pub(crate) address: String,
     pub(crate) version: String,
-    pub(crate) is_local_daemon: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ServerVersionNotice {
     pub(crate) message: String,
-    pub(crate) offer_update: bool,
 }
 
 pub(crate) fn remote_connection_status_value(
@@ -24,9 +22,7 @@ pub(crate) fn remote_connection_status_value(
 ) -> Option<RemoteConnectionStatus> {
     let endpoint = match app_server_target {
         AppServerTarget::Embedded => return None,
-        AppServerTarget::LocalDaemon { endpoint, .. } | AppServerTarget::Remote { endpoint } => {
-            endpoint
-        }
+        AppServerTarget::Remote { endpoint } => endpoint,
     };
     let address = match endpoint {
         RemoteAppServerEndpoint::WebSocket { websocket_url, .. } => {
@@ -41,11 +37,7 @@ pub(crate) fn remote_connection_status_value(
     let version = server_version
         .map(|version| format!("v{version}"))
         .unwrap_or_else(|| "unknown".to_string());
-    Some(RemoteConnectionStatus {
-        address,
-        version,
-        is_local_daemon: matches!(app_server_target, AppServerTarget::LocalDaemon { .. }),
-    })
+    Some(RemoteConnectionStatus { address, version })
 }
 
 pub(crate) fn server_version_notice(client: &str, server: Option<&str>) -> Option<String> {
@@ -87,10 +79,8 @@ pub(crate) fn server_version_notice_key(
     server_version_notice(client, Some(server))?;
     let mut hasher = Sha256::new();
     let endpoint = match target {
-        AppServerTarget::Embedded => None,
-        AppServerTarget::LocalDaemon { endpoint, .. } | AppServerTarget::Remote { endpoint } => {
-            Some(endpoint)
-        }
+        AppServerTarget::Embedded => return None,
+        AppServerTarget::Remote { endpoint } => Some(endpoint),
     };
     if let Some(server_home) = server_home {
         hash_identity_part(&mut hasher, b"server-home:", server_home.as_bytes());
@@ -151,10 +141,7 @@ pub(crate) fn pending_server_version_notice(
     last_shown: Option<&str>,
 ) -> Option<(ServerVersionNotice, String)> {
     let message = server_version_notice_for_tui(settings, client, server)?;
-    let notice = ServerVersionNotice {
-        message,
-        offer_update: matches!(target, AppServerTarget::LocalDaemon { .. }),
-    };
+    let notice = ServerVersionNotice { message };
     let key = server_version_notice_key(target, server_home, client, server)?;
     (last_shown != Some(key.as_str())).then_some((notice, key))
 }
@@ -192,25 +179,10 @@ mod tests {
             Some(RemoteConnectionStatus {
                 address: "ws://127.0.0.1:4500/".to_string(),
                 version: "v1.2.3".to_string(),
-                is_local_daemon: false,
             })
         );
 
         let socket_path = AbsolutePathBuf::relative_to_current_dir("codex.sock")?;
-        let daemon_target = AppServerTarget::LocalDaemon {
-            allow_embedded_fallback: true,
-            endpoint: RemoteAppServerEndpoint::UnixSocket {
-                socket_path: socket_path.clone(),
-            },
-        };
-        assert_eq!(
-            remote_connection_status_value(&daemon_target, /*server_version*/ None),
-            Some(RemoteConnectionStatus {
-                address: format!("unix://{}", socket_path.display()),
-                version: "unknown".to_string(),
-                is_local_daemon: true,
-            })
-        );
         let remote_socket_target = AppServerTarget::Remote {
             endpoint: RemoteAppServerEndpoint::UnixSocket {
                 socket_path: socket_path.clone(),
@@ -221,7 +193,6 @@ mod tests {
             Some(RemoteConnectionStatus {
                 address: format!("unix://{}", socket_path.display()),
                 version: "v1.2.3".to_string(),
-                is_local_daemon: false,
             })
         );
         Ok(())
@@ -256,60 +227,11 @@ mod tests {
     }
 
     #[test]
-    fn update_command_is_only_suggested_for_implicit_local_daemon() -> color_eyre::Result<()> {
-        let endpoint = RemoteAppServerEndpoint::UnixSocket {
-            socket_path: AbsolutePathBuf::relative_to_current_dir("codex.sock")?,
-        };
-        let local = AppServerTarget::LocalDaemon {
-            allow_embedded_fallback: true,
-            endpoint: endpoint.clone(),
-        };
-        let remote = AppServerTarget::Remote { endpoint };
-        let settings = antex_config::types::Tui {
-            show_server_version_notice: true,
-            ..Default::default()
-        };
-        let notice = |target| {
-            pending_server_version_notice(
-                &settings,
-                target,
-                /*server_home*/ None,
-                "0.153.0-alpha.10.1",
-                Some("0.153.0-alpha.9.2"),
-                /*last_shown*/ None,
-            )
-            .map(|(notice, _)| notice)
-        };
-        let remote_notice =
-            server_version_notice("0.153.0-alpha.10.1", Some("0.153.0-alpha.9.2")).unwrap();
-        assert_eq!(
-            notice(&remote),
-            Some(ServerVersionNotice {
-                message: remote_notice.clone(),
-                offer_update: false,
-            })
-        );
-        assert_eq!(
-            notice(&local),
-            Some(ServerVersionNotice {
-                message: remote_notice,
-                offer_update: true,
-            })
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn notice_key_identifies_socket_and_server_home_across_connection_modes() -> anyhow::Result<()>
-    {
+    fn notice_key_identifies_socket_and_server_home() -> anyhow::Result<()> {
         let socket = |path| -> anyhow::Result<RemoteAppServerEndpoint> {
             Ok(RemoteAppServerEndpoint::UnixSocket {
                 socket_path: AbsolutePathBuf::from_absolute_path(path)?,
             })
-        };
-        let local = AppServerTarget::LocalDaemon {
-            allow_embedded_fallback: true,
-            endpoint: socket("/c")?,
         };
         let remote = AppServerTarget::Remote {
             endpoint: socket("/c")?,
@@ -317,7 +239,6 @@ mod tests {
         let key = |target: &AppServerTarget, server_home| {
             server_version_notice_key(target, server_home, "0.153.0", Some("0.152.0"))
         };
-        assert_eq!(key(&local, Some("/a")), key(&remote, Some("/a")));
         let other = AppServerTarget::Remote {
             endpoint: socket("/bunix:/c")?,
         };

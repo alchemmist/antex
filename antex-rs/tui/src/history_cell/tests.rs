@@ -66,43 +66,6 @@ fn connected_server_version_notice_snapshot() {
     insta::assert_snapshot!(render_lines(&cell.transcript_lines(/*width*/ 100)).join("\n"));
 }
 
-#[test]
-fn local_daemon_version_notice_snapshot() {
-    let target = crate::AppServerTarget::LocalDaemon {
-        allow_embedded_fallback: true,
-        endpoint: crate::RemoteAppServerEndpoint::UnixSocket {
-            socket_path: AbsolutePathBuf::from_absolute_path(
-                std::env::temp_dir().join("codex.sock"),
-            )
-            .expect("absolute socket path"),
-        },
-    };
-    let settings = antex_config::types::Tui {
-        show_server_version_notice: true,
-        ..Default::default()
-    };
-    for (client, server, snapshot) in [
-        ("0.153.0", "0.152.1", "local_daemon_version_notice_snapshot"),
-        ("0.155.0-alpha.12", "0.156.0", "local_daemon_alpha_mismatch"),
-        ("0.0.0", "0.156.0", "local_daemon_source_mismatch"),
-    ] {
-        let (notice, _) = crate::status::remote_connection::pending_server_version_notice(
-            &settings,
-            &target,
-            /*server_home*/ None,
-            client,
-            Some(server),
-            /*last_shown*/ None,
-        )
-        .expect("local service should have a notice");
-        let cell = new_server_version_warning(notice);
-        insta::assert_snapshot!(
-            snapshot,
-            render_lines(&cell.transcript_lines(/*width*/ 100)).join("\n")
-        );
-    }
-}
-
 async fn test_config() -> Config {
     let codex_home = std::env::temp_dir();
     ConfigBuilder::default()

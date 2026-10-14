@@ -27,12 +27,6 @@ async fn windows_sandbox_setup_uses_local_app_server_connection() {
         websocket_url: "ws://127.0.0.1:4500".to_string(),
         auth_token: None,
     };
-    app.app_server_target = crate::AppServerTarget::LocalDaemon {
-        allow_embedded_fallback: true,
-        endpoint: endpoint.clone(),
-    };
-    assert!(app.windows_sandbox_setup_is_local());
-
     app.app_server_target = crate::AppServerTarget::Remote { endpoint };
     assert!(!app.windows_sandbox_setup_is_local());
 }
@@ -1351,7 +1345,6 @@ async fn fresh_startup_notice_follows_session_attachment() {
     app.pending_server_version_notice =
         Some(crate::status::remote_connection::ServerVersionNotice {
             message: "Older server notice".to_string(),
-            offer_update: false,
         });
     assert!(events.try_recv().is_err());
 
@@ -1431,7 +1424,6 @@ async fn remote_overview_startup_hides_disabled_older_server_notice() -> Result<
     app.pending_server_version_notice =
         Some(crate::status::remote_connection::ServerVersionNotice {
             message: "Older service".to_string(),
-            offer_update: false,
         });
     app.reconnect.seen_version_notice = Some("old-key".to_string());
     app.local_settings.tui.show_server_version_notice = false;

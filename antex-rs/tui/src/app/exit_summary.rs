@@ -2,9 +2,6 @@
 //! Persisted sessions offer a direct UUID command and an optional named picker hint.
 
 use super::*;
-use crate::RemoteAppServerEndpoint;
-use crate::exec_command::escape_command;
-use crate::status::remote_connection::sanitized_websocket_url;
 
 /// A persisted thread that can be resumed after the TUI exits.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -13,13 +10,10 @@ pub struct ResumableThread {
     pub thread_name: Option<String>,
 }
 
-/// Reconnection and stop guidance for a task owned by a persistent app server.
+/// Marks a task owned by an explicitly supplied external transport.
+/// The foreground CLI cannot reconnect to or stop that transport's work.
 #[derive(Debug, Clone)]
-pub struct DisconnectInfo {
-    /// CLI arguments identifying the server, without credential values.
-    pub command: Vec<String>,
-    pub stop_hint: String,
-}
+pub struct DisconnectInfo;
 
 impl App {
     pub(super) fn exit_info(&self, exit_reason: ExitReason) -> AppExitInfo {
@@ -29,38 +23,9 @@ impl App {
                 self.chat_widget.thread_id().or(self.primary_thread_id)
             }
         };
-        let disconnect_info = thread_id.and_then(|_| {
-            let command = match &self.app_server_target {
-                AppServerTarget::Embedded => return None,
-                AppServerTarget::LocalDaemon { .. } => vec!["codex".to_string()],
-                AppServerTarget::Remote { endpoint } => {
-                    let address = match endpoint {
-                        RemoteAppServerEndpoint::WebSocket { websocket_url, .. } => {
-                            sanitized_websocket_url(websocket_url)
-                                .and_then(|url| {
-                                    let host = url.host()?;
-                                    let port = url.port_or_known_default()?;
-                                    // The CLI requires an explicit port, including 80/443.
-                                    Some(format!("{}://{host}:{port}{}", url.scheme(), url.path()))
-                                })
-                                .unwrap_or_else(|| "<server-address>".to_string())
-                        }
-                        RemoteAppServerEndpoint::UnixSocket { socket_path } => {
-                            format!("unix://{}", socket_path.display())
-                        }
-                    };
-                    vec!["codex".to_string(), "--remote".to_string(), address]
-                }
-            };
-            let stop_hint = self
-                .keymap
-                .agents
-                .primary_hint("stop", &self.keymap.agents.stop)
-                .map_or_else(
-                    || "use the configured stop shortcut".to_string(),
-                    |key| format!("press {}", key.display_label()),
-                );
-            Some(DisconnectInfo { command, stop_hint })
+        let disconnect_info = thread_id.and(match &self.app_server_target {
+            AppServerTarget::Embedded => None,
+            AppServerTarget::Remote { .. } => Some(DisconnectInfo),
         });
         AppExitInfo {
             token_usage: self.token_usage(),
@@ -88,7 +53,7 @@ impl AppExitInfo {
             }
         };
         let mut lines = Vec::new();
-        if let Some(disconnect) = self.disconnect_info
+        if self.disconnect_info.is_some()
             && let Some(thread_id) = self.thread_id
         {
             let turn_interrupted = matches!(self.exit_reason, ExitReason::TurnInterrupted);
@@ -102,21 +67,11 @@ impl AppExitInfo {
                 }
             };
             lines.push(message.to_string());
-            let mut resume_command = disconnect.command.clone();
-            resume_command.extend(["resume".to_string(), thread_id.to_string()]);
-            lines.push("To reconnect, run:".to_string());
             lines.push(format!(
-                "  {}",
-                color_command(escape_command(&resume_command)),
+                "To reconnect, use the client that opened thread {thread_id}."
             ));
             if !turn_interrupted {
-                let mut agents_command = disconnect.command;
-                agents_command.push("agents".to_string());
-                lines.push(format!(
-                    "Stop the current turn: run {}, select this task, and {}.",
-                    color_command(escape_command(&agents_command)),
-                    disconnect.stop_hint,
-                ));
+                lines.push("Stop any remaining work from that client.".to_string());
             }
             if !self.token_usage.is_zero() {
                 let usage = self.token_usage.to_string();

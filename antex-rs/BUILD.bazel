@@ -50,7 +50,6 @@ alias(
 runtime_archive(
     name = "runtime_package_combined",
     srcs = [
-        "//antex-rs/app-server:release_files",
         "//antex-rs/cli:release_files",
         "//antex-rs/code-mode-host:release_files",
     ] + select({
@@ -71,19 +70,6 @@ runtime_archive(
         "//antex-rs/cli:release_files",
         "//antex-rs/code-mode-host:release_files",
         "//antex-rs/responses-api-proxy:release_files",
-    ] + select({
-        "@platforms//os:linux": ["//antex-rs/bwrap:release_files"],
-        "//conditions:default": [],
-    }),
-    tags = ["manual"],
-    visibility = ["//visibility:public"],
-)
-
-runtime_archive(
-    name = "runtime_package_app-server",
-    srcs = [
-        "//antex-rs/app-server:release_files",
-        "//antex-rs/code-mode-host:release_files",
     ] + select({
         "@platforms//os:linux": ["//antex-rs/bwrap:release_files"],
         "//conditions:default": [],

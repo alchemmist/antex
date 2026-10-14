@@ -1,23 +1,26 @@
 # App Server Test Client
 
-Quickstart for running and hitting `codex app-server`.
+Protocol test tooling for the foreground stdio `antex app-server` and explicit developer fixtures.
 
 ## Quickstart
 
 Run from `<reporoot>/antex-rs`.
 
 ```bash
-# 1) Build debug codex binary
-cargo build -p antex-cli --bin codex
+# Terminal A: run the non-distributed protocol fixture in the foreground.
+# Keep this terminal open; Ctrl+C stops the fixture. Use an isolated home.
+ANTEX_HOME="$(mktemp -d)" cargo run -p antex-app-server -- \
+  --listen ws://127.0.0.1:4222
 
-# 2) Start websocket app-server in background
+# Terminal B: connect explicitly to that fixture.
 cargo run -p antex-app-server-test-client -- \
-  --antex-bin ./target/debug/codex \
-  serve --listen ws://127.0.0.1:4222 --kill
-
-# 3) Call app-server (defaults to ws://127.0.0.1:4222)
-cargo run -p antex-app-server-test-client -- model-list
+  --url ws://127.0.0.1:4222 model-list
 ```
+
+The test client does not detach servers or stop unrelated port listeners. The distributed
+`antex app-server` accepts stdio only; `--antex-bin` still launches that owned stdio child.
+Shared-client checks, including `live-elicitation-timeout-pause`, use an already-running
+foreground fixture selected with `--url`, not a background launch through `--antex-bin`.
 
 `send-message` and `send-message-v2` handle `request_user_input` server requests interactively.
 When Codex asks a question, choose a numbered option (or `o` for a free-form answer when offered)
@@ -156,7 +159,7 @@ cargo run -p antex-app-server-test-client -- watch
 
 ## Testing Thread Rejoin Behavior
 
-Build and start an app server using commands above. The app-server log is written to `/tmp/antex-app-server-test-client/app-server.log`
+Start the foreground developer fixture using the commands above. Its logs stay in that terminal.
 
 ### 1) Get a thread id
 

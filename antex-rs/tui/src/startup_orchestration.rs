@@ -13,29 +13,11 @@ pub(super) async fn run_main_inner(
     loader_overrides: LoaderOverrides,
     explicit_remote_endpoint: Option<RemoteAppServerEndpoint>,
 ) -> std::io::Result<AppExitInfo> {
-    if cli.no_daemon && explicit_remote_endpoint.is_some() {
-        return Err(std::io::Error::other(
-            "--no-daemon cannot be used with --remote.",
-        ));
-    }
     if explicit_remote_endpoint.is_some() && !cli.add_dir.is_empty() {
         return Err(std::io::Error::other(
             "--add-dir is not supported with --remote. Configure additional workspace roots on the server.",
         ));
     }
-    #[cfg(windows)]
-    let elevated_warning = if explicit_remote_endpoint.is_none()
-        && !cli.no_daemon
-        && !cli.agents_overview
-        && antex_app_server_daemon::is_elevated().map_err(std::io::Error::other)?
-    {
-        cli.no_daemon = true;
-        Some(daemon_startup::ELEVATED_LAUNCH_WARNING)
-    } else {
-        None
-    };
-    #[cfg(not(windows))]
-    let elevated_warning: Option<&str> = None;
     let strict_config = cli.strict_config;
     if cli.shared.worktree {
         if explicit_remote_endpoint.is_some() {
@@ -119,10 +101,7 @@ pub(super) async fn run_main_inner(
     if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
         let validation_target = app_server_target_for_launch(
             explicit_remote_endpoint.clone(),
-            /*default_daemon_socket*/ None,
-            /*can_reuse_implicit_local_daemon*/ false,
             workload_identity_selected,
-            std::env::var_os(antex_exec_server::ANTEX_EXEC_SERVER_URL_ENV_VAR).as_deref(),
         )?;
         let validation_environment_manager =
             if should_load_configured_environments(&loader_overrides, &validation_target) {
@@ -186,17 +165,10 @@ pub(super) async fn run_main_inner(
         .await;
     }
 
-    let mut daemon_exclusion = daemon_startup::exclusion(
-        &cli,
-        &cli_kv_overrides,
-        &launch_loader_overrides,
-        workload_identity_selected,
-        std::env::var_os(antex_exec_server::ANTEX_EXEC_SERVER_URL_ENV_VAR).as_deref(),
-    );
-    let reuse_implicit_local_daemon = daemon_exclusion.is_none();
-    let search_only_config_override = !workload_identity_selected
-        && cli.web_search
-        && startup_preflight::has_only_search_config_override(&cli_kv_overrides)
+    let default_login_configuration = !workload_identity_selected
+        && (cli_kv_overrides.is_empty()
+            || (cli.web_search
+                && startup_preflight::has_only_search_config_override(&cli_kv_overrides)))
         && loader_overrides_are_default(&launch_loader_overrides)
         && !strict_config
         && !cli.bypass_hook_trust;
@@ -204,7 +176,7 @@ pub(super) async fn run_main_inner(
         startup_draft::StartupDraftInitialScreen::SessionPicker
     } else if !cli.oss
         && explicit_remote_endpoint.is_none()
-        && (reuse_implicit_local_daemon || search_only_config_override)
+        && default_login_configuration
         && launch_loader_overrides.packaged_defaults_path.is_none()
         && startup_preflight::should_delay_startup_composer_for_first_login(
             &codex_home,
@@ -224,15 +196,9 @@ pub(super) async fn run_main_inner(
     } else {
         startup_draft::StartupDraftSessionAction::New
     };
-    // Local-daemon discovery does not change client config precedence. Resolve explicit
-    // remote selection and the environment without opening a server connection.
-    let presentation_target = app_server_target_for_launch(
-        explicit_remote_endpoint.clone(),
-        /*default_daemon_socket*/ None,
-        reuse_implicit_local_daemon,
-        workload_identity_selected,
-        std::env::var_os(antex_exec_server::ANTEX_EXEC_SERVER_URL_ENV_VAR).as_deref(),
-    )?;
+    // Resolve explicit remote selection and the environment without opening a connection.
+    let presentation_target =
+        app_server_target_for_launch(explicit_remote_endpoint.clone(), workload_identity_selected)?;
     let prepared_environment_manager =
         if should_load_configured_environments(&launch_loader_overrides, &presentation_target) {
             EnvironmentManager::prepare_from_antex_home(&codex_home).await
@@ -308,20 +274,7 @@ pub(super) async fn run_main_inner(
         screen,
     )?;
 
-    let default_daemon = if explicit_remote_endpoint.is_none() && reuse_implicit_local_daemon {
-        startup_draft
-            .run_until(maybe_probe_default_daemon_socket(&codex_home))
-            .await?
-    } else {
-        None
-    };
-    let mut app_server_target = app_server_target_for_launch(
-        explicit_remote_endpoint,
-        default_daemon,
-        reuse_implicit_local_daemon,
-        workload_identity_selected,
-        std::env::var_os(antex_exec_server::ANTEX_EXEC_SERVER_URL_ENV_VAR).as_deref(),
-    )?;
+    let app_server_target = presentation_target;
     let remote_cwd_override = cli
         .cwd
         .clone()
@@ -331,8 +284,7 @@ pub(super) async fn run_main_inner(
         arg0_paths.antex_self_exe.clone(),
         arg0_paths.antex_linux_sandbox_exe.clone(),
     )?;
-    // The pre-paint bootstrap used these same local/remote config inputs. Reuse it here;
-    // implicit daemon discovery above changes transport, not the client configuration cwd.
+    // The pre-paint bootstrap used these same local/remote config inputs. Reuse it here.
     let screen_reader_result = if !loader_overrides.ignore_user_config {
         startup_draft
             .run_until(screen_reader::initialize(
@@ -505,109 +457,6 @@ pub(super) async fn run_main_inner(
     } else {
         None
     };
-    let auto_start_daemon = config.features.enabled(Feature::DaemonAutoStart)
-        && !cli.agents_overview
-        && !cli.no_daemon
-        && !app_server_target.uses_remote_workspace();
-    if auto_start_daemon
-        && daemon_exclusion.is_none()
-        && should_show_bedrock_setup_wizard(
-            LoginStatus::NotAuthenticated,
-            config.model_provider.requires_openai_auth,
-            &config,
-            &AppServerTarget::Embedded,
-        )
-        && startup_draft
-            .run_until(
-                config
-                    .auth_config()
-                    .load_auth(/*enable_antex_api_key_env*/ false),
-            )
-            .await?
-            .ok()
-            .flatten()
-            .is_none()
-    {
-        // The Bedrock wizard configures its provider through the embedded server.
-        daemon_exclusion = Some("Bedrock sign-in");
-        app_server_target = AppServerTarget::Embedded;
-    }
-    if auto_start_daemon
-        && daemon_exclusion.is_none()
-        && matches!(&app_server_target, AppServerTarget::Embedded)
-        && daemon_startup::uses_wsl_drvfs(&codex_home)
-    {
-        daemon_exclusion = Some(daemon_startup::WSL_DRVFS_EXCLUSION);
-    }
-    let mut daemon_features = daemon_startup::server_features(&cli_kv_overrides);
-    // Disabling shared services requires confirmation, even on a fresh auto-start.
-    daemon_features.retain(|_, enabled| *enabled);
-    let mut managed_daemon = false;
-    if auto_start_daemon && daemon_exclusion.is_none() {
-        let output = startup_draft
-            .run_until(async {
-                // Daemon startup needs no terminal input. Keep the composer visible and
-                // responsive while it checks the running server or prepares an installation.
-                let result = antex_app_server_daemon::start_with_features(&daemon_features).await;
-                daemon_telemetry::record_start(&config, &result).await;
-                match result {
-                    Ok(output) => Ok(Some(output)),
-                    #[cfg(windows)]
-                    Err(err) if err.is::<antex_app_server_daemon::DetachedLaunchRestricted>() => {
-                        Ok(None)
-                    }
-                    Err(err) => Err(std::io::Error::other(format!(
-                        "{err:#}\n{}",
-                        daemon_startup::FAILURE_HINT
-                    ))),
-                }
-            })
-            .await??;
-        if let Some(output) = output {
-            managed_daemon = output.backend.is_some();
-            app_server_target = AppServerTarget::LocalDaemon {
-                endpoint: RemoteAppServerEndpoint::UnixSocket {
-                    socket_path: AbsolutePathBuf::from_absolute_path_checked(output.socket_path)?,
-                },
-                allow_embedded_fallback: false,
-            };
-        } else {
-            app_server_target = AppServerTarget::Embedded;
-            daemon_exclusion = Some("this Windows launcher");
-        }
-    }
-    // The overview must inspect the shared server's agents regardless of local settings.
-    let compatibility_warning = if cli.agents_overview {
-        None
-    } else {
-        daemon_recovery::check(
-            &mut startup_draft,
-            &app_server_target,
-            &config,
-            &cli_kv_overrides,
-            managed_daemon,
-        )
-        .await?
-    };
-    if compatibility_warning.is_some() {
-        app_server_target = AppServerTarget::Embedded;
-        daemon_exclusion = Some("daemon feature settings");
-    }
-    if app_server_target.uses_embedded_network_policy() {
-        embedded_network_policy.activate(&mut config);
-    }
-    let daemon_startup_warning = elevated_warning
-        .map(str::to_string)
-        .or(compatibility_warning)
-        .or_else(|| {
-            daemon_exclusion
-            .filter(|_| auto_start_daemon)
-            .map(|reason| {
-                format!(
-                    "Running without the shared background server: {reason} requires embedded mode."
-                )
-            })
-        });
     #[cfg(target_os = "macos")]
     let local_runtime_paths = local_runtime_paths.with_allowed_symlinked_antex_home(
         antex_config::allowed_symlinked_antex_home(&config.config_layer_stack, &config.codex_home),
@@ -666,42 +515,12 @@ pub(super) async fn run_main_inner(
             antex_rollout::sqlite_telemetry_recorder(metrics.clone(), otel_originator.as_str());
         let _ = antex_state::install_process_db_telemetry(telemetry);
     }
-    let selection_reason = match (&app_server_target, daemon_exclusion) {
-        (AppServerTarget::Remote { .. }, _) => "explicit_remote",
-        _ if cli.agents_overview => "agents",
-        _ if elevated_warning.is_some() => "elevated_windows",
-        (_, Some("--no-daemon")) => "explicit_no_daemon",
-        (_, Some(_)) => "incompatible_option",
-        _ if auto_start_daemon => "auto_start",
-        (AppServerTarget::LocalDaemon { .. }, _) => "existing_daemon",
-        (AppServerTarget::Embedded, None) => "auto_start_disabled",
-    };
-    let daemon_settings = if metrics.is_some() {
-        antex_app_server_daemon::telemetry::settings_tags(&config.codex_home)
-            .await
-            .to_vec()
-    } else {
-        Vec::new()
-    };
-    let mut launch_tags = daemon_settings.to_vec();
-    launch_tags.extend([
-        ("daemon_selection_reason", selection_reason),
-        (
-            "daemon_auto_start",
-            if config.features.enabled(Feature::DaemonAutoStart) {
-                "enabled"
-            } else {
-                "disabled"
-            },
-        ),
-    ]);
-    // Record the first connection attempt's actual mode, including embedded fallback; never reconnects.
+    // Record the first connection attempt's actual mode, never reconnects.
     let launch_telemetry = move |target: &AppServerTarget, connected: bool| {
         let Some(metrics) = metrics else { return };
         let app_server_mode = match (connected, target) {
             (false, _) => "unconfirmed",
             (true, AppServerTarget::Embedded) => "in_process",
-            (true, AppServerTarget::LocalDaemon { .. }) => "local_daemon",
             (true, AppServerTarget::Remote { .. }) => "remote",
         };
         // Use a fixed category, not the versioned or user-provided terminal identifier.
@@ -727,14 +546,14 @@ pub(super) async fn run_main_inner(
             Some(Multiplexer::Zellij { .. }) => "zellij",
             None => "none",
         };
-        launch_tags.extend([
+        let launch_tags = [
             ("app_server_mode", app_server_mode),
             ("terminal_name", terminal_name),
             ("multiplexer", multiplexer),
-        ]);
+        ];
         let _ = metrics.counter("codex.tui.start", /*inc*/ 1, &launch_tags);
     };
-    let launch_telemetry = daemon_telemetry::Launch(Some(launch_telemetry));
+    let launch_telemetry = launch_telemetry::Launch(Some(launch_telemetry));
     let state_db = startup_draft
         .run_until(init_state_db_for_app_server_target(
             &config,
@@ -902,7 +721,6 @@ pub(super) async fn run_main_inner(
         environment_manager,
         embedded_network_policy,
         managed_worktree.clone(),
-        daemon_startup_warning,
         launch_telemetry,
         startup_draft,
     ))
@@ -914,26 +732,6 @@ pub(super) async fn run_main_inner(
 
     if let Some(worktree) = managed_worktree.as_ref() {
         worktree.report_startup_failure();
-    }
-
-    // The TUI owns this request's consent. The child is silent; installation remains unconfirmed.
-    if let Ok(exit) = &app_result
-        && let Some(UpdateAction::Daemon(source)) = exit.update_action
-        && let Some(metrics) = otel.as_ref().and_then(antex_otel::OtelProvider::metrics)
-    {
-        let mut tags = daemon_settings.to_vec();
-        tags.extend([
-            ("initiation_source", "tui_handoff"),
-            (
-                "update_target",
-                match source {
-                    DaemonUpdateSource::PublicStable => "public_stable",
-                    DaemonUpdateSource::ThisCli => "this_cli",
-                },
-            ),
-            ("outcome", "handoff_requested"),
-        ]);
-        let _ = metrics.counter("codex.daemon.update", /*inc*/ 1, &tags);
     }
 
     if let Some(otel) = otel

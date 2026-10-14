@@ -74,11 +74,11 @@ class SourceBinariesForTargetTest(unittest.TestCase):
             ["antex-command-runner", "antex-windows-sandbox-setup"],
         )
 
-    def test_missing_code_mode_host_is_built_for_app_server(self) -> None:
+    def test_missing_code_mode_host_is_built_for_cli(self) -> None:
         self.assertEqual(
             source_binaries_for_target(
                 TARGET_SPECS["aarch64-apple-darwin"],
-                PACKAGE_VARIANTS["antex-app-server"],
+                PACKAGE_VARIANTS["antex"],
                 build_entrypoint=False,
                 build_code_mode_host=True,
                 build_bwrap=False,

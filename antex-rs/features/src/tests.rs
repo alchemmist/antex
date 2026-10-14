@@ -609,6 +609,24 @@ fn from_sources_ignores_removed_item_ids_feature_key() {
 }
 
 #[test]
+fn from_sources_ignores_removed_daemon_auto_start_feature_key() {
+    for enabled in [false, true] {
+        let features_toml =
+            FeaturesToml::from(BTreeMap::from([("daemon_auto_start".to_string(), enabled)]));
+        let features = Features::from_sources(
+            FeatureConfigSource {
+                features: Some(&features_toml),
+                ..Default::default()
+            },
+            FeatureConfigSource::default(),
+            FeatureOverrides::default(),
+        );
+        assert_eq!(features, Features::with_defaults());
+        assert!(!features.enabled(Feature::DaemonAutoStart));
+    }
+}
+
+#[test]
 fn from_sources_ignores_removed_undo_feature_key() {
     let features_toml = FeaturesToml::from(BTreeMap::from([("undo".to_string(), true)]));
 

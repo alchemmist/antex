@@ -114,7 +114,7 @@ pub enum Feature {
     /// Store CLI auth in the encrypted local secrets backend when keyring storage is selected.
     SecretAuthStorage,
 
-    /// Automatically start the shared local daemon for eligible interactive launches.
+    /// Removed compatibility flag for the former shared background server.
     DaemonAutoStart,
 
     // Experimental
@@ -659,7 +659,7 @@ impl Features {
                     self.record_legacy_usage_force("features.transcript_v2", Feature::TranscriptV2);
                     continue;
                 }
-                "tui_app_server" => {
+                "tui_app_server" | "daemon_auto_start" => {
                     continue;
                 }
                 "undo" => {
@@ -1013,8 +1013,8 @@ pub const FEATURES: &[FeatureSpec] = &[
     FeatureSpec {
         id: Feature::DaemonAutoStart,
         key: "daemon_auto_start",
-        stage: Stage::Stable,
-        default_enabled: true,
+        stage: Stage::Removed,
+        default_enabled: false,
     },
     FeatureSpec {
         id: Feature::TranscriptV2,

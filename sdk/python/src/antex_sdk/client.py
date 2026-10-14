@@ -253,7 +253,7 @@ class AntexClient:
             args = [str(antex_bin)]
             for kv in self.config.config_overrides:
                 args.extend(["--config", kv])
-            args.extend(["app-server", "--listen", "stdio://"])
+            args.append("app-server")
 
         env = os.environ.copy()
         if self.config.env:

@@ -16,7 +16,6 @@ pub use antex_app_server_transport::AppServerTransport;
 pub(crate) use antex_app_server_transport::CHANNEL_CAPACITY;
 pub(crate) use antex_app_server_transport::ConnectionId;
 pub(crate) use antex_app_server_transport::ConnectionOrigin;
-pub(crate) use antex_app_server_transport::DaemonShutdownAccess;
 pub(crate) use antex_app_server_transport::OutgoingMessage;
 pub(crate) use antex_app_server_transport::QueuedOutgoingMessage;
 pub(crate) use antex_app_server_transport::RemoteControlEnableError;
@@ -33,7 +32,6 @@ pub(crate) use antex_app_server_transport::start_control_socket_acceptor;
 pub(crate) use antex_app_server_transport::start_remote_control;
 pub(crate) use antex_app_server_transport::start_stdio_connection;
 pub(crate) use antex_app_server_transport::start_websocket_acceptor;
-pub use antex_app_server_transport::take_remote_control_disabled_env;
 
 pub(crate) struct ConnectionState {
     pub(crate) origin: ConnectionOrigin,

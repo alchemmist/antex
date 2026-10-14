@@ -477,8 +477,14 @@ impl App {
             }
             return;
         }
-        if matches!(self.app_server_target, AppServerTarget::LocalDaemon { .. })
-            && self.overlay.is_none()
+        // Only explicit local-socket integrations retain detached task controls.
+        // Embedded and network-backed sessions keep their normal interrupt action.
+        if matches!(
+            &self.app_server_target,
+            AppServerTarget::Remote {
+                endpoint: crate::RemoteAppServerEndpoint::UnixSocket { .. },
+            }
+        ) && self.overlay.is_none()
             && self.chat_widget.no_modal_or_popup_active()
             && self.chat_widget.composer_is_empty()
             && self.active_side_parent_thread_id().is_none()

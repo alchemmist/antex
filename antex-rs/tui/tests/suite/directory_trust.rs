@@ -1,238 +1,242 @@
-//! Exercises folder consent against a connected server through the real terminal event loop.
+//! Exercises folder consent with the real embedded engine and a loopback Responses provider.
 
 use super::focus_palette::PtyAntex;
 use super::focus_palette::write_test_config;
-use antex_app_server_protocol::JSONRPCMessage;
-use antex_app_server_protocol::RequestId;
+use anyhow::Context;
 use anyhow::Result;
-use futures::SinkExt;
-use futures::StreamExt;
+use core_test_support::responses;
 use pretty_assertions::assert_eq;
-use serde_json::json;
-use std::sync::Arc;
-use std::sync::Mutex;
-use std::sync::atomic::AtomicUsize;
-use std::sync::atomic::Ordering;
+use std::path::PathBuf;
 use std::time::Duration;
-use tokio::net::UnixListener;
-use tokio_tungstenite::tungstenite::Message;
+use tempfile::TempDir;
+use wiremock::MockServer;
+use wiremock::matchers::body_string_contains;
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn connected_trust_cancellation_and_acceptance_control_task_creation() -> Result<()> {
-    for trust_level in [None, Some("untrusted")] {
+const COMPLETION: &str = "embedded-folder-consent-complete";
+const HOME_INSTRUCTIONS: &str = "Home config sentinel: prefer concise answers.";
+const PROJECT_INSTRUCTIONS: &str = "Project config sentinel: prefer numbered answers.";
+
+#[derive(Clone, Copy)]
+enum SavedTrust {
+    Unknown,
+    Untrusted,
+}
+
+struct EmbeddedTrustTest {
+    terminal: PtyAntex,
+    server: MockServer,
+    completion_mock: responses::ResponseMock,
+    config_path: PathBuf,
+    initial_config: String,
+    project_key: String,
+    _workspace: TempDir,
+}
+
+impl EmbeddedTrustTest {
+    async fn start(trust: SavedTrust, prompt: &str) -> Result<Self> {
         let workspace = tempfile::tempdir()?;
         let repo_root = workspace.path().canonicalize()?;
+        // A real project marker is required: projectless directories need not prompt.
         std::fs::create_dir(repo_root.join(".git"))?;
         std::fs::write(repo_root.join(".git/HEAD"), "ref: refs/heads/main\n")?;
-        let codex_home = tempfile::tempdir_in("/tmp")?;
-        // The server's trust decision must win over the client's trusted-folder setting.
+        std::fs::create_dir(repo_root.join(".antex"))?;
+        // Harmless configuration, not a command or permission override. The accepted case
+        // proves this sentinel is effective, so its absence in restricted mode is meaningful.
+        std::fs::write(
+            repo_root.join(".antex/config.toml"),
+            format!("developer_instructions = \"{PROJECT_INSTRUCTIONS}\"\n"),
+        )?;
+        let codex_home = tempfile::tempdir()?;
         write_test_config(codex_home.path(), &repo_root)?;
         let config_path = codex_home.path().join("config.toml");
-        let config = std::fs::read_to_string(&config_path)?;
-        std::fs::write(
+        let mut config: toml::Value = toml::from_str(&std::fs::read_to_string(&config_path)?)?;
+        let project_key = repo_root.display().to_string();
+        match trust {
+            SavedTrust::Unknown => {
+                config["projects"]
+                    .as_table_mut()
+                    .context("fixture projects table")?
+                    .remove(&project_key);
+            }
+            SavedTrust::Untrusted => {
+                config["projects"][project_key.as_str()]["trust_level"] = "untrusted".into();
+            }
+        }
+        let root = config.as_table_mut().context("fixture root table")?;
+        root.insert("developer_instructions".into(), HOME_INSTRUCTIONS.into());
+        root.insert("model_provider".into(), "test".into());
+        // Keep unrelated first-run accessibility persistence out of the no-write assertion.
+        root.insert(
+            "tui".into(),
+            toml::Value::Table(toml::toml! {
+                screen_reader_detection_done = true
+            }),
+        );
+
+        let server = responses::start_mock_server().await;
+        // Automatic title requests must not consume the user turn's completion.
+        let _title_mock = responses::mount_sse_once_match(
+            &server,
+            body_string_contains(r#"\"thread_source\":\"system\""#),
+            responses::sse(vec![
+                responses::ev_assistant_message("title", r#"{"title":"Folder consent probe"}"#),
+                responses::ev_completed("title"),
+            ]),
+        )
+        .await;
+        let completion_mock = responses::mount_sse_once_match(
+            &server,
+            body_string_contains(r#"\"thread_source\":\"user\""#),
+            responses::sse(vec![
+                responses::ev_assistant_message("answer", COMPLETION),
+                responses::ev_completed("complete"),
+            ]),
+        )
+        .await;
+        let base_url = server.uri();
+        let config = toml::to_string(&config)?;
+        let initial_config = format!(
+            "{config}\n[model_providers.test]\nname = \"Mock\"\n\
+             base_url = \"{base_url}/v1\"\nwire_api = \"responses\"\n\
+             requires_openai_auth = false\nsupports_websockets = false\n",
+        );
+        std::fs::write(&config_path, &initial_config)?;
+        let terminal = PtyAntex::start(&repo_root, codex_home, &["--no-alt-screen", prompt])?;
+        Ok(Self {
+            terminal,
+            server,
+            completion_mock,
             config_path,
-            format!("{config}\n[tui]\nresume_cwd = \"current\"\n"),
-        )?;
-        let socket = antex_app_server_client::app_server_control_socket_path(codex_home.path())?;
-        std::fs::create_dir_all(socket.parent().unwrap())?;
-        let listener = UnixListener::bind(socket.as_path())?;
-        let cwd = repo_root.clone();
-        let methods = Arc::new(Mutex::new(Vec::new()));
-        let requests = Arc::clone(&methods);
-        let server = tokio::spawn(async move {
-            let mut clients = tokio::task::JoinSet::new();
-            let trust_reads = Arc::new(AtomicUsize::new(0));
-            loop {
-                let (stream, _) = listener
-                    .accept()
-                    .await
-                    .expect("accept fake app-server client");
-                let cwd = cwd.clone();
-                let methods = Arc::clone(&requests);
-                let trust_reads = Arc::clone(&trust_reads);
-                clients.spawn(async move {
-                    let Ok(mut socket) = tokio_tungstenite::accept_async(stream).await else {
-                        return Ok::<_, anyhow::Error>(());
-                    };
-                    let other_cwd = cwd.join("other-folder");
-                    let id = "00000000-0000-0000-0000-000000000001";
-                    let thread = json!({
-                        "id": id, "sessionId": id, "preview": "Untrusted saved task", "ephemeral": false,
-                        "modelProvider": "openai", "createdAt": 1, "updatedAt": 2,
-                        "status": if trust_level.is_some() { json!({"type": "active", "activeFlags": []}) } else { json!({"type": "notLoaded"}) }, "cwd": other_cwd,
-                        "cliVersion": "0.0.0", "source": "cli", "turns": []
-                    });
-                    let mut launch_thread = thread.clone();
-                    launch_thread["id"] = json!("00000000-0000-0000-0000-000000000002");
-                    launch_thread["sessionId"] = launch_thread["id"].clone();
-                    launch_thread["cwd"] = json!(cwd);
-                    launch_thread["preview"] = json!("Launch-folder task");
-                    launch_thread["updatedAt"] = json!(1);
-                    while let Some(Ok(Message::Text(text))) = socket.next().await {
-                        let JSONRPCMessage::Request(request) = serde_json::from_str(&text)? else {
-                            continue;
-                        };
-                        methods.lock().unwrap().push(request.method.clone());
-                        let result = match request.method.as_str() {
-                            "initialize" => json!({"userAgent": "trust-pty"}),
-                            "experimentalFeature/list" => json!({"data": (["api_key_model_discovery", "code_mode_host", "auth_elicitation"].map(|name| json!({
-                                "name": name, "stage": "stable", "displayName": null,
-                                "description": null, "announcement": null,
-                                "enabled": true, "defaultEnabled": true,
-                            }))), "nextCursor": null}),
-                            "account/read" => {
-                                json!({"account": {"type": "apiKey"}, "requiresOpenaiAuth": false})
-                            }
-                            "config/read" => {
-                                if matches!(&request.id, RequestId::String(id) if id.starts_with("tui-project-trust-read-")) {
-                                    trust_reads.fetch_add(1, Ordering::SeqCst);
-                                }
-                                json!({"config": {"model": "gpt-5.6-terra", "projects": {
-                                    cwd.to_string_lossy(): {"trust_level": if trust_reads.load(Ordering::SeqCst) == 4 { Some("trusted") } else { trust_level }},
-                                    other_cwd.to_string_lossy(): {"trust_level": "untrusted"},
-                                    cwd.join("moved-folder").to_string_lossy(): {"trust_level": "untrusted"}
-                                }}, "origins": {}, "layers": []})
-                            }
-                            "config/batchWrite" => json!({"status": "ok", "version": "1", "filePath": cwd.join("config.toml"), "overriddenMetadata": null}),
-                            "hooks/list" => json!({"data": if trust_level.is_none() && methods.lock().unwrap().iter().any(|method| method == "config/batchWrite") {
-                                vec![json!({"cwd": request.params.as_ref().unwrap()["cwds"][0], "hooks": [{
-                                    "key": "project:test", "eventName": "sessionStart", "handlerType": "command",
-                                    "command": "echo hook", "async": false, "matcher": null, "timeoutSec": 30,
-                                    "statusMessage": null, "additionalContextLimit": null,
-                                    "sourcePath": cwd.join(".antex/hooks.json"), "source": "project", "pluginId": null,
-                                    "displayOrder": 0, "enabled": false, "isManaged": false,
-                                    "currentHash": "sha256:test", "trustStatus": "untrusted"
-                                }], "warnings": [], "errors": []})]
-                            } else { vec![] }}),
-                            "configRequirements/read" => json!({"requirements": null}),
-                            "model/list" => json!({"data": [], "nextCursor": null}),
-                            "thread/list" => {
-                                json!({"data": vec![thread.clone(), launch_thread.clone()], "nextCursor": null})
-                            }
-                            "thread/read" => {
-                                let mut thread = if request.params.as_ref().unwrap()["threadId"] == launch_thread["id"] {
-                                    launch_thread.clone()
-                                } else {
-                                    thread.clone()
-                                };
-                                if thread["id"] == id && trust_reads.load(Ordering::SeqCst) >= 5 {
-                                    thread["cwd"] = json!(cwd.join("moved-folder"));
-                                }
-                                json!({"thread": thread})
-                            } ,
-                            "skills/list" | "thread/loaded/list" => json!({"data": []}),
-                            _ => {
-                                socket
-                                    .send(Message::Text(
-                                        json!({"id": request.id, "error": {
-                                            "code": if request.method == "thread/start" { -32000 } else { -32601 }, "message": if request.method == "thread/start" { "Consent accepted" } else { "method not found" }
-                                        }})
-                                        .to_string()
-                                        .into(),
-                                    ))
-                                    .await?;
-                                continue;
-                            }
-                        };
-                        socket
-                            .send(Message::Text(
-                                json!({"id": request.id, "result": result})
-                                    .to_string()
-                                    .into(),
-                            ))
-                            .await?;
-                    }
-                    Ok(())
-                });
-            }
-        });
-        let mut terminal = PtyAntex::start(
-            &repo_root,
-            codex_home,
-            &["--no-alt-screen", "do not submit this launch prompt"],
-        )?;
-        let prompt = if trust_level.is_some() {
-            "Open restricted"
-        } else {
-            "Trust and continue"
-        };
-        for (expected, input) in [
-            (prompt, b"\x1b".as_slice()),
-            ("Launch-folder task", b"\x1b[Bn"),
-            (prompt, b"\x1b"),
-            ("n new", b"n"),
-            ("Folder access", b"\x1b"),
-            ("Agent command center", b"o"),
-            ("Resume a previous session", b"\x1b[C"),
-            ("Untrusted saved task", b"\r"),
-            ("Open existing task", b"\r"),
-            ("moved-folder", b"\x1b"),
-            ("Agent command center", b"n"),
-            (prompt, b"\r"),
-        ] {
-            let is_consent = expected == prompt
-                || matches!(
-                    expected,
-                    "Open existing task" | "moved-folder" | "Folder access"
-                );
-            terminal.wait_for_screen(expected)?;
-            if expected == "Folder access" {
-                assert_eq!(
-                    terminal
-                        .screen_contents()
-                        .lines()
-                        .map(str::trim)
-                        .skip_while(|line| *line != "Folder access")
-                        .skip(/*n*/ 1)
-                        .find(|line| !line.is_empty()),
-                    Some(repo_root.to_string_lossy().as_ref())
-                );
-            }
-            if is_consent {
-                terminal.wait_for_screen("Back to Agent Command Center")?;
-            }
-            // Confirmations must be fresh input after the protected-screen transition.
-            tokio::time::sleep(Duration::from_millis(/*millis*/ 200)).await;
-            terminal.write_input(input)?;
-            terminal.read_output(Duration::from_millis(/*millis*/ 100))?;
-        }
-        if trust_level.is_none() {
-            terminal.wait_for_screen("Hooks need review")?;
-            assert!(
-                !methods
-                    .lock()
-                    .unwrap()
-                    .iter()
-                    .any(|method| method == "thread/start")
-            );
-            tokio::time::sleep(Duration::from_millis(/*millis*/ 200)).await;
-            terminal.write_input(b"3")?;
-        }
-        terminal.wait_for_screen("Consent accepted")?;
-        drop(terminal);
-        server.abort();
-        let methods = methods.lock().unwrap();
-        let mutations: Vec<_> = methods
-            .iter()
-            .map(String::as_str)
-            .filter(|method| {
-                matches!(
-                    *method,
-                    "thread/start"
-                        | "thread/resume"
-                        | "thread/fork"
-                        | "turn/start"
-                        | "config/batchWrite"
-                )
-            })
-            .collect();
+            initial_config,
+            project_key,
+            _workspace: workspace,
+        })
+    }
+
+    async fn wait_for_consent(&mut self, action: &str) -> Result<()> {
+        self.terminal.wait_for_screen("Folder access")?;
+        self.terminal.wait_for_screen(action)?;
+        self.terminal.wait_for_screen("Quit")?;
         assert_eq!(
-            mutations,
-            if trust_level.is_some() {
-                vec!["thread/start"]
-            } else {
-                vec!["config/batchWrite", "thread/start"]
-            }
+            self.terminal
+                .screen_contents()
+                .lines()
+                .map(str::trim)
+                .skip_while(|line| *line != "Folder access")
+                .skip(/*n*/ 1)
+                .find(|line| !line.is_empty()),
+            Some(self.project_key.as_str()),
+        );
+        // Keep the existing protected-screen input-boundary settling convention. No
+        // confirmation is sent until this screen is visible and pending state is checked.
+        tokio::time::sleep(Duration::from_millis(/*millis*/ 200)).await;
+        self.terminal.ensure_running()?;
+        assert_eq!(
+            std::fs::read_to_string(&self.config_path)?,
+            self.initial_config,
+        );
+        self.assert_no_model_requests().await;
+        Ok(())
+    }
+
+    async fn assert_no_model_requests(&self) {
+        // Inspect all received Responses requests, including titles and unmatched requests,
+        // rather than treating an empty user-response recorder as proof of inactivity.
+        let requests = self.server.received_requests().await.unwrap();
+        assert!(
+            requests
+                .iter()
+                .all(|request| !request.url.path().ends_with("/responses")),
+            "model request crossed the pending/cancelled consent boundary: {requests:?}",
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn embedded_unknown_folder_acceptance_persists_trust_and_completes_turn() -> Result<()> {
+    const PROMPT: &str = "unknown-folder-acceptance-probe";
+    let mut test = EmbeddedTrustTest::start(SavedTrust::Unknown, PROMPT).await?;
+    test.wait_for_consent("Trust and continue").await?;
+    let initial: toml::Value = toml::from_str(&test.initial_config)?;
+    assert_eq!(initial["projects"].get(test.project_key.as_str()), None);
+
+    test.terminal.write_input(b"\r")?;
+    test.terminal.wait_for_screen(COMPLETION)?;
+    test.terminal.ensure_running()?;
+    let request = test.completion_mock.single_request();
+    assert!(
+        request
+            .message_input_texts("user")
+            .contains(&PROMPT.to_string())
+    );
+    let instructions = request.message_input_texts("developer").join("\n");
+    assert!(instructions.contains(PROJECT_INSTRUCTIONS));
+    assert!(!instructions.contains(HOME_INSTRUCTIONS));
+
+    let saved: toml::Value = toml::from_str(&std::fs::read_to_string(&test.config_path)?)?;
+    let mut expected_projects = initial["projects"].clone();
+    expected_projects
+        .as_table_mut()
+        .context("expected projects table")?
+        .insert(
+            test.project_key.clone(),
+            toml::Value::Table(toml::toml! {
+                trust_level = "trusted"
+            }),
+        );
+    // Compare the entire trust table: acceptance must not grant trust to a broader root.
+    assert_eq!(saved["projects"], expected_projects);
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn embedded_saved_untrusted_folder_completes_with_project_config_disabled() -> Result<()> {
+    const PROMPT: &str = "saved-untrusted-restricted-probe";
+    let mut test = EmbeddedTrustTest::start(SavedTrust::Untrusted, PROMPT).await?;
+    test.wait_for_consent("Open restricted").await?;
+    let initial: toml::Value = toml::from_str(&test.initial_config)?;
+    assert_eq!(
+        initial["projects"][test.project_key.as_str()]["trust_level"].as_str(),
+        Some("untrusted"),
+    );
+
+    test.terminal.write_input(b"\r")?;
+    test.terminal.wait_for_screen(COMPLETION)?;
+    test.terminal.ensure_running()?;
+    let request = test.completion_mock.single_request();
+    assert!(
+        request
+            .message_input_texts("user")
+            .contains(&PROMPT.to_string())
+    );
+    let instructions = request.message_input_texts("developer").join("\n");
+    assert!(instructions.contains(HOME_INSTRUCTIONS));
+    assert!(
+        !request.body_contains_text(PROJECT_INSTRUCTIONS),
+        "restricted session loaded project-local developer instructions",
+    );
+    let saved: toml::Value = toml::from_str(&std::fs::read_to_string(&test.config_path)?)?;
+    assert_eq!(saved["projects"], initial["projects"]);
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn embedded_folder_cancellation_exits_without_model_request_or_trust_write() -> Result<()> {
+    for trust in [SavedTrust::Unknown, SavedTrust::Untrusted] {
+        let mut test = EmbeddedTrustTest::start(trust, "cancelled-folder-launch-probe").await?;
+        let action = match trust {
+            SavedTrust::Unknown => "Trust and continue",
+            SavedTrust::Untrusted => "Open restricted",
+        };
+        test.wait_for_consent(action).await?;
+        test.terminal.write_input(b"\x1b")?;
+        // Observe a real successful exit, not the helper's Drop-driven child kill.
+        let status = test.terminal.wait_for_exit()?;
+        assert!(status.success(), "folder cancellation exited with {status}");
+        test.assert_no_model_requests().await;
+        assert_eq!(
+            std::fs::read_to_string(&test.config_path)?,
+            test.initial_config,
         );
     }
     Ok(())

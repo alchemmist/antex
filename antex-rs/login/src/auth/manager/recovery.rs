@@ -142,8 +142,11 @@ impl RecoveryOwner {
         if !self.matches_auth(loaded.as_ref()) {
             return Err(owner_changed());
         }
-        let changed =
-            !AuthManager::auths_equal_for_refresh(manager.auth_cached().as_ref(), loaded.as_ref());
+        let cached = manager.auth_cached();
+        let changed = !AuthManager::auths_equal_for_refresh(cached.as_ref(), loaded.as_ref());
+        if changed && !same_owner(cached.as_ref(), loaded.as_ref()) {
+            return Err(owner_changed());
+        }
         manager.set_cached_auth_with_owner(loaded, Some(self))?;
         self.check(manager)?;
         Ok(changed)

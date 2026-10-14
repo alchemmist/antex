@@ -1,11 +1,11 @@
 name: build-codex-packages
-description: Build and smoke-test unsigned Codex CLI and app-server release packages.
+description: Build and smoke-test the unsigned Antex CLI release package.
 inputs:
   target:
     description: Rust release target triple to build and test.
     required: true
   package-version:
-    description: Semantic version to record in both packages.
+    description: Semantic version to record in the CLI package.
     required: true
   build-mode:
     description: Use release optimizations (release) or disable them for faster smoke coverage (debug).
@@ -23,8 +23,8 @@ runs:
       shell: bash
       working-directory: antex-rs
       env:
-        BASE_BINARIES: "codex antex-app-server antex-code-mode-host"
-        WINDOWS_ONLY_BINARIES: "codex-command-runner antex-windows-sandbox-setup"
+        BASE_BINARIES: "antex antex-code-mode-host"
+        WINDOWS_ONLY_BINARIES: "antex-command-runner antex-windows-sandbox-setup"
         BUILD_MODE: ${{ inputs.build-mode }}
         BUILD_SYSTEM: ${{ inputs.build-system }}
         PACKAGE_ACTION_PATH: ${{ github.action_path }}
@@ -147,27 +147,18 @@ runs:
         fi
         if [[ "$RUNNER_OS" == "Windows" ]]; then
           package_args+=(
-            --antex-command-runner-bin "${release_dir}/codex-command-runner.exe"
+            --antex-command-runner-bin "${release_dir}/antex-command-runner.exe"
             --antex-windows-sandbox-setup-bin "${release_dir}/antex-windows-sandbox-setup.exe"
           )
         fi
 
-        python3 "${PACKAGE_SOURCE_ROOT}/scripts/build_antex_package.py" \
+        ANTEX_REPO_ROOT="$PACKAGE_SOURCE_ROOT" python3 "${PACKAGE_SOURCE_ROOT}/scripts/build_antex_package.py" \
           "${package_args[@]}" \
-          --variant codex \
-          --entrypoint-bin "${release_dir}/codex${exe_suffix}" \
+          --variant antex \
+          --entrypoint-bin "${release_dir}/antex${exe_suffix}" \
           --package-dir "${RUNNER_TEMP}/codex-package-${target}" \
           --archive-output "${archive_dir}/codex-package-${target}.tar.gz" \
           --archive-output "${archive_dir}/codex-package-${target}.tar.zst"
-
-        python3 "${PACKAGE_SOURCE_ROOT}/scripts/build_antex_package.py" \
-          "${package_args[@]}" \
-          --variant antex-app-server \
-          --entrypoint-bin "${release_dir}/antex-app-server${exe_suffix}" \
-          --package-dir "${RUNNER_TEMP}/codex-app-server-package-${target}" \
-          --archive-output "${archive_dir}/codex-app-server-package-${target}.tar.gz" \
-          --archive-output "${archive_dir}/codex-app-server-package-${target}.tar.zst"
-
     - name: Smoke-test assembled packages
       shell: bash
       working-directory: antex-rs
@@ -197,11 +188,9 @@ runs:
         uv run --frozen pytest "${pytest_args[@]}" \
           --compression gzip \
           --cli-archive "${archive_dir}/codex-package-${target}.tar.gz" \
-          --app-server-archive "${archive_dir}/codex-app-server-package-${target}.tar.gz" \
-          test_codex_package.py
+          test_antex_package.py
 
         uv run --frozen pytest "${pytest_args[@]}" \
           --compression zstd \
           --cli-archive "${archive_dir}/codex-package-${target}.tar.zst" \
-          --app-server-archive "${archive_dir}/codex-app-server-package-${target}.tar.zst" \
-          test_codex_package.py
+          test_antex_package.py

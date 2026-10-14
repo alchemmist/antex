@@ -353,6 +353,49 @@ async fn same_thread_retry_keeps_subscription_and_restores_draft() -> Result<()>
     Ok(())
 }
 
+#[tokio::test]
+async fn embedded_resume_checks_loaded_state_before_folder_consent() -> Result<()> {
+    let (mut app, _home) = make_history_test_app().await?;
+    app.app_server_target = AppServerTarget::Embedded;
+    app.harness_overrides.cwd = Some(app.config.cwd.to_path_buf());
+    crate::legacy_core::config::set_project_trust_level(
+        app.config.codex_home.as_path(),
+        app.config.cwd.as_path(),
+        antex_protocol::config_types::TrustLevel::Trusted,
+    )
+    .map_err(std::io::Error::other)?;
+    let (mut server, requests, proxy) = start_recording_app_server(
+        &app.config,
+        /*blocked_thread_list*/ None,
+        /*failed_thread_name*/ None,
+    )
+    .await?;
+    let started = server.start_thread(&app.config).await?;
+    let thread_id = started.session.thread_id;
+    requests.lock().expect("request recorder lock").clear();
+    let mut tui = crate::tui::test_support::make_test_tui()?;
+    let result = app
+        .resume_config_for_target(
+            &mut tui,
+            &mut server,
+            &crate::resume_picker::SessionTarget {
+                path: None,
+                thread_id,
+                cwd: None,
+                history_mode: None,
+            },
+        )
+        .await;
+    assert!(result.is_ok());
+    assert_eq!(
+        recorded_params(&requests, "thread/read"),
+        vec![serde_json::json!({"threadId": thread_id.to_string()})],
+    );
+    assert!(recorded_params(&requests, "thread/resume").is_empty());
+    proxy.abort();
+    Ok(())
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum HistoryCapabilities {
     Current,
@@ -828,10 +871,6 @@ async fn delete_current_thread_navigates_only_after_success() -> Result<()> {
     let endpoint = crate::resolve_remote_addr("ws://127.0.0.1:4500")?;
     for target in [
         AppServerTarget::Embedded,
-        AppServerTarget::LocalDaemon {
-            allow_embedded_fallback: true,
-            endpoint: endpoint.clone(),
-        },
         AppServerTarget::Remote { endpoint },
     ] {
         let (mut app, _antex_home) = make_history_test_app().await?;
@@ -1147,22 +1186,17 @@ async fn archive_current_thread_reports_success_only_after_archiving() -> Result
 #[tokio::test]
 async fn archive_current_thread_returns_shared_servers_to_agents() -> Result<()> {
     let endpoint = crate::resolve_remote_addr("ws://127.0.0.1:4500")?;
-    for (target, attachment, side_exists) in [
-        AppServerTarget::LocalDaemon {
-            allow_embedded_fallback: true,
-            endpoint: endpoint.clone(),
-        },
-        AppServerTarget::Remote { endpoint },
-    ]
-    .into_iter()
-    .flat_map(|target| {
-        [
-            (ThreadEventAttachment::Live, true),
-            (ThreadEventAttachment::ReplayOnly, true),
-            (ThreadEventAttachment::ReplayOnly, false),
-        ]
-        .map(|(attachment, side_exists)| (target.clone(), attachment, side_exists))
-    }) {
+    for (target, attachment, side_exists) in [AppServerTarget::Remote { endpoint }]
+        .into_iter()
+        .flat_map(|target| {
+            [
+                (ThreadEventAttachment::Live, true),
+                (ThreadEventAttachment::ReplayOnly, true),
+                (ThreadEventAttachment::ReplayOnly, false),
+            ]
+            .map(|(attachment, side_exists)| (target.clone(), attachment, side_exists))
+        })
+    {
         let (mut app, _antex_home) = make_history_test_app().await?;
         let thread_id =
             create_history_rollout(&app.config, ThreadHistoryMode::Legacy, "archive me")?;
@@ -3211,8 +3245,7 @@ async fn agents_overview_seeds_loaded_threads_when_recent_listing_is_unavailable
         )
         .await?;
         let started = app_server.start_thread(&app.config).await?;
-        app.app_server_target = AppServerTarget::LocalDaemon {
-            allow_embedded_fallback: true,
+        app.app_server_target = AppServerTarget::Remote {
             endpoint: crate::RemoteAppServerEndpoint::UnixSocket {
                 socket_path: test_path_buf("/tmp/unused.sock").abs(),
             },
@@ -4135,10 +4168,7 @@ async fn changing_directory_preserves_project_trust_permissions_history_and_hook
     };
     let mut stale_config = app.rebuild_config_for_cwd(untrusted.clone()).await?;
     stale_config.active_project.trust_level = None;
-    app.app_server_target = crate::AppServerTarget::LocalDaemon {
-        endpoint: crate::resolve_remote_addr("ws://127.0.0.1:8765")?,
-        allow_embedded_fallback: false,
-    };
+    app.app_server_target = crate::AppServerTarget::Embedded;
     history();
     assert!(
         app.confirm_directory_trust(
@@ -4682,7 +4712,14 @@ fn session_lifecycle_avoids_redundant_subagent_metadata_reads() -> Result<()> {
 
                 assert!(matches!(control, AppRunControl::Continue));
                 assert_eq!(app.chat_widget.thread_id(), Some(root_thread_id));
-                assert_eq!(take_backfill_counts(&requests), (1, expected_reads));
+                assert_eq!(
+                    recorded_params(&requests, "thread/read")
+                        .iter()
+                        .filter(|params| params["threadId"] == root_thread_id.to_string())
+                        .count(),
+                    1,
+                );
+                assert_eq!(take_backfill_counts(&requests), (1, expected_reads + 1));
                 assert_eq!(
                     app.agent_navigation.get(&child_thread_id),
                     Some(&AgentPickerThreadEntry {
@@ -4813,13 +4850,7 @@ mod startup_defaults_tests;
 #[tokio::test]
 async fn external_writer_escape_preserves_snapshot_and_explicit_quits() -> Result<()> {
     let endpoint = crate::resolve_remote_addr("ws://127.0.0.1:4500")?;
-    for target in [
-        AppServerTarget::LocalDaemon {
-            allow_embedded_fallback: true,
-            endpoint: endpoint.clone(),
-        },
-        AppServerTarget::Remote { endpoint },
-    ] {
+    for target in [AppServerTarget::Remote { endpoint }] {
         let (mut app, _antex_home) = make_history_test_app().await?;
         let thread_id =
             create_history_rollout(&app.config, ThreadHistoryMode::Legacy, "owned elsewhere")?;
@@ -4999,10 +5030,7 @@ async fn command_center_read_only_open_requests_and_failure_preservation() -> Re
             LoaderOverrides::default(),
         )
         .await?;
-        app.app_server_target = AppServerTarget::LocalDaemon {
-            allow_embedded_fallback: true,
-            endpoint: crate::resolve_remote_addr("ws://127.0.0.1:4500")?,
-        };
+        app.app_server_target = AppServerTarget::Embedded;
         let current = Box::pin(server.start_thread(&app.config)).await?;
         let current_id = current.session.thread_id;
         app.enqueue_primary_thread_session(current.session, current.turns)

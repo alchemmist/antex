@@ -10,7 +10,6 @@ use antex_app_server::PluginStartupTasks;
 use antex_app_server::RemoteControlStartupMode;
 use antex_app_server::run_main_with_transport_options;
 use antex_app_server_protocol::ClientRequest;
-use antex_app_server_protocol::InitializeCapabilities;
 use antex_app_server_protocol::JSONRPCError;
 use antex_app_server_protocol::JSONRPCResponse;
 use antex_app_server_protocol::RemoteControlClient;
@@ -263,7 +262,7 @@ async fn explicit_remote_control_startup_fails_when_disabled_by_requirements() -
 }
 
 #[tokio::test]
-async fn listen_off_honors_persisted_remote_control_enable() -> Result<()> {
+async fn explicit_remote_control_startup_reuses_persisted_enrollment() -> Result<()> {
     let codex_home = TempDir::new()?;
     let listener = configured_remote_control_listener(codex_home.path()).await?;
     let websocket_url = format!(
@@ -290,7 +289,7 @@ async fn listen_off_honors_persisted_remote_control_enable() -> Result<()> {
     let _app_server = TestAppServer::builder()
         .with_antex_home(codex_home.path())
         .without_auto_env()
-        .with_args(&["--listen", "off"])
+        .with_args(&["--listen", "off", "--remote-control"])
         .build()
         .await?;
     let request = timeout(STARTUP_TIMEOUT, read_http_request(&listener)).await??;
@@ -444,6 +443,58 @@ async fn remote_control_status_read_returns_disabled_status() -> Result<()> {
     assert!(!received.server_name.is_empty());
     assert_eq!(received.environment_id, None);
     assert!(!received.installation_id.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn stdio_startup_keeps_remote_control_disabled_until_explicitly_enabled() -> Result<()> {
+    let codex_home = TempDir::new()?;
+    let listener = configured_remote_control_listener(codex_home.path()).await?;
+    let websocket_url = format!(
+        "ws://{}/backend-api/wham/remote/control/server",
+        listener.local_addr()?
+    );
+    let state_db = StateRuntime::init(
+        antex_state::SqliteConfig::new_for_testing(codex_home.path().abs()),
+        "test-provider".to_string(),
+    )
+    .await?;
+    let enrollment = RemoteControlEnrollmentRecord {
+        websocket_url: websocket_url.clone(),
+        account_id: "account_id".to_string(),
+        app_server_client_name: Some(DEFAULT_CLIENT_NAME.to_string()),
+        server_id: "server-id".to_string(),
+        environment_id: "environment-id".to_string(),
+        server_name: "server-name".to_string(),
+        remote_control_enabled: Some(true),
+    };
+    state_db
+        .upsert_remote_control_enrollment(&enrollment)
+        .await?;
+
+    let mut app_server = TestAppServer::builder()
+        .with_antex_home(codex_home.path())
+        .without_auto_env()
+        .build_initialized()
+        .await?;
+    let received: RemoteControlStatusReadResponse = app_server
+        .request(|request_id| ClientRequest::RemoteControlStatusRead {
+            request_id,
+            params: None,
+        })
+        .await?;
+    assert_eq!(received.status, RemoteControlConnectionStatus::Disabled);
+    assert_eq!(
+        state_db
+            .get_remote_control_enrollment(&websocket_url, "account_id", Some(DEFAULT_CLIENT_NAME),)
+            .await?,
+        Some(enrollment)
+    );
+    let status = timeout(DEFAULT_TIMEOUT, app_server.shutdown_gracefully()).await??;
+    assert!(status.success());
+    timeout(Duration::from_millis(100), listener.accept())
+        .await
+        .expect_err("foreground startup and shutdown must not enroll remote control");
     Ok(())
 }
 
@@ -714,84 +765,6 @@ async fn rpc_updates_durable_preference_but_ephemeral_does_not() -> Result<()> {
         Some(false)
     );
 
-    assert!(
-        !codex_home
-            .path()
-            .join("app-server-daemon/settings.json")
-            .exists()
-    );
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn managed_rpc_persists_unless_daemon_lock_is_busy() -> Result<()> {
-    use super::daemon_update_recovery::connect_daemon_client;
-    use super::daemon_update_recovery::request;
-    use super::daemon_update_recovery::spawn_server;
-    use serde_json::json;
-
-    let home = TempDir::new()?;
-    let mut backend = BlockingRemoteControlBackend::start(home.path()).await?;
-    let socket = home.path().join("control/server.sock");
-    let settings_file = home.path().join("app-server-daemon/settings.json");
-    let _server = spawn_server(home.path(), &socket)?;
-    let mut client = connect_daemon_client(
-        &socket,
-        InitializeCapabilities {
-            experimental_api: true,
-            ..Default::default()
-        },
-    )
-    .await?;
-    let enable = request(
-        &mut client,
-        /*id*/ 2,
-        "remoteControl/enable",
-        json!(null),
-    );
-    let enroll = async {
-        timeout(DEFAULT_TIMEOUT, backend.wait_for_enroll_request()).await??;
-        backend.complete_enrollment()
-    };
-    tokio::try_join!(enable, enroll)?;
-    let mut settings = tokio::fs::read(&settings_file).await?;
-    assert_eq!(
-        serde_json::from_slice::<serde_json::Value>(&settings)?,
-        json!({"remoteControlEnabled": true})
-    );
-    for (id, method, ephemeral) in [
-        (3, "remoteControl/disable", true),
-        (4, "remoteControl/disable", false),
-        (5, "remoteControl/enable", true),
-    ] {
-        request(&mut client, id, method, json!({"ephemeral": ephemeral})).await?;
-        let updated = tokio::fs::read(&settings_file).await?;
-        if ephemeral {
-            assert_eq!(updated, settings);
-        } else {
-            assert_eq!(
-                serde_json::from_slice::<serde_json::Value>(&updated)?,
-                json!({"remoteControlEnabled": false})
-            );
-        }
-        settings = updated;
-    }
-    // A lifecycle operation holding daemon.lock must not block the RPC or
-    // allow it to overwrite other settings being changed by the daemon.
-    let lock = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(settings_file.with_file_name("daemon.lock"))?;
-    lock.lock()?;
-    request(
-        &mut client,
-        /*id*/ 6,
-        "remoteControl/enable",
-        json!(null),
-    )
-    .await?;
-    assert_eq!(tokio::fs::read(&settings_file).await?, settings);
     Ok(())
 }
 

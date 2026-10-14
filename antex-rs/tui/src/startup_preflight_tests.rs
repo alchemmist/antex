@@ -111,24 +111,6 @@ fn startup_delays_composer_for_homes_without_authentication_state() -> std::io::
         std::fs::remove_file(state_path)?;
     }
 
-    let daemon_directory = codex_home.join("app-server-control");
-    std::fs::create_dir(&daemon_directory)?;
-    assert!(should_delay_startup_composer_for_first_login(
-        &codex_home,
-        Ok(system_config_path.clone()),
-        || Ok(false),
-        |_| None,
-    ));
-    std::fs::write(daemon_directory.join("app-server-control.sock"), "")?;
-    assert!(!should_delay_startup_composer_for_first_login(
-        &codex_home,
-        Ok(system_config_path.clone()),
-        || panic!("daemon-owned homes should not probe managed configuration"),
-        |_| None,
-    ));
-    std::fs::remove_file(daemon_directory.join("app-server-control.sock"))?;
-    std::fs::remove_dir(daemon_directory)?;
-
     let additional_temporary_state = codex_home.join("tmp").join("other");
     std::fs::write(&additional_temporary_state, "")?;
     assert!(should_delay_startup_composer_for_first_login(
@@ -168,16 +150,6 @@ fn startup_keeps_composer_when_home_state_cannot_be_confirmed() -> std::io::Resu
     {
         let system_config_path =
             AbsolutePathBuf::from_absolute_path(temporary_directory.path().join("system.toml"))?;
-        let daemon_directory = codex_home.join("app-server-control");
-        std::fs::write(&daemon_directory, "not a directory")?;
-        assert!(!should_delay_startup_composer_for_first_login(
-            &codex_home,
-            Ok(system_config_path.clone()),
-            || panic!("ambiguous daemon state should not probe managed configuration"),
-            |_| None,
-        ));
-        std::fs::remove_file(&daemon_directory)?;
-
         let blocking_parent = temporary_directory.path().join("blocking-home-parent");
         std::fs::write(&blocking_parent, "not a directory")?;
         assert!(!should_delay_startup_composer_for_first_login(

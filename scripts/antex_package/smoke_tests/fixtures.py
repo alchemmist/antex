@@ -19,19 +19,15 @@ class SmokePackage:
     cli: Path
     cli_root: Path
     cli_path_dir: Path
-    app_server: Path
-    app_server_root: Path
-    app_server_path_dir: Path
     directory: Path
     environment: dict[str, str]
 
     @classmethod
-    def from_archives(
+    def from_archive(
         cls,
         directory: Path,
         target: str,
         cli_archive: Path,
-        app_server_archive: Path,
         compression: str,
     ) -> Self:
         config_dir = directory / "antex-config"
@@ -56,27 +52,17 @@ class SmokePackage:
         environment.pop("BASH_ENV", None)
         environment["ZDOTDIR"] = str(directory)
 
-        extracted_packages = []
-        for index, archive_path in enumerate((cli_archive, app_server_archive)):
-            extracted = directory / f"package-{index}"
-            extracted.mkdir()
-            decompress = zstandard.open if compression == "zstd" else gzip.open
-            with (
-                decompress(archive_path, "rb") as source,
-                tarfile.open(fileobj=source, mode="r|") as archive,
-            ):
-                archive.extractall(extracted, filter="data")
-            manifest = json.loads((extracted / "antex-package.json").read_text())
-            extracted_packages.append(
-                (
-                    extracted,
-                    extracted / manifest["entrypoint"],
-                    extracted / manifest["pathDir"],
-                )
-            )
-
-        cli_root, cli, cli_path_dir = extracted_packages[0]
-        app_server_root, app_server, app_server_path_dir = extracted_packages[1]
+        cli_root = directory / "package"
+        cli_root.mkdir()
+        decompress = zstandard.open if compression == "zstd" else gzip.open
+        with (
+            decompress(cli_archive, "rb") as source,
+            tarfile.open(fileobj=source, mode="r|") as archive,
+        ):
+            archive.extractall(cli_root, filter="data")
+        manifest = json.loads((cli_root / "antex-package.json").read_text())
+        cli = cli_root / manifest["entrypoint"]
+        cli_path_dir = cli_root / manifest["pathDir"]
 
         (config_dir / "config.toml").write_text(
             """approval_policy = "never"
@@ -108,9 +94,6 @@ metrics_exporter = "none"
             cli=cli,
             cli_root=cli_root,
             cli_path_dir=cli_path_dir,
-            app_server=app_server,
-            app_server_root=app_server_root,
-            app_server_path_dir=app_server_path_dir,
             directory=directory,
             environment=environment,
         )
@@ -150,11 +133,10 @@ def package(
                 capture_output=True,
                 text=True,
             )
-    return SmokePackage.from_archives(
+    return SmokePackage.from_archive(
         directory,
         target,
         request.config.getoption("cli_archive"),
-        request.config.getoption("app_server_archive"),
         compression,
     )
 
@@ -192,7 +174,7 @@ def code_mode_host_debug_symbols(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> Path:
     target = pytestconfig.getoption("package_target")
-    binaries = {"antex", "antex-app-server", "antex-code-mode-host"}
+    binaries = {"antex", "antex-code-mode-host"}
     if "windows" in target:
         binaries.update({"antex-command-runner", "antex-windows-sandbox-setup"})
 

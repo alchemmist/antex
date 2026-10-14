@@ -4,6 +4,7 @@ use antex_core::TurnInputRequest;
 use antex_core::windows_sandbox::WindowsSandboxLevelExt;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use antex_config::DEFAULT_MCP_SERVER_ENVIRONMENT_ID;
@@ -206,6 +207,11 @@ async fn skill_mcp_dependency_oauth_uses_configured_http_client() -> Result<()> 
     if std::env::var_os(PROXY_TEST_SUBPROCESS_ENV_VAR).is_none() {
         let proxy = MockServer::start().await;
         let _apps_server = AppsTestServer::mount(&proxy).await?;
+        let skill_callback_listener = TcpListener::bind("127.0.0.1:0").await?;
+        let skill_callback_port = skill_callback_listener.local_addr()?.port();
+        let skill_callback_reservation = Mutex::new(Some(skill_callback_listener));
+        let global_callback_listener = TcpListener::bind("127.0.0.1:0").await?;
+        let global_callback_port = global_callback_listener.local_addr()?.port();
         let challenge = "Bearer resource_metadata=\"http://mcp-proxy.invalid/oauth-resource\"";
         Mock::given(method("GET"))
             .and(path("/api/codex/ps/mcp"))
@@ -222,13 +228,24 @@ async fn skill_mcp_dependency_oauth_uses_configured_http_client() -> Result<()> 
             .await;
         Mock::given(method("GET"))
             .and(path("/.well-known/oauth-authorization-server"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "authorization_endpoint": "http://mcp-proxy.invalid/oauth/authorize",
-                "token_endpoint": "http://mcp-proxy.invalid/oauth/token",
-                "registration_endpoint": "http://mcp-proxy.invalid/oauth/register",
-                "response_types_supported": ["code"],
-                "code_challenge_methods_supported": ["S256"],
-            })))
+            .respond_with(move |_: &wiremock::Request| {
+                // Reserve the skill port throughout child/fixture startup. Login binds it
+                // after discovery and before registration; releasing it before spawning
+                // the child lets another test (or the child's own mock server) take it.
+                drop(
+                    skill_callback_reservation
+                        .lock()
+                        .expect("skill callback reservation lock should not be poisoned")
+                        .take(),
+                );
+                ResponseTemplate::new(200).set_body_json(json!({
+                    "authorization_endpoint": "http://mcp-proxy.invalid/oauth/authorize",
+                    "token_endpoint": "http://mcp-proxy.invalid/oauth/token",
+                    "registration_endpoint": "http://mcp-proxy.invalid/oauth/register",
+                    "response_types_supported": ["code"],
+                    "code_challenge_methods_supported": ["S256"],
+                }))
+            })
             .mount(&proxy)
             .await;
         Mock::given(method("POST"))
@@ -237,14 +254,11 @@ async fn skill_mcp_dependency_oauth_uses_configured_http_client() -> Result<()> 
             .mount(&proxy)
             .await;
 
-        let skill_callback_listener = TcpListener::bind("127.0.0.1:0").await?;
-        let skill_callback_port = skill_callback_listener.local_addr()?.port();
-        let global_callback_listener = TcpListener::bind("127.0.0.1:0").await?;
-        let global_callback_port = global_callback_listener.local_addr()?.port();
-        drop(skill_callback_listener);
-
         let mut command = Command::new(std::env::current_exe()?);
-        command.arg("--exact").arg(SKILL_TEST_NAME);
+        command
+            .arg("--exact")
+            .arg(SKILL_TEST_NAME)
+            .arg("--nocapture");
         for &key in antex_network_proxy::PROXY_ENV_KEYS {
             command.env_remove(key);
         }
@@ -278,7 +292,9 @@ async fn skill_mcp_dependency_oauth_uses_configured_http_client() -> Result<()> 
             })
             .unwrap_or_else(|| {
                 panic!(
-                    "skill dependency OAuth registration should use the configured proxy: {requests:#?}"
+                    "skill dependency OAuth registration should use the configured proxy: {requests:#?}\nstdout:\n{}\nstderr:\n{}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr),
                 )
             });
         let registration: Value = serde_json::from_slice(&registration_request.body)?;

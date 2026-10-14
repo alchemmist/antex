@@ -48,10 +48,6 @@ pub(crate) fn dispatch() -> anyhow::Result<Option<()>> {
         return Ok(None);
     };
     ensure!(
-        cli.remote.remote.is_none() && cli.remote.remote_auth_token_env.is_none(),
-        "migration operates on local data; omit remote options"
-    );
-    ensure!(
         cli.config_overrides.raw_overrides.is_empty()
             && cli.feature_toggles.to_overrides()?.is_empty(),
         "migration reads source configuration; omit configuration overrides"

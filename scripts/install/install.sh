@@ -7,7 +7,18 @@ NON_INTERACTIVE="${ANTEX_NON_INTERACTIVE:-false}"
 RELEASES_BASE_URL="${ANTEX_RELEASES_BASE_URL:-}"
 PREFER_RELEASE_MIRROR="false"
 if [ -n "$RELEASES_BASE_URL" ]; then PREFER_RELEASE_MIRROR="true"; fi
-DAEMON_ONLY="${ANTEX_INSTALL_DAEMON_ONLY:-0}"
+# Retired updater modes must never fall through to a foreground CLI install.
+for retired_mode in ANTEX_INSTALL_DAEMON_ONLY ANTEX_INSTALL_DEFER_SELECTION ANTEX_INSTALL_IF_CURRENT; do
+  case "$retired_mode" in
+    ANTEX_INSTALL_DAEMON_ONLY) retired_value="${ANTEX_INSTALL_DAEMON_ONLY:-0}" ;;
+    ANTEX_INSTALL_DEFER_SELECTION) retired_value="${ANTEX_INSTALL_DEFER_SELECTION:-0}" ;;
+    ANTEX_INSTALL_IF_CURRENT) retired_value="${ANTEX_INSTALL_IF_CURRENT:-0}" ;;
+  esac
+  if [ "$retired_value" != "0" ]; then
+    echo "$retired_mode is no longer supported; run the standalone installer manually." >&2
+    exit 1
+  fi
+done
 RELEASES_CONNECT_TIMEOUT=10
 RELEASES_METADATA_TIMEOUT=30
 RELEASES_ASSET_TIMEOUT=300
@@ -24,22 +35,43 @@ if [ ! -e "$ANTEX_HOME_DIR" ] && [ -d "$legacy_home" ] && [ -n "$(ls -A "$legacy
   migration_needed="true"
   STANDALONE_ROOT="$BIN_DIR/.antex-bootstrap"
 fi
-if [ "$DAEMON_ONLY" = "1" ]; then
-  STANDALONE_ROOT="$ANTEX_HOME_DIR/packages/app-server-daemon"
-fi
 RELEASES_DIR="$STANDALONE_ROOT/releases"
 CURRENT_LINK="$STANDALONE_ROOT/current"
-if [ "${ANTEX_INSTALL_DEFER_SELECTION:-0}" = "1" ]; then
-  if [ "$DAEMON_ONLY" != "1" ]; then
-    echo "Deferred selection requires a daemon-only installation." >&2
-    exit 1
-  fi
-  CURRENT_LINK="$STANDALONE_ROOT/.migration-current"
-fi
 AUTO_UPDATE_VERSION="$STANDALONE_ROOT/auto-update-version"
 LOCK_FILE="$STANDALONE_ROOT/install.lock"
 LOCK_DIR="$STANDALONE_ROOT/install.lock.d"
 LOCK_STALE_AFTER_SECS=600
+
+# Read-only compatibility guard: an already-running legacy updater must not
+# replace the user's foreground CLI, even when its latest-channel CAS matches.
+# Leave the legacy process and its state untouched.
+for updater_record in "$ANTEX_HOME_DIR/app-server-daemon/app-server-updater.pid" "$ANTEX_HOME_DIR/app-server-daemon/daemon-updater.pid"; do
+  [ -f "$updater_record" ] || continue
+  updater_pid="$(sed -n 's/.*"pid"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$updater_record" | head -n 1)"
+  recorded_start="$(sed -n 's/.*"processStartTime"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$updater_record" | head -n 1)"
+  if [ -r "/proc/$$/stat" ]; then
+    parent_pid="$(sed 's/^.*) //' "/proc/$$/stat" | awk '{ print $2 }')"
+  else
+    parent_pid="$(ps -p "$$" -o ppid= 2>/dev/null)" || parent_pid=""
+    parent_pid="$(printf '%s' "$parent_pid" | tr -d ' ')"
+  fi
+  actual_start=""
+  if [ -n "$updater_pid" ] && [ "$updater_pid" = "$parent_pid" ]; then
+    actual_details="$(ps -p "$updater_pid" -o stat= -o lstart= 2>/dev/null)" || actual_details=""
+    actual_start="$(printf '%s' "$actual_details" | sed 's/^[^[:space:]]*[[:space:]]*//; s/[[:space:]]*$//')"
+    if [ -n "$recorded_start" ] && [ "$recorded_start" = "$actual_start" ]; then
+      echo "Legacy daemon updater installation is no longer supported; run the standalone installer manually." >&2
+      exit 1
+    fi
+  fi
+  if [ -n "$updater_pid" ] &&
+    { [ -z "$parent_pid" ] || { [ "$updater_pid" = "$parent_pid" ] &&
+      { [ -z "$recorded_start" ] || [ -z "$actual_start" ]; }; }; } &&
+    kill -0 "$updater_pid" 2>/dev/null; then
+    echo "Cannot verify whether an older updater launched this installer; refusing installation." >&2
+    exit 1
+  fi
+done
 
 path_action="already"
 path_profile=""
@@ -766,7 +798,7 @@ cleanup_stale_install_artifacts() {
   find "$RELEASES_DIR" -mindepth 1 -maxdepth 1 -name '.staging.*' -exec rm -rf {} +
   find "$STANDALONE_ROOT" -mindepth 1 -maxdepth 1 -name '.current.*' -exec rm -f {} +
 
-  if [ "$DAEMON_ONLY" != "1" ] && [ -d "$BIN_DIR" ]; then
+  if [ -d "$BIN_DIR" ]; then
     find "$BIN_DIR" -mindepth 1 -maxdepth 1 -name '.antex.*' -exec rm -f {} +
   fi
 }
@@ -1219,9 +1251,7 @@ fi
 step "Detected platform: $platform_label"
 step "Resolved version: $resolved_version"
 
-if [ "$DAEMON_ONLY" != "1" ]; then
-  detect_conflicting_install
-fi
+detect_conflicting_install
 
 tmp_dir="$(mktemp -d)"
 cleanup() {
@@ -1237,65 +1267,17 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-if [ "$migration_needed" = "true" ] && [ "$DAEMON_ONLY" = "1" ]; then
-  echo "Existing Codex data found at $legacy_home. Install the release binaries first and run antex migrate before using the managed installer." >&2
-  exit 1
-fi
-
 acquire_install_lock
-if [ "${ANTEX_INSTALL_DEFER_SELECTION:-0}" = "1" ] &&
-  { [ -e "$STANDALONE_ROOT/current" ] || [ -L "$STANDALONE_ROOT/current" ]; }; then
-  echo "A dedicated daemon is already selected; retry the update." >&2
-  exit 1
-fi
-updater_record="$ANTEX_HOME_DIR/app-server-daemon/app-server-updater.pid"
-if [ "$DAEMON_ONLY" = "1" ]; then
-  updater_record="$ANTEX_HOME_DIR/app-server-daemon/daemon-updater.pid"
-fi
-old_updater_parent="false"
-if [ "${ANTEX_INSTALL_IF_LATEST:-}" != "1" ] && [ "${ANTEX_INSTALL_IF_CURRENT:-}" != "1" ] && [ -f "$updater_record" ]; then
-  updater_pid="$(sed -n 's/.*"pid"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$updater_record" | head -n 1)"
-  recorded_start="$(sed -n 's/.*"processStartTime"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$updater_record" | head -n 1)"
-  if [ -r "/proc/$$/stat" ]; then
-    parent_pid="$(sed 's/^.*) //' "/proc/$$/stat" | awk '{ print $2 }')"
-  else
-    parent_pid="$(ps -p "$$" -o ppid= 2>/dev/null)" || parent_pid=""
-    parent_pid="$(printf '%s' "$parent_pid" | tr -d ' ')"
-  fi
-  if [ -n "$updater_pid" ] && [ "$updater_pid" = "$parent_pid" ]; then
-    actual_details="$(ps -p "$updater_pid" -o stat= -o lstart= 2>/dev/null)" || actual_details=""
-    actual_start="$(printf '%s' "$actual_details" | sed 's/^[^[:space:]]*[[:space:]]*//; s/[[:space:]]*$//')"
-    if [ -n "$recorded_start" ] && [ "$recorded_start" = "$actual_start" ]; then
-      old_updater_parent="true"
-    fi
-  fi
-  if [ "$RELEASE" = "latest" ] && [ -n "$updater_pid" ] &&
-    { [ -z "$parent_pid" ] || { [ "$updater_pid" = "$parent_pid" ] &&
-      { [ -z "$recorded_start" ] || [ -z "$actual_start" ]; }; }; } &&
-    kill -0 "$updater_pid" 2>/dev/null; then
-    warn "Cannot verify whether an older updater launched this installer; skipping latest update."
-    exit 0
-  fi
-fi
-if [ "${ANTEX_INSTALL_IF_LATEST:-}" = "1" ] || [ "${ANTEX_INSTALL_IF_CURRENT:-}" = "1" ] || [ "$old_updater_parent" = "true" ]; then
+if [ "${ANTEX_INSTALL_IF_LATEST:-}" = "1" ]; then
   guarded_release="${ANTEX_UPDATE_FROM_RELEASE:-}"
-  if [ "$old_updater_parent" = "true" ]; then
-    guarded_release="$(cat "$AUTO_UPDATE_VERSION" 2>/dev/null || true)"
-  fi
   current_release_dir="$(cd -P "$CURRENT_LINK" 2>/dev/null && pwd)" || exit 0
   releases_dir="$(cd -P "$RELEASES_DIR" 2>/dev/null && pwd)" || exit 0
   if [ "$RELEASE" != "latest" ] || [ -z "$guarded_release" ] ||
     [ "$current_release_dir" != "$releases_dir/$guarded_release" ]; then
-    if [ "${ANTEX_INSTALL_IF_CURRENT:-}" = "1" ]; then
-      echo "Daemon selection changed; retry the update." >&2
-      exit 1
-    fi
     exit 0
   fi
-  # An explicit daemon update may leave a local or pinned release. Scheduled
-  # updates still require the selected release to follow the latest channel.
-  if [ "${ANTEX_INSTALL_IF_CURRENT:-}" != "1" ] &&
-    [ "$(cat "$AUTO_UPDATE_VERSION" 2>/dev/null || true)" != "$guarded_release" ]; then
+  # A guarded standalone update must still follow the latest channel.
+  if [ "$(cat "$AUTO_UPDATE_VERSION" 2>/dev/null || true)" != "$guarded_release" ]; then
     exit 0
   fi
 fi
@@ -1303,10 +1285,6 @@ cleanup_stale_install_artifacts
 
 if ! release_dir_is_complete "$release_dir" "$resolved_version" "$vendor_target" "$install_layout"; then
   if [ -e "$release_dir" ] || [ -L "$release_dir" ]; then
-    if [ "$DAEMON_ONLY" = "1" ]; then
-      echo "Refusing to overwrite existing daemon release $release_dir." >&2
-      exit 1
-    fi
     warn "Found incomplete existing release at $release_dir; reinstalling."
   fi
 
@@ -1336,16 +1314,6 @@ if ! release_dir_is_complete "$release_dir" "$resolved_version" "$vendor_target"
   echo "Installed Antex command did not report expected version $resolved_version." >&2
   exit 1
 fi
-if [ "$DAEMON_ONLY" = "1" ] && [ "${ANTEX_INSTALL_DEFER_SELECTION:-0}" != "1" ]; then
-  installed_antex="$release_dir/antex"
-  if [ "$install_layout" = "package" ]; then
-    installed_antex="$release_dir/bin/antex"
-  fi
-  if ! "$installed_antex" app-server daemon pid-update-loop --check-package-ownership >/dev/null 2>&1; then
-    echo "The production release does not support daemon-owned packages; the current selection was left unchanged." >&2
-    exit 1
-  fi
-fi
 verify_release_command "$release_dir/$(release_antex_relative_path "$release_dir")"
 update_current_link "$release_dir"
 if [ "$RELEASE" = "latest" ]; then
@@ -1353,10 +1321,6 @@ if [ "$RELEASE" = "latest" ]; then
   mv -f "$AUTO_UPDATE_VERSION.tmp.$$" "$AUTO_UPDATE_VERSION"
 else
   rm -f "$AUTO_UPDATE_VERSION"
-fi
-if [ "$DAEMON_ONLY" = "1" ]; then
-  release_install_lock
-  exit 0
 fi
 update_visible_command "$release_dir"
 add_to_path

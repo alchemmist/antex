@@ -26,6 +26,24 @@ A terminal-native coding agent built on [OpenAI Codex](https://github.com/openai
 - Fixes include tmux pane resize redraws, focus-related flickering, and a stable `Working` animation.
 - Install complete macOS and Linux releases with one curl command, or use the root `Makefile` for release downloads and local builds.
 
+## Runtime
+
+Interactive Antex runs its engine inside the foreground CLI process. New sessions,
+resume, fork and worktrees do not discover, install or attach to a shared background
+app-server. Subagents, Code Mode, approvals and saved history remain part of that
+engine. Closing the foreground process ends its live work; saved sessions can be
+resumed later.
+
+The `app-server` command is an on-demand **stdio SDK interface**, not a separately
+installed service. Code Mode and sandbox helpers remain ordinary process-owned
+helpers. Existing launchers may still pass `--no-daemon`; it is a compatibility
+no-op. Cross-client local `antex queue` submission is no longer supported: submit
+queued input in the running TUI instead.
+
+Installing a new CLI does not terminate old clients or remove a previous release's
+running daemon, history or credentials. Open a new foreground session to use the new
+engine; retiring old services is a separate operation after their clients are idle.
+
 ## Install
 
 Install the latest release without cloning the repository:
@@ -77,7 +95,7 @@ Upstream documentation: [developers.openai.com/codex](https://developers.openai.
 
 ## Existing installations
 
-Launch the application with `antex`. To bring over an existing installation, run `antex migrate` to inspect the source and destination. After stopping Codex clients, repeat the command with `--apply`, then use `antex resume`. The migration keeps the original data and writes the new home to `~/.antex`; `--source` and `--destination` select other locations. If the curl installer finds existing Codex data before the Antex home exists, it installs the binaries separately so you can run the migration first. Run the installer again after migrating to enable managed updates.
+Launch the application with `antex`. To bring over an existing installation, run `antex migrate` to inspect the source and destination. After stopping Codex clients, repeat the command with `--apply`, then use `antex resume`. The migration keeps the original data and writes the new home to `~/.antex`; `--source` and `--destination` select other locations. If the curl installer finds existing Codex data before the Antex home exists, it installs the binaries separately so you can run the migration first. Run the installer again after migrating to adopt the standard package layout; subsequent updates use the same installer.
 
 `ANTEX_HOME` selects the Antex home. OpenAI service identifiers, model names, and existing session/protocol field names retain their upstream spelling for compatibility.
 

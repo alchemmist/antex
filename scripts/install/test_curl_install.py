@@ -23,6 +23,15 @@ class CurlInstallationTests(unittest.TestCase):
                 tempfile.TemporaryDirectory(prefix="antex curl ") as directory,
             ):
                 root = Path(directory)
+                preserved = {
+                    "app-server-daemon/settings.json": '{"legacy": true}',
+                    "packages/app-server-daemon/releases/legacy/sentinel": "legacy package",
+                    "history.jsonl": "existing history",
+                }
+                for name, content in preserved.items():
+                    path = root / "antex-home" / name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text(content)
                 archive, checksums, metadata = create_package_release(
                     root, target=target, extra_files=resources
                 )
@@ -36,6 +45,13 @@ class CurlInstallationTests(unittest.TestCase):
                     script_input=INSTALL_SCRIPT.read_text(),
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(
+                    {
+                        name: (root / "antex-home" / name).read_text()
+                        for name in preserved
+                    },
+                    preserved,
+                )
                 package = (root / "install-bin/antex").resolve().parent.parent
                 self.assertEqual(
                     {name: (package / name).read_text() for name in resources},

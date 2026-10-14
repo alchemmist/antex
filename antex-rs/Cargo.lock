@@ -563,32 +563,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "antex-app-server-daemon"
-version = "0.162.1"
-dependencies = [
- "antex-app-server-protocol",
- "antex-app-server-transport",
- "antex-http-client",
- "antex-install-context",
- "antex-uds",
- "antex-utils-cargo-bin",
- "antex-utils-home-dir",
- "anyhow",
- "blake3",
- "futures",
- "libc",
- "pretty_assertions",
- "semver",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "tokio-tungstenite",
- "tracing",
- "windows-sys 0.61.2",
-]
-
-[[package]]
 name = "antex-app-server-protocol"
 version = "0.162.1"
 dependencies = [
@@ -858,8 +832,6 @@ version = "0.162.1"
 dependencies = [
  "antex-api",
  "antex-app-server",
- "antex-app-server-client",
- "antex-app-server-daemon",
  "antex-app-server-protocol",
  "antex-app-server-test-client",
  "antex-arg0",
@@ -3148,7 +3120,6 @@ version = "0.162.1"
 dependencies = [
  "antex-ansi-escape",
  "antex-app-server-client",
- "antex-app-server-daemon",
  "antex-app-server-protocol",
  "antex-arg0",
  "antex-backend-client",

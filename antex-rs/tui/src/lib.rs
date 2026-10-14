@@ -78,7 +78,6 @@ use app_server_session::ThreadParamsMode;
 use color_eyre::eyre::WrapErr;
 use crossterm::SynchronizedUpdate;
 use cwd_prompt::CwdPromptAction;
-pub use daemon_startup::uses_wsl_drvfs;
 pub use session_archive_commands::DeleteConfirmation;
 pub use session_archive_commands::SessionArchiveAction;
 pub use session_archive_commands::SessionArchiveCommandOptions;
@@ -253,7 +252,6 @@ mod unarchive_prompt;
 pub(crate) mod update_action;
 mod workflow;
 mod worktree_startup;
-pub use update_action::DaemonUpdateSource;
 pub use update_action::UpdateAction;
 #[cfg(not(debug_assertions))]
 pub use update_action::get_update_action;
@@ -293,9 +291,6 @@ pub use public_widgets::composer_input::ComposerInput;
 const TUI_LOG_FILE_NAME: &str = "antex-tui.log";
 const INTERACTIVE_OTEL_SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(/*millis*/ 500);
 
-const AUTO_CONNECT_DAEMON_CONNECT_TIMEOUT: std::time::Duration =
-    std::time::Duration::from_millis(50);
-
 #[allow(clippy::too_many_arguments)]
 async fn start_embedded_app_server(
     arg0_paths: Arg0DispatchPaths,
@@ -331,13 +326,7 @@ async fn start_embedded_app_server(
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum AppServerTarget {
     Embedded,
-    LocalDaemon {
-        endpoint: RemoteAppServerEndpoint,
-        allow_embedded_fallback: bool,
-    },
-    Remote {
-        endpoint: RemoteAppServerEndpoint,
-    },
+    Remote { endpoint: RemoteAppServerEndpoint },
 }
 
 impl AppServerTarget {
@@ -346,14 +335,7 @@ impl AppServerTarget {
     }
 
     fn uses_embedded_network_policy(&self) -> bool {
-        matches!(
-            self,
-            Self::Embedded
-                | Self::LocalDaemon {
-                    allow_embedded_fallback: true,
-                    ..
-                }
-        )
+        matches!(self, Self::Embedded)
     }
 
     fn environment_http_client_factory(
@@ -363,16 +345,8 @@ impl AppServerTarget {
     ) -> antex_http_client::HttpClientFactory {
         let factory = config.http_client_factory();
         match self {
-            Self::Embedded
-            | Self::LocalDaemon {
-                allow_embedded_fallback: true,
-                ..
-            } => policy.bind(factory),
-            Self::LocalDaemon {
-                allow_embedded_fallback: false,
-                ..
-            }
-            | Self::Remote { .. } => factory,
+            Self::Embedded => policy.bind(factory),
+            Self::Remote { .. } => factory,
         }
     }
 
@@ -406,9 +380,7 @@ async fn init_state_db_for_app_server_target(
                 .unwrap_or_else(|| config.sqlite_config().state_db_path());
             std::io::Error::other(LocalStateDbStartupError::new(database_path, err))
         }),
-        AppServerTarget::LocalDaemon { .. } | AppServerTarget::Remote { .. } => {
-            Ok(state_db::get_state_db(config).await)
-        }
+        AppServerTarget::Remote { .. } => Ok(state_db::get_state_db(config).await),
     }
 }
 
@@ -523,43 +495,6 @@ async fn connect_remote_app_server(
     Ok(AppServerClient::Remote(app_server))
 }
 
-async fn maybe_probe_default_daemon_socket(codex_home: &Path) -> Option<AbsolutePathBuf> {
-    let socket_path = antex_app_server_client::app_server_control_socket_path(codex_home).ok()?;
-    #[cfg(windows)]
-    let (validated_path, _directory) =
-        antex_uds::validate_private_socket_path(socket_path.as_path()).ok()?;
-    #[cfg(windows)]
-    let validated_path = AbsolutePathBuf::from_absolute_path_checked(validated_path).ok()?;
-    #[cfg(windows)]
-    let probe_path = validated_path.as_path();
-    #[cfg(not(windows))]
-    let probe_path = socket_path.as_path();
-    match tokio::time::timeout(
-        AUTO_CONNECT_DAEMON_CONNECT_TIMEOUT,
-        antex_uds::UnixStream::connect(probe_path),
-    )
-    .await
-    {
-        Ok(Ok(_stream)) => {
-            #[cfg(windows)]
-            _stream.ensure_non_elevated_peer().ok()?;
-            Some(socket_path)
-        }
-        Ok(Err(err)) => {
-            tracing::debug!(%err, socket_path = %socket_path.display(), "skipping default app-server daemon socket");
-            None
-        }
-        Err(_) => {
-            tracing::debug!(
-                socket_path = %socket_path.display(),
-                timeout_ms = AUTO_CONNECT_DAEMON_CONNECT_TIMEOUT.as_millis(),
-                "timed out probing default app-server daemon socket"
-            );
-            None
-        }
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 async fn start_app_server(
     target: &mut AppServerTarget,
@@ -575,35 +510,8 @@ async fn start_app_server(
     environment_manager: Arc<EnvironmentManager>,
     embedded_network_policy: antex_app_server_client::EmbeddedNetworkPolicy,
 ) -> color_eyre::Result<AppServerClient> {
-    let connection = if matches!(target, AppServerTarget::Embedded) {
-        None
-    } else {
-        Some(app_server_connection::connect(target).await)
-    };
-    if let Some(connection) = connection {
-        match connection {
-            Ok(app_server) => return Ok(app_server),
-            Err(err)
-                if matches!(
-                    target,
-                    AppServerTarget::LocalDaemon {
-                        allow_embedded_fallback: true,
-                        ..
-                    }
-                ) =>
-            {
-                tracing::debug!(%err, "local daemon connection failed; starting embedded app server");
-                *target = AppServerTarget::Embedded;
-                *state_db = init_state_db_for_app_server_target(&config, target).await?;
-            }
-            Err(err) if matches!(target, AppServerTarget::LocalDaemon { .. }) => {
-                return Err(color_eyre::eyre::eyre!(
-                    "{err:#}\n{}",
-                    daemon_startup::FAILURE_HINT
-                ));
-            }
-            Err(err) => return Err(err),
-        }
+    if matches!(target, AppServerTarget::Remote { .. }) {
+        return app_server_connection::connect(target).await;
     }
     start_embedded_app_server(
         arg0_paths,
@@ -1030,10 +938,7 @@ fn latest_session_cwd_filter<'a>(
 
 fn app_server_target_for_launch(
     explicit_remote_endpoint: Option<RemoteAppServerEndpoint>,
-    default_daemon_socket: Option<AbsolutePathBuf>,
-    can_reuse_implicit_local_daemon: bool,
     workload_identity_selected: bool,
-    exec_server_url: Option<&std::ffi::OsStr>,
 ) -> std::io::Result<AppServerTarget> {
     if workload_identity_selected {
         if explicit_remote_endpoint.is_some() {
@@ -1046,15 +951,6 @@ fn app_server_target_for_launch(
     }
     Ok(match explicit_remote_endpoint {
         Some(endpoint) => AppServerTarget::Remote { endpoint },
-        // A shared daemon cannot adopt this invocation's executor selection.
-        None if can_reuse_implicit_local_daemon && exec_server_url.is_none() => {
-            default_daemon_socket.map_or(AppServerTarget::Embedded, |socket_path| {
-                AppServerTarget::LocalDaemon {
-                    allow_embedded_fallback: true,
-                    endpoint: RemoteAppServerEndpoint::UnixSocket { socket_path },
-                }
-            })
-        }
         None => AppServerTarget::Embedded,
     })
 }
@@ -1163,8 +1059,7 @@ async fn run_ratatui_app(
     environment_manager: Arc<EnvironmentManager>,
     embedded_network_policy: antex_app_server_client::EmbeddedNetworkPolicy,
     managed_worktree: Option<ManagedTuiWorktree>,
-    daemon_startup_warning: Option<String>,
-    launch_telemetry: daemon_telemetry::Launch<impl FnOnce(&AppServerTarget, bool)>,
+    launch_telemetry: launch_telemetry::Launch<impl FnOnce(&AppServerTarget, bool)>,
     startup_draft: startup_draft::StartupDraft,
 ) -> color_eyre::Result<AppExitInfo> {
     let mut initial_config = initial_config;
@@ -1812,20 +1707,6 @@ async fn run_ratatui_app(
     // Remote startup keeps its existing explicit --cd trust check. Resolving other
     // remote folders requires authoritative project-root information from the server.
     if !uses_remote_workspace || remote_cwd_override.is_some() {
-        let resumed_thread = if matches!(app_server_target, AppServerTarget::LocalDaemon { .. })
-            && let resume_picker::SessionSelection::Resume(target) = &session_selection
-        {
-            Some(
-                startup_draft
-                    .run_until(
-                        &mut tui,
-                        app_server.thread_read(target.thread_id, /*include_turns*/ false),
-                    )
-                    .await??,
-            )
-        } else {
-            None
-        };
         let trust_cwd = remote_cwd_override
             .as_deref()
             .unwrap_or(config.cwd.as_path());
@@ -1835,10 +1716,7 @@ async fn run_ratatui_app(
             &config,
             &app_server_target,
             trust_cwd,
-            onboarding::DirectoryTrustOptions {
-                resumed_thread: resumed_thread.as_ref(),
-                ..Default::default()
-            },
+            onboarding::DirectoryTrustOptions::default(),
             Some(&mut startup_draft),
         )
         .await?;
@@ -1971,12 +1849,7 @@ async fn run_ratatui_app(
     #[cfg(not(target_os = "windows"))]
     let should_prompt_windows_sandbox_nux_at_startup = false;
 
-    let Cli {
-        prompt,
-        shared,
-        daemon_cli_executable,
-        ..
-    } = cli;
+    let Cli { prompt, shared, .. } = cli;
     let images = shared.into_inner().images;
 
     // Persistent app-server resumes may attach to an already-running thread,
@@ -2095,10 +1968,8 @@ async fn run_ratatui_app(
         startup_elapsed_before_app,
         startup_bootstrap,
         startup_hooks_browser,
-        daemon_startup_warning,
         startup_draft,
         managed_worktree,
-        daemon_cli_executable,
     ))
     .await;
 
@@ -2368,13 +2239,7 @@ fn should_show_bedrock_setup_wizard(
             .is_login_method_allowed(ForcedLoginMethod::Api)
 }
 
-mod daemon_recovery;
-mod daemon_startup;
-mod daemon_telemetry;
-
-#[cfg(test)]
-#[path = "daemon_startup_tests.rs"]
-mod daemon_startup_tests;
+mod launch_telemetry;
 
 #[cfg(test)]
 pub(crate) mod tests {
@@ -2491,16 +2356,6 @@ requires_openai_auth = {requires_openai_auth}
                 enabled,
                 LoginStatus::AuthMode(AuthMode::Chatgpt),
                 AppServerTarget::Embedded,
-                false,
-            ),
-            (
-                "shared local daemon",
-                enabled,
-                LoginStatus::NotAuthenticated,
-                AppServerTarget::LocalDaemon {
-                    allow_embedded_fallback: true,
-                    endpoint: shared_endpoint.clone(),
-                },
                 false,
             ),
             (
@@ -3055,105 +2910,6 @@ requires_openai_auth = {requires_openai_auth}
         }
     }
 
-    #[tokio::test]
-    async fn default_daemon_auto_connect_skips_missing_socket() -> color_eyre::Result<()> {
-        let codex_home = TempDir::new()?;
-        assert!(
-            maybe_probe_default_daemon_socket(codex_home.path())
-                .await
-                .is_none()
-        );
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn default_daemon_auto_connect_probes_socket_only() -> color_eyre::Result<()> {
-        let codex_home = TempDir::new()?;
-        let socket_path =
-            antex_app_server_client::app_server_control_socket_path(codex_home.path())?;
-        #[cfg(windows)]
-        {
-            let parent = socket_path.as_path().parent().expect("socket parent");
-            std::fs::create_dir_all(parent)?;
-            let listener = antex_uds::UnixListener::bind(socket_path.as_path()).await?;
-            assert!(
-                maybe_probe_default_daemon_socket(codex_home.path())
-                    .await
-                    .is_none()
-            );
-            drop(listener);
-            std::fs::remove_dir_all(parent)?;
-        }
-        antex_uds::prepare_private_socket_directory(
-            socket_path.as_path().parent().expect("socket parent"),
-        )
-        .await?;
-        let _listener = antex_uds::UnixListener::bind(socket_path.as_path()).await?;
-
-        let expected = Some(socket_path);
-        #[cfg(windows)]
-        let expected = {
-            // Existing Windows CI may run elevated; an elevated listener must
-            // never be selected implicitly, even when its directory is private.
-            let output = std::process::Command::new("powershell.exe")
-                .args(["-NoProfile", "-NonInteractive", "-Command", "([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)"])
-                .output()?;
-            assert!(output.status.success());
-            match String::from_utf8(output.stdout)?.trim() {
-                "True" => None,
-                "False" => expected,
-                other => panic!("unexpected elevation result: {other}"),
-            }
-        };
-        assert_eq!(
-            maybe_probe_default_daemon_socket(codex_home.path()).await,
-            expected
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn app_server_target_for_launch_uses_local_daemon_for_default_socket() -> color_eyre::Result<()>
-    {
-        let socket_path = AbsolutePathBuf::relative_to_current_dir("codex.sock")?;
-        let target = app_server_target_for_launch(
-            /*explicit_remote_endpoint*/ None,
-            Some(socket_path.clone()),
-            /*can_reuse_implicit_local_daemon*/ true,
-            /*workload_identity_selected*/ false,
-            /*exec_server_url*/ None,
-        )?;
-
-        assert_eq!(
-            target,
-            AppServerTarget::LocalDaemon {
-                allow_embedded_fallback: true,
-                endpoint: RemoteAppServerEndpoint::UnixSocket { socket_path },
-            }
-        );
-        assert!(!target.uses_remote_workspace());
-        assert_eq!(target.thread_params_mode(), ThreadParamsMode::Embedded);
-        Ok(())
-    }
-
-    #[test]
-    fn app_server_target_for_launch_preserves_executor_selection() -> color_eyre::Result<()> {
-        let socket_path = AbsolutePathBuf::relative_to_current_dir("codex.sock")?;
-        for executor in ["none", "ws://127.0.0.1:4501"] {
-            assert_eq!(
-                app_server_target_for_launch(
-                    /*explicit_remote_endpoint*/ None,
-                    Some(socket_path.clone()),
-                    /*can_reuse_implicit_local_daemon*/ true,
-                    /*workload_identity_selected*/ false,
-                    Some(std::ffi::OsStr::new(executor)),
-                )?,
-                AppServerTarget::Embedded,
-            );
-        }
-        Ok(())
-    }
-
     #[test]
     fn app_server_target_for_launch_prefers_explicit_remote_endpoint() -> color_eyre::Result<()> {
         let explicit_endpoint = RemoteAppServerEndpoint::UnixSocket {
@@ -3161,10 +2917,7 @@ requires_openai_auth = {requires_openai_auth}
         };
         let target = app_server_target_for_launch(
             Some(explicit_endpoint.clone()),
-            Some(AbsolutePathBuf::relative_to_current_dir("default.sock")?),
-            /*can_reuse_implicit_local_daemon*/ false,
             /*workload_identity_selected*/ false,
-            Some(std::ffi::OsStr::new("none")),
         )?;
 
         assert_eq!(
@@ -3179,31 +2932,10 @@ requires_openai_auth = {requires_openai_auth}
     }
 
     #[test]
-    fn app_server_target_for_launch_skips_local_daemon_when_launch_config_is_not_replayable()
-    -> color_eyre::Result<()> {
-        let socket_path = AbsolutePathBuf::relative_to_current_dir("codex.sock")?;
-        let target = app_server_target_for_launch(
-            /*explicit_remote_endpoint*/ None,
-            Some(socket_path),
-            /*can_reuse_implicit_local_daemon*/ false,
-            /*workload_identity_selected*/ false,
-            /*exec_server_url*/ None,
-        )?;
-
-        assert_eq!(target, AppServerTarget::Embedded);
-        Ok(())
-    }
-
-    #[test]
     fn workload_identity_requires_an_embedded_app_server() -> color_eyre::Result<()> {
-        let default_socket = AbsolutePathBuf::relative_to_current_dir("default.sock")?;
         assert_eq!(
             app_server_target_for_launch(
-                /*explicit_remote_endpoint*/ None,
-                Some(default_socket),
-                /*can_reuse_implicit_local_daemon*/ true,
-                /*workload_identity_selected*/ true,
-                /*exec_server_url*/ None,
+                /*explicit_remote_endpoint*/ None, /*workload_identity_selected*/ true,
             )?,
             AppServerTarget::Embedded
         );
@@ -3213,10 +2945,7 @@ requires_openai_auth = {requires_openai_auth}
         };
         let error = app_server_target_for_launch(
             Some(explicit_endpoint),
-            /*default_daemon_socket*/ None,
-            /*can_reuse_implicit_local_daemon*/ false,
             /*workload_identity_selected*/ true,
-            /*exec_server_url*/ None,
         )
         .expect_err("remote hosts must own workload identity");
         assert_eq!(
@@ -3227,13 +2956,11 @@ requires_openai_auth = {requires_openai_auth}
     }
 
     #[test]
-    fn should_load_configured_environments_for_local_daemon() -> color_eyre::Result<()> {
-        let target = AppServerTarget::LocalDaemon {
-            allow_embedded_fallback: true,
-            endpoint: RemoteAppServerEndpoint::UnixSocket {
-                socket_path: AbsolutePathBuf::relative_to_current_dir("codex.sock")?,
-            },
-        };
+    fn local_launch_loads_configured_environments() -> color_eyre::Result<()> {
+        let target = app_server_target_for_launch(
+            /*explicit_remote_endpoint*/ None, /*workload_identity_selected*/ false,
+        )?;
+        assert_eq!(target, AppServerTarget::Embedded);
 
         assert!(should_load_configured_environments(
             &LoaderOverrides::default(),
@@ -3612,35 +3339,6 @@ requires_openai_auth = {requires_openai_auth}
     }
 
     #[tokio::test]
-    async fn config_cwd_for_app_server_target_canonicalizes_local_daemon_cli_cwd()
-    -> std::io::Result<()> {
-        let temp_dir = TempDir::new()?;
-        let target = AppServerTarget::LocalDaemon {
-            allow_embedded_fallback: true,
-            endpoint: RemoteAppServerEndpoint::UnixSocket {
-                socket_path: AbsolutePathBuf::relative_to_current_dir("codex.sock")?,
-            },
-        };
-        let environment_manager = EnvironmentManager::default_for_tests();
-
-        let config_cwd = config_cwd_for_app_server_target(
-            Some(temp_dir.path()),
-            &target,
-            environment_manager
-                .default_environment()
-                .is_some_and(|environment| environment.is_remote()),
-        )?;
-
-        assert_eq!(
-            config_cwd,
-            Some(AbsolutePathBuf::from_absolute_path(dunce::canonicalize(
-                temp_dir.path()
-            )?)?)
-        );
-        Ok(())
-    }
-
-    #[tokio::test]
     async fn config_cwd_for_app_server_target_errors_for_missing_embedded_cli_cwd()
     -> std::io::Result<()> {
         let temp_dir = TempDir::new()?;
@@ -3696,16 +3394,6 @@ requires_openai_auth = {requires_openai_auth}
         ));
         assert!(uses_remote_workspace_or_environment(
             &target,
-            &environment_manager
-        ));
-        let local_daemon = AppServerTarget::LocalDaemon {
-            allow_embedded_fallback: true,
-            endpoint: RemoteAppServerEndpoint::UnixSocket {
-                socket_path: AbsolutePathBuf::relative_to_current_dir("codex.sock")?,
-            },
-        };
-        assert!(uses_remote_workspace_or_environment(
-            &local_daemon,
             &environment_manager
         ));
         Ok(())

@@ -36,15 +36,7 @@ pub(crate) fn new_server_version_warning(
 ) -> WarningHistoryCell {
     let key = notice.message.clone();
     let style = crate::style::status_style(crate::style::StatusTone::Attention);
-    let mut lines = vec![Line::from(notice.message.set_style(style))];
-    if notice.offer_update {
-        lines.push(Line::from(
-            "Use /daemon to manage the local background server.".fg(accent_color()),
-        ));
-        lines.push(Line::from(
-            "Updating may interrupt active or queued work.".set_style(style),
-        ));
-    }
+    let lines = vec![Line::from(notice.message.set_style(style))];
     WarningHistoryCell {
         server_version_notice: true,
         visible_in_transcript: false,

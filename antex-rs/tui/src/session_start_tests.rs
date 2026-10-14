@@ -76,10 +76,6 @@ async fn archived_session_requires_confirmation_before_resume_or_fork() -> Resul
 
         let endpoint = crate::resolve_remote_addr("ws://127.0.0.1:4500")?;
         for server_target in [
-            crate::AppServerTarget::LocalDaemon {
-                allow_embedded_fallback: true,
-                endpoint: endpoint.clone(),
-            },
             crate::AppServerTarget::Remote { endpoint },
             crate::AppServerTarget::Embedded,
         ] {
@@ -122,7 +118,8 @@ async fn archived_session_requires_confirmation_before_resume_or_fork() -> Resul
             }
         }
 
-        assert_eq!(prompts.get(), 6);
+        // Two retained launch modes, each with two non-unarchive choices.
+        assert_eq!(prompts.get(), 4);
         let SessionStartOutcome::Started(started) =
             start_session(&mut app_server, &config, &target, action, async || {
                 prompts.set(prompts.get() + 1);
@@ -134,7 +131,7 @@ async fn archived_session_requires_confirmation_before_resume_or_fork() -> Resul
         };
         assert_eq!(
             (prompts.get(), archived_path.exists(), active_path.exists()),
-            (7, false, true)
+            (5, false, true)
         );
         match action {
             SessionStartAction::Resume(..) => {

@@ -136,14 +136,14 @@ jobs:
           python3 scripts/smoke-code-mode-host.py "$RUNNER_TEMP/installed/bin/antex-code-mode-host"
           python3 scripts/smoke-tui-startup.py "$RUNNER_TEMP/installed/bin/antex"
 
-      - name: Validate daemon and installers
+      - name: Validate installers and startup lifecycle
         timeout-minutes: 5
         shell: bash
         env:
           TARGET: ${{ matrix.target }}
         run: |
           set -euo pipefail
-          python3 scripts/smoke-daemon-package.py "$RUNNER_TEMP/installed/bin/antex"
+          python3 -m unittest discover -s scripts -p 'test_smoke_tui_startup.py'
           python3 -m unittest discover -s scripts -p 'test_install_fork_package.py'
           python3 -m unittest discover -s scripts/install -p 'test_*.py'
           python3 -m unittest discover -s scripts -p 'test_package_fork.py'

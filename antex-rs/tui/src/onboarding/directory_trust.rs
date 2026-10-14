@@ -1,5 +1,5 @@
 //! Folder consent for startup and task navigation.
-//! Local daemon resumes recheck folders changed during consent. Remote checks
+//! Local resumes recheck folders changed during consent. Remote checks
 //! retain their existing explicit-cwd scope until authoritative roots are available.
 
 use super::OnboardingResult;
@@ -40,7 +40,47 @@ pub(crate) async fn check_directory_trust(
     target: &AppServerTarget,
     cwd: &Path,
     options: DirectoryTrustOptions<'_>,
+    startup_draft: Option<&mut StartupDraftPump>,
+) -> Result<OnboardingResult> {
+    check_directory_trust_with_screen(
+        tui,
+        app_server,
+        config,
+        target,
+        cwd,
+        options,
+        startup_draft,
+        async |screen, app_server, tui| {
+            let result = run_onboarding_screen(
+                screen,
+                Some(app_server.request_handle()),
+                /*app_server*/ None,
+                tui,
+            )
+            .await?;
+            tui.terminal.clear()?;
+            tui.frame_requester().schedule_frame();
+            Ok(result)
+        },
+    )
+    .await
+}
+
+// Keep trust lookup and loaded-thread cwd rechecks independent of interactive presentation.
+#[allow(clippy::too_many_arguments)]
+async fn check_directory_trust_with_screen(
+    tui: &mut Tui,
+    app_server: &AppServerSession,
+    config: &Config,
+    target: &AppServerTarget,
+    cwd: &Path,
+    options: DirectoryTrustOptions<'_>,
     mut startup_draft: Option<&mut StartupDraftPump>,
+    mut run_screen: impl AsyncFnMut(
+        OnboardingScreen,
+        &AppServerSession,
+        &mut Tui,
+    ) -> Result<OnboardingResult>,
 ) -> Result<OnboardingResult> {
     let DirectoryTrustOptions {
         resumed_thread,
@@ -50,9 +90,7 @@ pub(crate) async fn check_directory_trust(
     let mut consent = OnboardingResult::default();
     // Another client can load the saved task while consent is pending. Check both folders.
     let saved_cwd = resumed_thread
-        .filter(|thread| {
-            matches!(target, AppServerTarget::LocalDaemon { .. }) && thread.cwd.as_path() != cwd
-        })
+        .filter(|thread| matches!(target, AppServerTarget::Embedded) && thread.cwd.as_path() != cwd)
         .map(|thread| thread.cwd.as_path());
     let mut pending_cwds: VecDeque<_> = std::iter::once(cwd)
         .chain(saved_cwd)
@@ -101,7 +139,8 @@ pub(crate) async fn check_directory_trust(
             request_frame: tui.frame_requester(),
             steps: vec![Step::TrustDirectory(TrustDirectoryWidget {
                 restricted: project.trust_level == Some(TrustLevel::Untrusted),
-                existing_task: connected && resumed_thread.is_some(),
+                // Loaded embedded tasks can retain settings from before trust changed too.
+                existing_task: resumed_thread.is_some(),
                 cancel: cancel.unwrap_or(if connected {
                     TrustCancelAction::AgentsOverview
                 } else {
@@ -119,20 +158,12 @@ pub(crate) async fn check_directory_trust(
             is_done: false,
             should_exit: false,
         };
-        let result = run_onboarding_screen(
-            screen,
-            Some(app_server.request_handle()),
-            /*app_server*/ None,
-            tui,
-        )
-        .await?;
-        tui.terminal.clear()?;
-        tui.frame_requester().schedule_frame();
+        let result = run_screen(screen, app_server, tui).await?;
         if result.should_exit {
             return Ok(result);
         }
         consent.directory_trust_persisted |= result.directory_trust_persisted;
-        if matches!(target, AppServerTarget::LocalDaemon { .. })
+        if matches!(target, AppServerTarget::Embedded)
             && let Some(thread) = resumed_thread
         {
             // Another client may have reopened this task in a different folder during consent.
@@ -154,3 +185,7 @@ pub(crate) async fn check_directory_trust(
     }
     Ok(consent)
 }
+
+#[cfg(test)]
+#[path = "directory_trust_tests.rs"]
+mod tests;

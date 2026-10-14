@@ -4,10 +4,8 @@ use antex_utils_cli::CliConfigOverrides;
 use clap::Parser;
 use clap::builder::NonEmptyStringValueParser;
 
-use crate::InteractiveRemoteOptions;
 use crate::SessionArchiveConfigOverrides;
 use crate::finalize_session_archive_interactive;
-use crate::resolve_remote_endpoint;
 
 #[derive(Debug, Parser)]
 pub(crate) struct QueueCommand {
@@ -20,9 +18,6 @@ pub(crate) struct QueueCommand {
     message: String,
 
     #[clap(flatten)]
-    remote: InteractiveRemoteOptions,
-
-    #[clap(flatten)]
     pub(crate) config_overrides: SessionArchiveConfigOverrides,
 }
 
@@ -30,14 +25,11 @@ pub(crate) async fn run_queue_command(
     command: QueueCommand,
     interactive: TuiCli,
     root_config_overrides: CliConfigOverrides,
-    root_remote: Option<String>,
-    root_remote_auth_token_env: Option<String>,
     arg0_paths: Arg0DispatchPaths,
 ) -> anyhow::Result<String> {
     let QueueCommand {
         thread,
         message,
-        remote,
         config_overrides,
     } = command;
     let cli =
@@ -45,17 +37,13 @@ pub(crate) async fn run_queue_command(
     if !cli.images.is_empty() {
         anyhow::bail!("`antex queue` does not support image attachments");
     }
-    let explicit_remote_endpoint = resolve_remote_endpoint(
-        remote.remote.or(root_remote),
-        remote.remote_auth_token_env.or(root_remote_auth_token_env),
-    )?;
     antex_tui::run_session_queue_command(
         thread,
         message,
         antex_tui::SessionArchiveCommandOptions {
             cli,
             arg0_paths,
-            explicit_remote_endpoint,
+            explicit_remote_endpoint: None,
         },
     )
     .await

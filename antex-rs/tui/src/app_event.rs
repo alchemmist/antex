@@ -314,9 +314,6 @@ pub(crate) enum AppEvent {
         identity: crate::security_setup::Identity,
         notice: crate::security_setup::Notice,
     },
-    OpenDaemonMenu,
-    ConfirmDaemonUpdate(crate::update_action::DaemonUpdateSource),
-    RunDaemonUpdate(crate::update_action::DaemonUpdateSource),
     ReviewMisalignment(Arc<crate::chatwidget::MisalignmentReview>),
     ContinueMisalignment(Arc<crate::chatwidget::MisalignmentReview>),
     CloseMisalignmentReview,
@@ -405,14 +402,6 @@ pub(crate) enum AppEvent {
     RunAgentsOverviewAction {
         thread_id: ThreadId,
         action: AgentsOverviewAction,
-    },
-    /// Start the shared app-server daemon without moving the current embedded session.
-    #[cfg(any(unix, windows))]
-    StartAgentsDaemon,
-    /// Report whether starting the shared app-server daemon succeeded.
-    #[cfg(any(unix, windows))]
-    AgentsDaemonStarted {
-        result: Result<(), String>,
     },
     /// Open the agent picker for switching active threads.
     #[allow(dead_code)]

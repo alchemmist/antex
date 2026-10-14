@@ -57,11 +57,6 @@ PACKAGE_VARIANTS: dict[str, PackageVariant] = {
         cargo_bin="antex",
         executable_stem="antex",
     ),
-    "antex-app-server": PackageVariant(
-        name="antex-app-server",
-        cargo_bin="antex-app-server",
-        executable_stem="antex-app-server",
-    ),
 }
 
 

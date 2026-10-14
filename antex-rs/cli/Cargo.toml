@@ -31,7 +31,6 @@ chrono = { workspace = true }
 clap = { workspace = true, features = ["derive", "env"] }
 clap_complete = { workspace = true }
 antex-app-server = { workspace = true }
-antex-app-server-daemon = { workspace = true }
 antex-app-server-protocol = { workspace = true }
 antex-app-server-test-client = { workspace = true }
 antex-arg0 = { workspace = true }
@@ -125,7 +124,6 @@ windows-sys = { workspace = true, features = [
 app_test_support = { workspace = true }
 assert_cmd = { workspace = true }
 assert_matches = { workspace = true }
-antex-app-server-client = { workspace = true }
 antex-utils-cargo-bin = { workspace = true }
 antex-utils-pty = { workspace = true }
 flate2 = { workspace = true }

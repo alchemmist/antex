@@ -339,7 +339,6 @@ mod tests {
                 SlashCommand::Status,
                 SlashCommand::Context,
                 SlashCommand::SystemPrompt,
-                SlashCommand::Daemon,
                 SlashCommand::Warnings,
                 SlashCommand::Pwd,
                 SlashCommand::Usage,

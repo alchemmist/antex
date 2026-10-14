@@ -1,4 +1,4 @@
-//! Keeps the server version notice and local maintenance guidance in the overview.
+//! Keeps explicitly connected remote server version notices in the overview.
 
 use super::*;
 use crate::update_versions::ServerVersionNoticeKind;
@@ -49,19 +49,13 @@ impl App {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .server_version_notice = server_version.and_then(|server| {
-            let guidance = if matches!(self.app_server_target, AppServerTarget::LocalDaemon { .. })
-            {
-                " · /daemon"
-            } else {
-                ""
-            };
             let comparison =
                 match crate::update_versions::server_version_notice_kind(client_version, server)? {
                     ServerVersionNoticeKind::Older => "<",
                     ServerVersionNoticeKind::Different => "≠",
                 };
             Some(format!(
-                "Service v{server} {comparison} Antex CLI v{client_version}{guidance}"
+                "Service v{server} {comparison} Antex CLI v{client_version}"
             ))
         });
     }

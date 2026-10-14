@@ -16,7 +16,7 @@ use crate::message_processor::ConnectionSessionState;
 use crate::message_processor::InitializedConnectionSessionState;
 use crate::transport::ConnectionOrigin;
 
-const NON_ORIGINATING_CLIENT_NAMES: &[&str] = &["antex_app_server_daemon", "codex-backend"];
+const NON_ORIGINATING_CLIENT_NAMES: &[&str] = &["codex-backend"];
 
 #[derive(Clone)]
 pub(crate) struct InitializeRequestProcessor {

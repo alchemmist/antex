@@ -1294,6 +1294,21 @@ async fn unauthorized_recovery_reloads_then_refreshes_tokens() -> Result<()> {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/oauth/token"))
+        .and(wiremock::matchers::body_partial_json(json!({
+            "refresh_token": INITIAL_REFRESH_TOKEN
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "access_token": "disk-access-token",
+            "refresh_token": "disk-refresh-token"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/oauth/token"))
+        .and(wiremock::matchers::body_partial_json(json!({
+            "refresh_token": "disk-refresh-token"
+        })))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "access_token": "recovered-access-token",
             "refresh_token": "recovered-refresh-token"
@@ -1304,7 +1319,12 @@ async fn unauthorized_recovery_reloads_then_refreshes_tokens() -> Result<()> {
 
     let ctx = RefreshTokenTestContext::new(&server).await?;
     let initial_last_refresh = Utc::now() - Duration::days(1);
-    let initial_tokens = build_tokens(INITIAL_ACCESS_TOKEN, INITIAL_REFRESH_TOKEN);
+    let mut initial_tokens = build_tokens(INITIAL_ACCESS_TOKEN, INITIAL_REFRESH_TOKEN);
+    initial_tokens.id_token =
+        antex_login::token_data::parse_chatgpt_jwt_claims(&jwt_with_payload(json!({
+            "sub": "user-123",
+            "https://api.openai.com/auth": { "chatgpt_user_id": "user-123" }
+        })))?;
     let initial_auth = AuthDotJson {
         auth_mode: Some(AuthMode::Chatgpt),
         openai_api_key: None,
@@ -1317,23 +1337,23 @@ async fn unauthorized_recovery_reloads_then_refreshes_tokens() -> Result<()> {
     };
     ctx.write_auth(&initial_auth).await?;
 
-    let disk_tokens = build_tokens("disk-access-token", "disk-refresh-token");
-    let disk_auth = AuthDotJson {
-        auth_mode: Some(AuthMode::Chatgpt),
-        openai_api_key: None,
-        tokens: Some(disk_tokens.clone()),
-        last_refresh: Some(initial_last_refresh),
-        agent_identity: None,
-        personal_access_token: None,
-        bedrock_api_key: None,
-        bedrock_access_keys: None,
+    let disk_tokens = TokenData {
+        access_token: "disk-access-token".to_string(),
+        refresh_token: "disk-refresh-token".to_string(),
+        ..initial_tokens.clone()
     };
-    save_auth(
-        ctx.codex_home.path(),
-        &disk_auth,
+    let rotating_manager = AuthManager::shared(
+        ctx.codex_home.path().to_path_buf(),
+        /*enable_antex_api_key_env*/ false,
         AuthCredentialsStoreMode::File,
+        /*forced_chatgpt_workspace_id*/ None,
+        /*chatgpt_base_url*/ None,
         AuthKeyringBackendKind::default(),
-    )?;
+        antex_login::test_support::transport_default_auth_route_config(),
+    )
+    .await;
+    rotating_manager.refresh_token().await?;
+    assert_eq!(ctx.load_auth()?.tokens, Some(disk_tokens.clone()));
 
     let cached_before = ctx
         .auth_manager
@@ -1359,7 +1379,11 @@ async fn unauthorized_recovery_reloads_then_refreshes_tokens() -> Result<()> {
     assert_eq!(cached_after_tokens, disk_tokens);
 
     let requests = server.received_requests().await.unwrap_or_default();
-    assert!(requests.is_empty(), "expected no refresh token requests");
+    assert_eq!(
+        requests.len(),
+        1,
+        "reload must not issue another refresh request"
+    );
 
     recovery.next().await?;
 
@@ -1390,6 +1414,17 @@ async fn unauthorized_recovery_reloads_then_refreshes_tokens() -> Result<()> {
 #[serial_test::serial(auth_env)]
 #[tokio::test]
 async fn unauthorized_recovery_errors_on_account_mismatch() -> Result<()> {
+    assert_recovery_rejects_replacement(/*change_account*/ true).await
+}
+
+#[serial_test::serial(auth_env)]
+#[tokio::test]
+async fn unauthorized_recovery_errors_on_same_account_replacement_without_user_identity()
+-> Result<()> {
+    assert_recovery_rejects_replacement(/*change_account*/ false).await
+}
+
+async fn assert_recovery_rejects_replacement(change_account: bool) -> Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = MockServer::start().await;
@@ -1419,7 +1454,9 @@ async fn unauthorized_recovery_errors_on_account_mismatch() -> Result<()> {
     ctx.write_auth(&initial_auth).await?;
 
     let mut disk_tokens = build_tokens("disk-access-token", "disk-refresh-token");
-    disk_tokens.account_id = Some("other-account".to_string());
+    if change_account {
+        disk_tokens.account_id = Some("other-account".to_string());
+    }
     let disk_auth = AuthDotJson {
         auth_mode: Some(AuthMode::Chatgpt),
         openai_api_key: None,
@@ -1453,7 +1490,7 @@ async fn unauthorized_recovery_errors_on_account_mismatch() -> Result<()> {
         .next()
         .await
         .err()
-        .context("recovery should fail due to account mismatch")?;
+        .context("recovery should reject the replaced authentication source")?;
     assert_eq!(err.failed_reason(), Some(RefreshTokenFailedReason::Other));
 
     let stored = ctx.load_auth()?;

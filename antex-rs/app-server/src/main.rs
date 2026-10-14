@@ -73,14 +73,9 @@ struct AppServerArgs {
     /// Enable remote control for this app-server process without changing persistence.
     #[arg(long = "remote-control", hide = true)]
     remote_control: bool,
-
-    /// Save loaded threads during managed daemon shutdown.
-    #[arg(long, hide = true)]
-    managed_daemon: bool,
 }
 
 fn main() -> anyhow::Result<()> {
-    let remote_control_disabled = antex_app_server::take_remote_control_disabled_env();
     arg0_dispatch_or_else(move |arg0_paths: Arg0DispatchPaths| async move {
         let AppServerArgs {
             config_overrides,
@@ -92,7 +87,6 @@ fn main() -> anyhow::Result<()> {
             #[cfg(debug_assertions)]
             disable_plugin_startup_tasks_for_tests,
             remote_control,
-            managed_daemon,
         } = AppServerArgs::parse();
         let loader_overrides = if disable_managed_config_from_debug_env() {
             LoaderOverrides::without_managed_config_for_tests()
@@ -105,19 +99,16 @@ fn main() -> anyhow::Result<()> {
         let auth = auth.try_into_settings()?;
         let mut runtime_options = AppServerRuntimeOptions {
             code_mode_host_transport: code_mode_host.into(),
-            managed_daemon,
             ..Default::default()
         };
         #[cfg(debug_assertions)]
         if disable_plugin_startup_tasks_for_tests {
             runtime_options.plugin_startup_tasks = PluginStartupTasks::Skip;
         }
-        runtime_options.remote_control_startup_mode =
-            match (remote_control, remote_control_disabled) {
-                (true, _) => antex_app_server::RemoteControlStartupMode::EnabledEphemeral,
-                (false, true) => antex_app_server::RemoteControlStartupMode::DisabledEphemeral,
-                (false, false) => antex_app_server::RemoteControlStartupMode::ResolvePersisted,
-            };
+        if remote_control {
+            runtime_options.remote_control_startup_mode =
+                antex_app_server::RemoteControlStartupMode::EnabledEphemeral;
+        }
 
         let exit = run_main_with_transport_options(
             arg0_paths,

@@ -4,9 +4,8 @@ use antex_app_server_protocol::ThreadBackgroundTerminalsListResponse;
 use pretty_assertions::assert_eq;
 
 #[test]
-fn old_local_daemon_worktree_error_suggests_update() -> Result<()> {
-    let target = AppServerTarget::LocalDaemon {
-        allow_embedded_fallback: true,
+fn old_remote_server_worktree_error_suggests_update() -> Result<()> {
+    let target = AppServerTarget::Remote {
         endpoint: crate::RemoteAppServerEndpoint::UnixSocket {
             socket_path: AbsolutePathBuf::relative_to_current_dir("codex.sock")?,
         },
@@ -29,7 +28,7 @@ fn old_local_daemon_worktree_error_suggests_update() -> Result<()> {
     let cell = crate::history_cell::new_error_event(message.to_string());
     insta::assert_snapshot!(
         lines_to_single_string(&cell.display_lines(/*width*/ 120)),
-        @"■ The local Codex service cannot check background terminals. Run `codex app-server daemon update`, then restart Codex."
+        @"■ The remote server cannot check background terminals. Update the server before creating a worktree."
     );
     assert_eq!(
         managed_worktree_creation::background_terminals_blocker(

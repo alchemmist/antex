@@ -50,7 +50,6 @@ install-local:
 	$(MAKE) "$$package_target" ANTEX_PACKAGE_DIR="$$staging/package"; \
 	$(PYTHON) scripts/smoke-code-mode-host.py "$$staging/package/bin/antex-code-mode-host"; \
 	$(PYTHON) scripts/smoke-tui-startup.py "$$staging/package/bin/antex"; \
-	$(PYTHON) scripts/smoke-daemon-package.py "$$staging/package/bin/antex"; \
 	$(PYTHON) scripts/install-fork-package.py "$$staging/package" "$(ANTEX_INSTALL_DIR)" "$$target"
 
 install-mac:

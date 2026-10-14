@@ -1,11 +1,9 @@
 use std::collections::VecDeque;
 use std::ffi::OsString;
 use std::fs;
-use std::fs::OpenOptions;
 use std::io::BufRead;
 use std::io::BufReader;
 use std::io::Write;
-use std::net::TcpListener;
 use std::net::TcpStream;
 use std::path::Path;
 use std::path::PathBuf;
@@ -154,18 +152,6 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum CliCommand {
-    /// Start `antex app-server` on a websocket endpoint in the background.
-    ///
-    /// Logs are written to:
-    ///   `/tmp/antex-app-server-test-client/`
-    Serve {
-        /// WebSocket listen URL passed to `antex app-server --listen`.
-        #[arg(long, default_value = "ws://127.0.0.1:4222")]
-        listen: String,
-        /// Kill any process listening on the same port before starting.
-        #[arg(long, default_value_t = false)]
-        kill: bool,
-    },
     /// Send a user message through the Codex app-server.
     SendMessage {
         /// User message to send to Antex.
@@ -331,11 +317,6 @@ pub async fn run() -> Result<()> {
     let dynamic_tools = parse_dynamic_tools_arg(&dynamic_tools)?;
 
     match command {
-        CliCommand::Serve { listen, kill } => {
-            ensure_dynamic_tools_unused(&dynamic_tools, "serve")?;
-            let antex_bin = antex_bin.unwrap_or_else(|| PathBuf::from("antex"));
-            serve(&antex_bin, &config_overrides, &listen, kill)
-        }
         CliCommand::SendMessage { user_message } => {
             ensure_dynamic_tools_unused(&dynamic_tools, "send-message")?;
             let endpoint = resolve_endpoint(antex_bin, url)?;
@@ -461,15 +442,7 @@ pub async fn run() -> Result<()> {
             hold_seconds,
         } => {
             ensure_dynamic_tools_unused(&dynamic_tools, "live-elicitation-timeout-pause")?;
-            live_elicitation_timeout_pause(
-                antex_bin,
-                url,
-                &config_overrides,
-                model,
-                workspace,
-                script,
-                hold_seconds,
-            )
+            live_elicitation_timeout_pause(antex_bin, url, model, workspace, script, hold_seconds)
         }
         CliCommand::PluginAnalyticsSmoke {
             plugin_id,
@@ -531,11 +504,6 @@ enum Endpoint {
     ConnectWs(String),
 }
 
-struct BackgroundAppServer {
-    process: Child,
-    url: String,
-}
-
 fn resolve_endpoint(antex_bin: Option<PathBuf>, url: Option<String>) -> Result<Endpoint> {
     if antex_bin.is_some() && url.is_some() {
         bail!("--antex-bin and --url are mutually exclusive");
@@ -561,160 +529,6 @@ fn resolve_shared_websocket_url(
     }
 
     Ok(url.unwrap_or_else(|| "ws://127.0.0.1:4222".to_string()))
-}
-
-impl BackgroundAppServer {
-    fn spawn(antex_bin: &Path, config_overrides: &[String]) -> Result<Self> {
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .context("failed to reserve a local port for websocket app-server")?;
-        let addr = listener.local_addr()?;
-        drop(listener);
-
-        let url = format!("ws://{addr}");
-        let mut cmd = Command::new(antex_bin);
-        if let Some(antex_bin_parent) = antex_bin.parent() {
-            let mut path = OsString::from(antex_bin_parent.as_os_str());
-            if let Some(existing_path) = std::env::var_os("PATH") {
-                path.push(":");
-                path.push(existing_path);
-            }
-            cmd.env("PATH", path);
-        }
-        for override_kv in config_overrides {
-            cmd.arg("--config").arg(override_kv);
-        }
-        let process = cmd
-            .arg("app-server")
-            .arg("--listen")
-            .arg(&url)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::inherit())
-            .spawn()
-            .with_context(|| format!("failed to start `{}` app-server", antex_bin.display()))?;
-
-        Ok(Self { process, url })
-    }
-}
-
-impl Drop for BackgroundAppServer {
-    fn drop(&mut self) {
-        if let Ok(Some(status)) = self.process.try_wait() {
-            println!("[background app-server exited: {status}]");
-            return;
-        }
-
-        let _ = self.process.kill();
-        let _ = self.process.wait();
-    }
-}
-
-fn serve(antex_bin: &Path, config_overrides: &[String], listen: &str, kill: bool) -> Result<()> {
-    let runtime_dir = PathBuf::from("/tmp/antex-app-server-test-client");
-    fs::create_dir_all(&runtime_dir)
-        .with_context(|| format!("failed to create runtime dir {}", runtime_dir.display()))?;
-    let log_path = runtime_dir.join("app-server.log");
-    if kill {
-        kill_listeners_on_same_port(listen)?;
-    }
-
-    let log_file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_path)
-        .with_context(|| format!("failed to open log file {}", log_path.display()))?;
-    let log_file_stderr = log_file
-        .try_clone()
-        .with_context(|| format!("failed to clone log file handle {}", log_path.display()))?;
-
-    let mut cmdline = format!(
-        "tail -f /dev/null | RUST_BACKTRACE=full RUST_LOG=warn,codex_=trace {}",
-        shell_quote(&antex_bin.display().to_string())
-    );
-    for override_kv in config_overrides {
-        cmdline.push_str(&format!(" --config {}", shell_quote(override_kv)));
-    }
-    cmdline.push_str(&format!(" app-server --listen {}", shell_quote(listen)));
-
-    let child = Command::new("nohup")
-        .arg("sh")
-        .arg("-c")
-        .arg(cmdline)
-        .stdin(Stdio::null())
-        .stdout(Stdio::from(log_file))
-        .stderr(Stdio::from(log_file_stderr))
-        .spawn()
-        .with_context(|| format!("failed to start `{}` app-server", antex_bin.display()))?;
-
-    let pid = child.id();
-
-    println!("started antex app-server");
-    println!("listen: {listen}");
-    println!("pid: {pid} (launcher process)");
-    println!("log: {}", log_path.display());
-
-    Ok(())
-}
-
-fn kill_listeners_on_same_port(listen: &str) -> Result<()> {
-    let url = Url::parse(listen).with_context(|| format!("invalid --listen URL `{listen}`"))?;
-    let port = url
-        .port_or_known_default()
-        .with_context(|| format!("unable to infer port from --listen URL `{listen}`"))?;
-
-    let output = Command::new("lsof")
-        .arg("-nP")
-        .arg(format!("-tiTCP:{port}"))
-        .arg("-sTCP:LISTEN")
-        .output()
-        .with_context(|| format!("failed to run lsof for port {port}"))?;
-
-    if !output.status.success() {
-        return Ok(());
-    }
-
-    let pids: Vec<u32> = String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(|line| line.trim().parse::<u32>().ok())
-        .collect();
-
-    if pids.is_empty() {
-        return Ok(());
-    }
-
-    for pid in pids {
-        println!("killing listener pid {pid} on port {port}");
-        let pid_str = pid.to_string();
-        let term_status = Command::new("kill")
-            .arg(&pid_str)
-            .status()
-            .with_context(|| format!("failed to send SIGTERM to pid {pid}"))?;
-        if !term_status.success() {
-            continue;
-        }
-    }
-
-    thread::sleep(Duration::from_millis(300));
-
-    let output = Command::new("lsof")
-        .arg("-nP")
-        .arg(format!("-tiTCP:{port}"))
-        .arg("-sTCP:LISTEN")
-        .output()
-        .with_context(|| format!("failed to re-check listeners on port {port}"))?;
-    if !output.status.success() {
-        return Ok(());
-    }
-    let remaining: Vec<u32> = String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(|line| line.trim().parse::<u32>().ok())
-        .collect();
-    for pid in remaining {
-        println!("force killing remaining listener pid {pid} on port {port}");
-        let _ = Command::new("kill").arg("-9").arg(pid.to_string()).status();
-    }
-
-    Ok(())
 }
 
 fn shell_quote(input: &str) -> String {
@@ -1244,7 +1058,6 @@ fn thread_decrement_elicitation(url: &str, thread_id: String) -> Result<()> {
 fn live_elicitation_timeout_pause(
     antex_bin: Option<PathBuf>,
     url: Option<String>,
-    config_overrides: &[String],
     model: String,
     workspace: PathBuf,
     script: Option<PathBuf>,
@@ -1257,18 +1070,8 @@ fn live_elicitation_timeout_pause(
         bail!("--hold-seconds must be greater than 10 to exceed the unified exec timeout");
     }
 
-    let mut _background_server = None;
-    let websocket_url = match (antex_bin, url) {
-        (Some(_), Some(_)) => bail!("--antex-bin and --url are mutually exclusive"),
-        (Some(antex_bin), None) => {
-            let server = BackgroundAppServer::spawn(&antex_bin, config_overrides)?;
-            let websocket_url = server.url.clone();
-            _background_server = Some(server);
-            websocket_url
-        }
-        (None, Some(url)) => url,
-        (None, None) => "ws://127.0.0.1:4222".to_string(),
-    };
+    let websocket_url =
+        resolve_shared_websocket_url(antex_bin, url, "live-elicitation-timeout-pause")?;
 
     let script_path = script.unwrap_or_else(|| {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -1552,7 +1355,7 @@ impl AntexClient {
                     if Instant::now() >= deadline {
                         return Err(err).with_context(|| {
                             format!(
-                                "failed to connect to websocket app-server at `{url}`; if no server is running, start one with `antex-app-server-test-client serve --listen {url}`"
+                                "failed to connect to websocket app-server at `{url}`; start the non-distributed `antex-app-server` fixture explicitly in the foreground, then pass its endpoint with --url"
                             )
                         });
                     }

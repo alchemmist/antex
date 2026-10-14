@@ -3804,7 +3804,9 @@ async fn explicit_escalation_with_denied_reads(decision: Option<ReviewDecision>)
     } else {
         assert_eq!(
             (result.exit_code, result.stdout.as_str()),
-            (Some(0), "protected\n")
+            (Some(0), "protected\n"),
+            "raw command result: {:?}",
+            response.single_request().function_call_output(call_id)
         );
         assert_eq!(fs::read_to_string(workspace_marker)?, "ran");
     }

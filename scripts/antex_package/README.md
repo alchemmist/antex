@@ -8,7 +8,6 @@ Run the builder through `just`:
 
 ```bash
 just assemble-antex-package --help
-just assemble-antex-package --variant antex-app-server
 just assemble-antex-package --target x86_64-unknown-linux-gnu
 ```
 
@@ -37,8 +36,9 @@ artifacts; pass a GNU Linux target explicitly for native glibc local builds. If
 `--package-dir` is omitted, the builder creates a new temporary directory and
 prints its path after the package is built.
 
-The `--variant` flag selects the package entrypoint. Supported variants are
-`antex` and `antex-app-server`. The `--package-version` flag sets the version in
+The only supported package variant is `antex`; the developer app-server fixture is
+not distributed as a separate package. SDK clients use foreground `antex app-server`
+over stdio. The `--package-version` flag sets the version in
 `antex-package.json`; it defaults to `[workspace.package].version` in
 `antex-rs/Cargo.toml`.
 

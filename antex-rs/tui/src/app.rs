@@ -218,7 +218,6 @@ mod composer_hints;
 mod config_panel;
 mod config_persistence;
 mod connector_mentions;
-mod daemon_menu;
 mod daybreak;
 mod empty_state_policy;
 mod event_dispatch;
@@ -606,7 +605,6 @@ pub(crate) struct App {
     pending_right_click_paste: Option<right_click_paste::PendingPaste>,
     right_click_paste_environment: right_click_paste::PasteEnvironment,
     /// Set when the user confirms an update; propagated on exit.
-    daemon_cli_executable: Option<AbsolutePathBuf>,
     pub(crate) pending_update_action: Option<UpdateAction>,
 
     /// Tracks the thread we intentionally shut down while exiting the app.

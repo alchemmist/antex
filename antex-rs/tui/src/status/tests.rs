@@ -1715,19 +1715,17 @@ async fn status_snapshot_uses_default_reasoning_when_config_empty() {
         .with_ymd_and_hms(2024, 2, 3, 4, 5, 6)
         .single()
         .expect("timestamp");
-    for (is_local_daemon, snapshot) in [
+    for (remote, snapshot) in [
         (
-            None,
+            false,
             "status_snapshot_uses_default_reasoning_when_config_empty",
         ),
-        (Some(false), "status_snapshot_remote_server"),
-        (Some(true), "status_snapshot_local_background_server"),
+        (true, "status_snapshot_remote_server"),
     ] {
-        let remote_connection = is_local_daemon.map(|is_local_daemon| RemoteConnectionStatus {
+        let remote_connection = remote.then(|| RemoteConnectionStatus {
             address: "unix:///tmp/antex-home/app-server-control/app-server-control.sock"
                 .to_string(),
             version: "v0.133.0".to_string(),
-            is_local_daemon,
         });
 
         let model_slug = get_model_offline_for_tests(config.model.as_deref());

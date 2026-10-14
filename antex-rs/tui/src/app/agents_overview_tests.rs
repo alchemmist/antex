@@ -528,8 +528,7 @@ async fn shared_overview_seeds_once_and_retains_locally_resumed_history() -> Res
         antex_protocol::protocol::SessionSource::Cli,
     )
     .expect("materialize unindexed session");
-    app.app_server_target = AppServerTarget::LocalDaemon {
-        allow_embedded_fallback: true,
+    app.app_server_target = AppServerTarget::Remote {
         endpoint: crate::RemoteAppServerEndpoint::UnixSocket {
             socket_path: test_path_buf("/tmp/unused.sock").abs(),
         },
@@ -1422,15 +1421,29 @@ async fn shared_overview_shows_only_root_sessions() {
     assert!(app.last_rendered_history_tail.is_some());
 }
 
-#[cfg(any(unix, windows))]
 #[tokio::test]
-async fn embedded_sessions_offer_to_start_a_background_server_without_migrating() {
-    let mut app = make_test_app().await;
-    let app_server = crate::start_embedded_app_server_for_picker(app.chat_widget.config_ref())
+async fn embedded_sessions_open_conversation_agent_picker() {
+    let (mut app, mut events, _) = crate::app::tests::make_test_app_with_channels().await;
+    let mut app_server = crate::start_embedded_app_server_for_picker(app.chat_widget.config_ref())
         .await
         .expect("embedded app server");
 
+    while events.try_recv().is_ok() {}
     app.open_agents_overview(&app_server);
+    assert!(matches!(events.try_recv(), Ok(AppEvent::OpenAgentPicker)));
+    app.open_agent_picker(&mut app_server).await;
+    let AppEvent::InsertHistoryCell(cell) = events.try_recv().expect("empty agent picker feedback")
+    else {
+        panic!("expected empty agent picker feedback");
+    };
+    let feedback = cell
+        .display_lines(96)
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(feedback.contains("No agents available yet."), "{feedback}");
+    assert!(app.chat_widget.no_modal_or_popup_active());
 
     insta::with_settings!({snapshot_path => "../snapshots"}, {
         insta::assert_snapshot!(
@@ -1439,47 +1452,6 @@ async fn embedded_sessions_offer_to_start_a_background_server_without_migrating(
         );
     });
     app_server.shutdown().await.expect("shutdown app server");
-}
-
-#[cfg(any(unix, windows))]
-#[tokio::test]
-async fn daemon_start_result_snapshots() -> Result<()> {
-    let (mut app, mut app_event_rx, _op_rx) =
-        crate::app::tests::make_test_app_with_channels().await;
-    let mut app_server =
-        crate::start_embedded_app_server_for_picker(app.chat_widget.config_ref()).await?;
-    let mut tui = crate::tui::test_support::make_test_tui()?;
-
-    for (name, result) in [
-        ("agents_daemon_started", Ok(())),
-        (
-            "agents_daemon_start_failed",
-            Err("The host does not allow detached processes".to_string()),
-        ),
-    ] {
-        app.handle_event(
-            &mut tui,
-            &mut app_server,
-            AppEvent::AgentsDaemonStarted { result },
-        )
-        .await?;
-        let cell = match app_event_rx.try_recv()? {
-            AppEvent::InsertHistoryCell(cell) => cell,
-            other => panic!("expected daemon result history, got {other:?}"),
-        };
-        let rendered = cell
-            .display_lines(/*width*/ 80)
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .join("\n");
-        insta::with_settings!({snapshot_path => "../snapshots"}, {
-            insta::assert_snapshot!(name, rendered);
-        });
-    }
-
-    app_server.shutdown().await?;
-    Ok(())
 }
 
 #[tokio::test]
@@ -2481,7 +2453,7 @@ async fn command_center_handles_resume_failure_and_success() -> Result<()> {
 }
 
 #[tokio::test]
-async fn command_center_attach_conflict_opens_read_only_and_retries() -> Result<()> {
+async fn embedded_attach_conflict_opens_read_only_and_retries() -> Result<()> {
     let mut app = Box::pin(make_test_app()).await;
     trust_fixture_folders(&mut app);
     std::fs::write(
@@ -2519,10 +2491,7 @@ async fn command_center_attach_conflict_opens_read_only_and_retries() -> Result<
         .thread_read(thread_id, /*include_turns*/ false)
         .await?;
     let mut server = Box::pin(crate::start_embedded_app_server_for_picker(&app.config)).await?;
-    app.app_server_target = AppServerTarget::LocalDaemon {
-        allow_embedded_fallback: true,
-        endpoint: crate::resolve_remote_addr("ws://127.0.0.1:4500")?,
-    };
+    app.app_server_target = AppServerTarget::Embedded;
     app.chat_widget.remote_connection =
         crate::status::remote_connection::remote_connection_status_value(
             &app.app_server_target,
@@ -2557,9 +2526,6 @@ async fn command_center_attach_conflict_opens_read_only_and_retries() -> Result<
     let mut view = app.agents_overview_view(vec![thread], Some(thread_id));
     view.handle_key_event(KeyCode::Esc.into());
     app.chat_widget.show_bottom_pane_view(Box::new(view));
-    let selection = app
-        .chat_widget
-        .selected_index_for_present_view(AGENTS_OVERVIEW_VIEW_ID);
     let mut tui = crate::tui::test_support::make_test_tui()?;
 
     app.config.approvals_reviewer = ApprovalsReviewer::AutoReview;
@@ -2602,22 +2568,14 @@ async fn command_center_attach_conflict_opens_read_only_and_retries() -> Result<
         insta::assert_snapshot!("agents_overview_attach_conflict", render_bottom_popup(&app.chat_widget, /*width*/ 96));
     });
 
-    for key in [KeyCode::Left, KeyCode::Esc] {
-        Box::pin(app.handle_tui_event(&mut tui, &mut server, TuiEvent::Key(key.into()))).await?;
-        assert_eq!(
-            app.chat_widget
-                .selected_index_for_present_view(AGENTS_OVERVIEW_VIEW_ID),
-            selection
-        );
-
-        // Opening the displayed task returns to the same frozen snapshot without retrying.
-        Box::pin(app.handle_event(
-            &mut tui,
-            &mut server,
-            AppEvent::SelectAgentsOverviewThread { thread_id },
-        ))
-        .await?;
-    }
+    // Reopening the displayed task returns to the same frozen snapshot without retrying.
+    // Embedded sessions no longer navigate to the daemon-wide command center.
+    Box::pin(app.handle_event(
+        &mut tui,
+        &mut server,
+        AppEvent::SelectAgentsOverviewThread { thread_id },
+    ))
+    .await?;
     assert!(app.chat_widget.no_modal_or_popup_active());
     assert!(app.chat_widget.is_external_writer_view());
     app.chat_widget.handle_paste(" should be ignored".into());
@@ -2914,8 +2872,7 @@ async fn overview_fork_keeps_idle_source_input_queued() -> Result<()> {
             }
         }
         // Failed reattachment can leave the source displayed as a saved replay.
-        app.app_server_target = AppServerTarget::LocalDaemon {
-            allow_embedded_fallback: true,
+        app.app_server_target = AppServerTarget::Remote {
             endpoint: crate::resolve_remote_addr("ws://127.0.0.1:4500")?,
         };
         app.ensure_thread_channel(source).mark_replay_only();

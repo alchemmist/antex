@@ -269,15 +269,10 @@ impl FeedbackRequestProcessor {
 
         let session_source = self.thread_manager.session_source();
         let runtime_handle = tokio::runtime::Handle::current();
-        let codex_home = self.config.codex_home.clone();
 
         let upload_result = tokio::task::spawn_blocking(move || {
             // Cancelling the RPC waiter must not release a still-running upload's slot.
             let _permit = permit;
-            if include_logs {
-                extra_attachments
-                    .extend(antex_feedback::daemon_log_attachments(codex_home.as_path()));
-            }
             let tags = (!upload_tags.is_empty()).then_some(&upload_tags);
             runtime_handle.block_on(snapshot.upload_feedback(
                 FeedbackUploadOptions {
@@ -544,13 +539,13 @@ mod tests {
     async fn doctor_uses_loaded_feedback_thread_cwd() -> anyhow::Result<()> {
         let server = start_mock_server().await;
         let test = test_antex().build_with_auto_env(&server).await?;
-        let daemon_workspace = tempfile::tempdir()?;
+        let server_workspace = tempfile::tempdir()?;
 
         let cwd = feedback_cwd(
             &test.thread_manager,
             /*state_db*/ None,
             Some(test.session_configured.thread_id),
-            daemon_workspace.path(),
+            server_workspace.path(),
         )
         .await;
 

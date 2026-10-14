@@ -12,31 +12,46 @@ SCRIPT = Path(__file__).with_name("smoke-tui-startup.py")
 @unittest.skipUnless(os.name == "posix", "PTY smoke test")
 class StartupSmokeTests(unittest.TestCase):
     def run_probe(
-        self, *, ignore_term=False, early_exit=False, deny_group_signal=False
+        self,
+        *,
+        ignore_term=False,
+        early_exit=False,
+        deny_group_signal=False,
+        startup_timeout=False,
+        connect_legacy=False,
     ):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             marker = root / "child.pid"
-            stopped = root / "daemon-stopped"
+            home_marker = root / "frontend-home"
             binary = root / "antex"
             binary.write_text(
                 f"#!{sys.executable}\n"
                 "import os, signal, sys, time\n"
                 "from pathlib import Path\n"
-                "if sys.argv[1:] == ['app-server', 'daemon', 'stop']:\n"
-                f"    Path({str(stopped)!r}).write_text(os.environ['ANTEX_HOME'])\n"
-                "    sys.exit(0)\n"
                 "assert sys.argv[1:] == ['--no-alt-screen'], sys.argv\n"
                 "assert 'ANTEX_APP_SERVER_URL' not in os.environ\n"
                 "signal.signal(signal.SIGHUP, signal.SIG_IGN)\n"
                 f"Path({str(marker)!r}).write_text(str(os.getpid()))\n"
+                f"Path({str(home_marker)!r}).write_text(os.environ['ANTEX_HOME'])\n"
                 + (
                     "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
                     if ignore_term
                     else ""
                 )
+                + (
+                    "import socket\n"
+                    "legacy = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)\n"
+                    "legacy.connect(str(Path(os.environ['ANTEX_HOME']) / 'app-server-control/app-server-control.sock'))\n"
+                    if connect_legacy
+                    else ""
+                )
                 + ("sys.exit(2)\n" if early_exit else "")
-                + 'print("Ask Antex to do anything", flush=True)\n'
+                + (
+                    ""
+                    if startup_timeout
+                    else 'print("Ask Antex to do anything", flush=True)\n'
+                )
                 + "while True: time.sleep(1)\n"
             )
             binary.chmod(0o755)
@@ -53,6 +68,8 @@ class StartupSmokeTests(unittest.TestCase):
                     str(SCRIPT),
                     str(binary),
                 ]
+            if startup_timeout:
+                command.extend(["--timeout", "0.25"])
             process = subprocess.Popen(
                 command,
                 stdout=subprocess.PIPE,
@@ -62,8 +79,8 @@ class StartupSmokeTests(unittest.TestCase):
             )
             try:
                 stdout, stderr = process.communicate(timeout=8)
-                self.assertTrue(stopped.is_file(), stderr)
-                temporary_home = Path(stopped.read_text())
+                self.assertTrue(home_marker.is_file(), stderr)
+                temporary_home = Path(home_marker.read_text())
                 self.assertTrue(temporary_home.name.startswith("antex-tui-startup-"))
                 self.assertFalse(temporary_home.exists())
                 with self.assertRaises(ProcessLookupError):
@@ -79,10 +96,15 @@ class StartupSmokeTests(unittest.TestCase):
                     process.kill()
                     process.communicate(timeout=2)
 
-    def test_normal_startup_and_daemon_cleanup(self):
+    def test_normal_embedded_startup_and_frontend_cleanup(self):
         code, stdout, stderr = self.run_probe()
         self.assertEqual(code, 0, stderr)
-        self.assertIn("normal startup reached the composer", stdout)
+        self.assertIn("normal embedded startup reached the composer", stdout)
+
+    def test_legacy_socket_connection_is_rejected_and_frontend_reaped(self):
+        code, _, stderr = self.run_probe(connect_legacy=True)
+        self.assertNotEqual(code, 0)
+        self.assertIn("foreground startup connected to a legacy daemon socket", stderr)
 
     def test_startup_cleans_up_child_ignoring_sigterm(self):
         code, _, stderr = self.run_probe(ignore_term=True)
@@ -92,7 +114,12 @@ class StartupSmokeTests(unittest.TestCase):
         code, _, stderr = self.run_probe(ignore_term=True, deny_group_signal=True)
         self.assertEqual(code, 0, stderr)
 
-    def test_early_exit_reports_missing_composer_and_stops_daemon(self):
+    def test_timeout_reports_missing_composer_and_cleans_up_frontend(self):
+        code, _, stderr = self.run_probe(startup_timeout=True, ignore_term=True)
+        self.assertNotEqual(code, 0)
+        self.assertIn("did not reach the composer", stderr)
+
+    def test_early_exit_reports_missing_composer_and_reaps_frontend(self):
         code, _, stderr = self.run_probe(early_exit=True)
         self.assertNotEqual(code, 0)
         self.assertIn("did not reach the composer", stderr)

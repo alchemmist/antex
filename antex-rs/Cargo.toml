@@ -15,7 +15,6 @@ members = [
     "async-utils",
     "app-server",
     "app-server-transport",
-    "app-server-daemon",
     "app-server-client",
     "app-server-protocol",
     "app-server-protocol-noop-macros",
@@ -179,7 +178,6 @@ antex-attachment-store = { path = "attachment-store" }
 antex-aws-auth = { path = "aws-auth" }
 antex-app-server = { path = "app-server" }
 antex-app-server-transport = { path = "app-server-transport" }
-antex-app-server-daemon = { path = "app-server-daemon" }
 antex-app-server-client = { path = "app-server-client" }
 antex-app-server-protocol = { path = "app-server-protocol" }
 antex-app-server-protocol-noop-macros = { path = "app-server-protocol-noop-macros" }

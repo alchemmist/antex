@@ -17,7 +17,7 @@ pub(super) fn background_terminals_blocker(
     match result {
         Ok(response) if response.data.is_empty() => None,
         Err(TypedRequestError::Server { source, .. })
-            if matches!(target, AppServerTarget::LocalDaemon { .. })
+            if target.uses_remote_workspace()
                 && (source.code == -32601
                     || source.code == -32600
                         && source.message.contains("thread/backgroundTerminals/list")
@@ -25,7 +25,7 @@ pub(super) fn background_terminals_blocker(
                             || source.message.contains("unknown method"))) =>
         {
             Some(
-                "The local Codex service cannot check background terminals. Run `codex app-server daemon update`, then restart Codex.",
+                "The remote server cannot check background terminals. Update the server before creating a worktree.",
             )
         }
         _ => Some("Active background terminals block /cd."),

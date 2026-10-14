@@ -29,26 +29,15 @@ pub async fn run_session_queue_command(
     message: String,
     options: SessionArchiveCommandOptions,
 ) -> Result<String> {
-    if options.cli.no_daemon && options.explicit_remote_endpoint.is_none() {
+    if options.explicit_remote_endpoint.is_none() {
         return Err(eyre!(
-            "--no-daemon cannot be used with antex queue. Queuing must discover the shared server to avoid writing through a separate server."
+            "Local sessions now own an embedded engine. Queue input in the running TUI; a separate CLI invocation cannot submit to that engine."
         ));
     }
     let codex_home = find_antex_home().wrap_err("failed to find Antex home")?;
     let explicit_remote = options.explicit_remote_endpoint.is_some();
     let mut app_server =
         start_app_server_for_session_command(options, codex_home.to_path_buf()).await?;
-    if !explicit_remote
-        && app_server.uses_embedded_app_server()
-        && super::maybe_probe_default_daemon_socket(codex_home.as_path())
-            .await
-            .is_some()
-    {
-        return Err(eyre!(
-            "cannot queue through an embedded app server while a local app-server daemon is running; remove configuration overrides or use --remote"
-        ));
-    }
-    let implicit_local_daemon = !explicit_remote && !app_server.uses_embedded_app_server();
     let client_message_id = Uuid::now_v7().to_string();
 
     let (thread_id, response) = match run_session_queue_action_with_app_server(
@@ -60,14 +49,8 @@ pub async fn run_session_queue_command(
     )
     .await
     {
-        Err(error)
-            if (implicit_local_daemon || explicit_remote) && is_unsupported_queue_error(&error) =>
-        {
-            let server = if explicit_remote {
-                "remote app server"
-            } else {
-                "local app-server daemon"
-            };
+        Err(error) if explicit_remote && is_unsupported_queue_error(&error) => {
+            let server = "remote app server";
             return Err(error.wrap_err(format!(
                 "the {server} does not support thread/queue/add; update or restart the {server}"
             )));

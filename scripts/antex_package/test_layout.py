@@ -132,7 +132,7 @@ int main(void) {
                 self.assertEqual(actual_metadata, metadata)
 
     def test_macos_package_preserves_prebuilt_resource_binaries(self) -> None:
-        for variant_name in ("antex", "antex-app-server"):
+        for variant_name in PACKAGE_VARIANTS:
             for target in ("aarch64-apple-darwin", "x86_64-apple-darwin"):
                 with self.subTest(variant=variant_name, target=target):
                     with tempfile.TemporaryDirectory() as temp_dir:
@@ -168,13 +168,13 @@ int main(void) {
                             },
                         )
 
-    def test_app_server_package_places_code_mode_host_beside_entrypoint(self) -> None:
+    def test_cli_package_places_code_mode_host_beside_entrypoint(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             package_dir = root / "package"
             package_dir.mkdir()
             inputs = PackageInputs(
-                entrypoint_bin=touch_executable(root / "antex-app-server"),
+                entrypoint_bin=touch_executable(root / "antex"),
                 code_mode_host_bin=touch_executable(root / "antex-code-mode-host"),
                 rg_bin=touch_executable(root / "rg"),
                 bwrap_bin=touch_executable(root / "bwrap"),
@@ -185,13 +185,13 @@ int main(void) {
             build_package_dir(
                 package_dir,
                 "1.2.3",
-                PACKAGE_VARIANTS["antex-app-server"],
+                PACKAGE_VARIANTS["antex"],
                 TARGET_SPECS["x86_64-unknown-linux-musl"],
                 inputs,
             )
             validate_package_dir(
                 package_dir,
-                PACKAGE_VARIANTS["antex-app-server"],
+                PACKAGE_VARIANTS["antex"],
                 TARGET_SPECS["x86_64-unknown-linux-musl"],
             )
 

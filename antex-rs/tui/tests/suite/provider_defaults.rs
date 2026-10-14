@@ -9,17 +9,19 @@ use std::process::Stdio;
 use std::time::Duration;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn history_lookup_uses_server_provider_with_local_and_embedded_servers() -> Result<()> {
-    let codex = antex_utils_cargo_bin::cargo_bin("antex")?;
+async fn history_lookup_uses_local_provider_despite_a_legacy_socket_server() -> Result<()> {
+    let server_binary = antex_utils_cargo_bin::cargo_bin("antex-app-server")?;
     let cwd = antex_utils_cargo_bin::repo_root()?;
     for action in ["resume", "fork"] {
-        for (embedded, last, explicit) in [
+        for (compatibility_flag, last, explicit) in [
             (false, false, false),
             (true, false, false),
             (false, true, false),
             (true, true, false),
             (false, true, true),
             (false, false, true),
+            (true, true, true),
+            (true, false, true),
         ] {
             let home = tempfile::tempdir_in("/tmp")?;
             write_test_config(home.path(), &cwd)?;
@@ -44,9 +46,8 @@ async fn history_lookup_uses_server_provider_with_local_and_embedded_servers() -
                     /*git_info*/ None,
                 )?;
             }
-            let mut daemon = tokio::process::Command::new(&codex)
+            let mut legacy_server = tokio::process::Command::new(&server_binary)
                 .args([
-                    "app-server",
                     "--listen",
                     "unix://",
                     "-c",
@@ -68,31 +69,25 @@ async fn history_lookup_uses_server_provider_with_local_and_embedded_servers() -
                         return Ok::<(), anyhow::Error>(());
                     }
                     ensure!(
-                        daemon.try_wait()?.is_none(),
+                        legacy_server.try_wait()?.is_none(),
                         "app server exited before opening its socket"
                     );
                     tokio::time::sleep(Duration::from_millis(/*millis*/ 20)).await;
                 }
             })
             .await??;
-            let remote_endpoint = format!("unix://{}", socket.as_path().display());
             let mut args = vec![action, "--all"];
-            if embedded {
+            if compatibility_flag {
                 args.push("--no-daemon");
             }
             if last {
                 args.push("--last");
             }
             if explicit {
-                args.extend([
-                    "--remote",
-                    remote_endpoint.as_str(),
-                    "-c",
-                    "model_provider=\"openai\"",
-                ]);
+                args.extend(["-c", "model_provider=\"server-provider\""]);
             }
             let mut terminal = PtyAntex::start_cli(&cwd, home, &args)?;
-            let (expected, excluded) = if embedded || explicit {
+            let (expected, excluded) = if !explicit {
                 ("Client provider history", "Server provider history")
             } else {
                 ("Server provider history", "Client provider history")
@@ -103,8 +98,8 @@ async fn history_lookup_uses_server_provider_with_local_and_embedded_servers() -
                 "{action}: unexpected provider history"
             );
             drop(terminal);
-            daemon.kill().await?;
-            daemon.wait().await?;
+            legacy_server.kill().await?;
+            legacy_server.wait().await?;
         }
     }
     Ok(())
