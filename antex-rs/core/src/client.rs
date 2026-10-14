@@ -34,6 +34,8 @@ use std::sync::atomic::Ordering;
 
 #[path = "client_auth_owner.rs"]
 mod auth_owner;
+#[path = "client_direct_input.rs"]
+mod direct_input;
 #[path = "client_tool_metadata.rs"]
 mod tool_metadata;
 
@@ -924,6 +926,9 @@ impl ModelClient {
             input.retain(|item| !matches!(item, ResponseItem::ConfigurationUpdate { .. }));
         }
         let direct = self.uses_chatgpt_direct();
+        if direct {
+            direct_input::prepare_agent_messages(&mut input)?;
+        }
         let is_openai = self.state.provider.info().is_openai() && !direct;
         // These prompt-only items are rebuilt on every request. Hash their visible payloads
         // within the thread so retries and resumed sessions preserve their identity.

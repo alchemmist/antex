@@ -74,6 +74,98 @@ impl HttpTransport for ScriptedSse {
     }
 }
 
+#[tokio::test]
+async fn resumed_direct_agent_message_is_translated_before_http_dispatch() -> anyhow::Result<()> {
+    let (_home, mut client, _manager) = direct_client().await?;
+    let model = antex_models_manager::bundled_models_response()?
+        .models
+        .into_iter()
+        .find(|model| model.slug == "gpt-6-astra")
+        .expect("bundled Astra metadata");
+    let native = json!({"type":"agent_message","author":"/root/review","recipient":"/root",
+        "content":[{"type":"input_text","text":"Message Type: MESSAGE\nTask name: /root\nSender: /root/review\nPayload:\nDone"}]});
+    let encrypted = json!({"type":"agent_message","author":"/root","recipient":"/root/review",
+        "content":[{"type":"encrypted_content","encrypted_content":"opaque-saved-task"}]});
+    let prompt = Prompt {
+        input: vec![
+            serde_json::from_value(native.clone())?,
+            serde_json::from_value(encrypted)?,
+        ],
+        ..Default::default()
+    };
+    let saved = prompt.input.clone();
+    let transport = ScriptedSse::new([vec![
+        json!({"type":"response.created","response":{"id":"resp_resume"}}),
+        json!({"type":"response.completed","response":{"id":"resp_resume","end_turn":true}}),
+    ]]);
+    let injected = transport.clone();
+    Arc::get_mut(&mut client.state).unwrap().test_transport = Some(
+        crate::client::test_transport::StreamHook::new(move |request| {
+            let injected = injected.clone();
+            async move { injected.stream(request).await }
+        }),
+    );
+    let metadata = test_responses_metadata_for_client(
+        &client,
+        Some("turn_resume"),
+        format!("{}:0", client.state.thread_id),
+        /*parent_thread_id*/ None,
+        TestAntexResponsesRequestKind::Turn,
+    );
+    let mut session = client.new_session();
+    let mut stream = session
+        .stream(
+            &prompt,
+            &model,
+            &test_session_telemetry(),
+            /*effort*/ None,
+            antex_protocol::config_types::ReasoningSummary::None,
+            /*service_tier*/ None,
+            &metadata,
+            &InferenceTraceContext::disabled(),
+        )
+        .await?;
+    let mut completed = false;
+    while let Some(event) = stream.next().await {
+        completed |= matches!(event?, ResponseEvent::Completed { .. });
+    }
+    assert!(completed);
+    assert_eq!(prompt.input, saved);
+    let state = transport.0.lock().unwrap();
+    assert_eq!(state.requests.len(), 1);
+    let request = &state.requests[0];
+    assert_eq!(request.url, "https://api.openai.com/v1/responses");
+    let body = request
+        .prepare_body_for_send()
+        .map_err(anyhow::Error::msg)?;
+    let body: Value = serde_json::from_slice(&body.body.expect("request body"))?;
+    let input = body["input"].as_array().unwrap();
+    assert!(input.iter().all(|item| item["type"] != "agent_message"));
+    let plaintext = input
+        .iter()
+        .find(|item| item["role"] == "assistant")
+        .unwrap();
+    assert_eq!(
+        plaintext,
+        &json!({
+            "type":"message","role":"assistant","content":[{
+                "type":"output_text","text":native["content"][0]["text"]
+            }]
+        })
+    );
+    let call = input
+        .iter()
+        .find(|item| item["type"] == "function_call")
+        .unwrap();
+    assert_eq!(
+        serde_json::from_str::<Value>(call["arguments"].as_str().unwrap())?,
+        json!({"author":"/root","recipient":"/root/review","message":"opaque-saved-task"})
+    );
+    assert_eq!(input.last().unwrap()["call_id"], call["call_id"]);
+    assert_eq!(body["tools"], json!([]));
+    Ok(())
+}
+
 #[derive(Debug, Default, PartialEq)]
 struct DecodedExchange {
     created: Vec<Option<String>>,

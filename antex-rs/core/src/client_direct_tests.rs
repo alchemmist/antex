@@ -68,6 +68,94 @@ async fn direct_client() -> anyhow::Result<(TempDir, ModelClient, Arc<AuthManage
 }
 
 #[tokio::test]
+async fn direct_agent_history_is_adapted_without_changing_legacy_requests() -> anyhow::Result<()> {
+    let (_home, direct, _manager) = direct_client().await?;
+    let mut legacy = test_model_client(SessionSource::Cli);
+    Arc::get_mut(&mut legacy.state).unwrap().provider = create_model_provider(
+        ModelProviderInfo::create_openai_provider(/*base_url*/ None),
+        Some(AuthManager::from_auth_for_testing(
+            AntexAuth::create_dummy_chatgpt_auth_for_testing(),
+        )),
+    );
+    let mut api_key = test_model_client(SessionSource::Cli);
+    Arc::get_mut(&mut api_key.state).unwrap().provider = create_model_provider(
+        ModelProviderInfo::create_openai_provider(/*base_url*/ None),
+        Some(AuthManager::from_auth_for_testing(AntexAuth::from_api_key(
+            "test-api-key",
+        ))),
+    );
+    let oss = test_model_client(SessionSource::Cli);
+    let model = antex_models_manager::bundled_models_response()?
+        .models
+        .into_iter()
+        .find(|model| model.slug == "gpt-6-astra")
+        .expect("bundled Astra metadata");
+    let native = json!({"type":"agent_message","author":"/root/review","recipient":"/root",
+        "content":[{"type":"input_text","text":"Message Type: MESSAGE\nTask name: /root\nSender: /root/review\nPayload:\nDone"}]});
+    let opaque = json!({"type":"agent_message","author":"/root","recipient":"/root/review",
+        "content":[{"type":"encrypted_content","encrypted_content":"opaque-legacy-task"}]});
+    let prompt = Prompt {
+        input: vec![
+            serde_json::from_value(native.clone())?,
+            serde_json::from_value(opaque)?,
+        ],
+        ..Default::default()
+    };
+    let original = prompt.input.clone();
+    for (client, expected_type) in [
+        (&direct, "message"),
+        (&legacy, "agent_message"),
+        (&api_key, "agent_message"),
+        (&oss, "agent_message"),
+    ] {
+        let metadata = test_responses_metadata_for_client(
+            client,
+            /*turn_id*/ None,
+            format!("{}:0", client.state.thread_id),
+            /*parent_thread_id*/ None,
+            TestAntexResponsesRequestKind::Turn,
+        );
+        let request = client.build_responses_request(
+            &prompt,
+            &model,
+            /*effort*/ None,
+            antex_protocol::config_types::ReasoningSummary::None,
+            /*service_tier*/ None,
+            &metadata,
+            /*include_internal*/ false,
+        )?;
+        let body = serde_json::to_value(request)?;
+        let input = body["input"].as_array().unwrap();
+        if expected_type == "agent_message" {
+            assert_eq!(
+                serde_json::to_value(&input[input.len() - original.len()..])?,
+                serde_json::to_value(&original)?
+            );
+        } else {
+            assert!(input.iter().all(|item| item["type"] != "agent_message"));
+            let plaintext = input
+                .iter()
+                .find(|item| item["role"] == "assistant")
+                .unwrap();
+            assert_eq!(
+                plaintext["content"][0]["text"],
+                native["content"][0]["text"]
+            );
+            let call = input
+                .iter()
+                .find(|item| item["type"] == "function_call")
+                .unwrap();
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(call["arguments"].as_str().unwrap())?,
+                json!({"author":"/root","recipient":"/root/review","message":"opaque-legacy-task"})
+            );
+        }
+        assert_eq!(prompt.input, original);
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn direct_subscription_disables_codex_framing_and_websocket_prewarm() -> anyhow::Result<()> {
     let (_home, client, _manager) = direct_client().await?;
     let setup = client
