@@ -427,6 +427,7 @@ version = "0.162.1"
 dependencies = [
  "antex-agent-extension",
  "antex-analytics",
+ "antex-api",
  "antex-app-server-protocol",
  "antex-app-server-transport",
  "antex-arg0",

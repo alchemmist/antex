@@ -15790,6 +15790,12 @@
               "integer",
               "null"
             ]
+          },
+          "modelProvider": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "title": "ModelListParams",

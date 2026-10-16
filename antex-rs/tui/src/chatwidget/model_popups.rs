@@ -80,6 +80,10 @@ impl ChatWidget {
     }
 
     pub(crate) fn open_model_popup_with_presets(&mut self, presets: Vec<ModelPreset>) {
+        if !self.model_catalog.providers.is_empty() {
+            self.open_provider_models_popup(MODEL_SELECTION_VIEW_ID);
+            return;
+        }
         if self.restrict_model_picker_to_luna_reserve() {
             self.open_luna_reserve_model_popup(presets, MODEL_SELECTION_VIEW_ID);
             return;
@@ -211,6 +215,10 @@ impl ChatWidget {
     }
 
     pub(crate) fn open_all_models_popup(&mut self) {
+        if !self.model_catalog.providers.is_empty() {
+            self.open_provider_models_popup(ALL_MODELS_SELECTION_VIEW_ID);
+            return;
+        }
         if self.restrict_model_picker_to_luna_reserve() {
             self.open_luna_reserve_model_popup(
                 self.model_catalog.try_list_models().unwrap_or_default(),

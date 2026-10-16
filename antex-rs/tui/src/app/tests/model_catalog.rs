@@ -668,3 +668,182 @@ async fn model_migration_prompt_shows_for_hidden_model() {
         model_migration_copy_to_plain_text(&copy)
     );
 }
+
+#[tokio::test]
+async fn selecting_provider_model_preserves_session_state() -> Result<()> {
+    for saved_empty in [false, true] {
+        let (mut app, mut events, _) = make_test_app_with_channels().await;
+        let home = tempfile::tempdir()?;
+        app.config.codex_home = home.path().to_path_buf().abs();
+        app.config.sqlite = antex_state::SqliteConfig::new_for_testing(home.path().abs());
+        let path = app.config.codex_home.join("config.toml");
+        let mut text = std::fs::read_to_string(&path).unwrap_or_default();
+        text.push_str("\n[model_providers.alternative]\nname = 'Alternative'\nbase_url = 'http://127.0.0.1:9/v1'\nexperimental_bearer_token = 'alternative-secret'\n");
+        std::fs::write(&path, &text)?;
+        app.refresh_in_memory_config_from_disk_best_effort("test provider config")
+            .await;
+        let mut server = crate::start_embedded_app_server_for_picker(&app.config).await?;
+        let started = if saved_empty {
+            let id = crate::tests::write_session_rollout(
+                home.path(),
+                "2025-01-02T10-00-00",
+                "2025-01-02T10:00:00Z",
+                "",
+                "openai",
+                app.config.cwd.as_path(),
+            )?;
+            let rollout = home.path().join(format!(
+                "sessions/2025/01/02/rollout-2025-01-02T10-00-00-{id}.jsonl"
+            ));
+            let contents = std::fs::read_to_string(&rollout)?;
+            std::fs::write(
+                rollout,
+                format!("{}\n", contents.lines().next().expect("session metadata")),
+            )?;
+            server
+                .resume_thread(
+                    &app.local_settings,
+                    app.config.clone(),
+                    id,
+                    crate::app_server_session::ResumeModelSettings::RestoreFromThread,
+                )
+                .await?
+        } else {
+            server.start_thread(&app.config).await?
+        };
+        let id = started.session.thread_id;
+        app.primary_thread_id = Some(id);
+        app.active_thread_id = Some(id);
+        let defaults = (
+            started.session.model_provider_id.clone(),
+            started.session.model.clone(),
+        );
+        let mut tui = crate::tui::test_support::make_test_tui()?;
+        app.replace_chat_widget_with_app_server_thread(
+            &mut tui,
+            started,
+            crate::app::session_lifecycle::ThreadAttachPresentation::SessionLineage,
+            /*initial_user_message*/ None,
+        )
+        .await?;
+        assert_eq!(
+            (
+                app.config.model_providers.contains_key("alternative"),
+                app.chat_widget.thread_id(),
+                app.chat_widget.has_running_task(),
+                app.chat_widget.is_external_writer_view()
+            ),
+            (true, Some(id), false, false)
+        );
+        let model = all_model_presets()
+            .into_iter()
+            .find(|model| model.model == "gpt-5.5")
+            .expect("test model");
+        app.chat_widget.requires_openai_auth = true;
+        app.chat_widget.insert_str("preserve this draft");
+        Box::pin(app.select_provider_model(
+            &mut tui,
+            &mut server,
+            "alternative".into(),
+            model.clone(),
+        ))
+        .await?;
+        assert!(server.model_provider_override.is_none());
+        let selected_id = app.primary_thread_id.expect("selected thread");
+        assert_eq!(selected_id == id, saved_empty);
+        let thread = server
+            .thread_read(selected_id, /*include_turns*/ false)
+            .await?;
+        let feedback: Vec<_> = std::iter::from_fn(|| events.try_recv().ok())
+            .filter_map(|event| match event {
+                AppEvent::InsertHistoryCell(cell) => Some(
+                    cell.display_lines(120)
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                ),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            (
+                app.config.model_provider_id.as_str(),
+                thread.model_provider.as_str(),
+                thread.id.as_str()
+            ),
+            (
+                "alternative",
+                "alternative",
+                selected_id.to_string().as_str()
+            ),
+            "{feedback:?}"
+        );
+        assert_eq!(
+            (
+                app.chat_widget.current_collaboration_mode().model(),
+                app.chat_widget.requires_openai_auth
+            ),
+            (model.model.as_str(), false)
+        );
+        assert!(!app.chat_widget.composer_is_empty());
+        let saved = std::fs::read_to_string(path)?;
+        assert_eq!(saved, text);
+        Box::pin(app.start_fresh_session(
+            &mut tui,
+            &mut server,
+            /*session_start_source*/ None,
+            /*initial_user_message*/ None,
+            /*new_thread_name*/ None,
+        ))
+        .await;
+        let next = server
+            .thread_read(
+                app.primary_thread_id.expect("new session"),
+                /*include_turns*/ false,
+            )
+            .await?;
+        assert_eq!(
+            (next.model_provider.as_str(), next.model.as_deref()),
+            (defaults.0.as_str(), Some(defaults.1.as_str()))
+        );
+        server.shutdown().await?;
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn provider_picker_actions_ignore_a_changed_thread_or_provider() -> Result<()> {
+    let (mut app, _, _) = make_test_app_with_channels().await;
+    let mut server = start_config_write_test_app_server(&app).await?;
+    let mut tui = crate::tui::test_support::make_test_tui()?;
+    let id = ThreadId::new();
+    app.chat_widget
+        .handle_thread_session(test_thread_session(id, test_path_buf("/tmp/project")));
+    let original = app.chat_widget.current_model().to_string();
+    for (thread_id, origin_provider) in [
+        (
+            ThreadId::new(),
+            app.chat_widget.config_ref().model_provider_id.clone(),
+        ),
+        (id, "former-provider".into()),
+    ] {
+        let mut model = all_model_presets()[0].clone();
+        model.model = "must-not-apply".into();
+        let provider = app.chat_widget.config_ref().model_provider_id.clone();
+        Box::pin(app.handle_event(
+            &mut tui,
+            &mut server,
+            AppEvent::SelectProviderModel {
+                thread_id: Some(thread_id),
+                origin_provider,
+                provider,
+                model,
+            },
+        ))
+        .await?;
+        assert_eq!(app.chat_widget.current_model(), original);
+    }
+    server.shutdown().await?;
+    Ok(())
+}

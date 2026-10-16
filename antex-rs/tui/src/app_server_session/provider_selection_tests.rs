@@ -171,3 +171,159 @@ async fn required_provider_overrides_oss_history_selection() -> Result<()> {
     server.shutdown().await?;
     Ok(())
 }
+
+#[tokio::test]
+async fn provider_switch_preserves_history_and_routes_credentials() -> Result<()> {
+    use core_test_support::responses;
+    use serde_json::json;
+    let first = responses::start_mock_server().await;
+    let second = responses::start_mock_server().await;
+    let home = tempfile::tempdir()?;
+    std::fs::write(
+        home.path().join("config.toml"),
+        format!(
+            r#"
+model_provider = "first"
+model = "gpt-5.5"
+[model_providers.first]
+name = "First"
+base_url = "{}/v1"
+experimental_bearer_token = "first-secret"
+[model_providers.second]
+name = "Second"
+base_url = "{}/v1"
+experimental_bearer_token = "second-secret"
+"#,
+            first.uri(),
+            second.uri()
+        ),
+    )?;
+    let mut config = ConfigBuilder::default()
+        .codex_home(home.path().to_path_buf())
+        .build()
+        .await?;
+    let local_settings = LocalSettings::from(&config);
+    let mut server = crate::start_embedded_app_server_for_picker(&config).await?;
+    let started = server.start_thread(&config).await?;
+    let thread_id = started.session.thread_id;
+    for (index, (endpoint, provider, token)) in [
+        (&first, "first", "Bearer first-secret"),
+        (&second, "second", "Bearer second-secret"),
+        (&first, "first", "Bearer first-secret"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        if index > 0 {
+            server.thread_unsubscribe(thread_id).await?;
+            config.model_provider_id = provider.into();
+            config.model_provider = config.model_providers[provider].clone();
+            let defaults = (
+                server.model_provider_override.clone(),
+                server.default_model.clone(),
+            );
+            let models = server.available_models.clone();
+            let resumed = server
+                .select_provider_thread(
+                    &local_settings,
+                    config.clone(),
+                    models,
+                    ProviderThreadTarget::Resume(thread_id),
+                )
+                .await?;
+            assert_eq!(
+                (
+                    server.model_provider_override.clone(),
+                    server.default_model.clone()
+                ),
+                defaults
+            );
+            assert_eq!(
+                (resumed.session.thread_id, resumed.session.model_provider_id),
+                (thread_id, provider.to_string())
+            );
+        }
+        let response = responses::mount_sse_once(
+            endpoint,
+            responses::sse(vec![
+                responses::ev_response_created(&format!("response-{index}")),
+                responses::ev_assistant_message(&format!("answer-{index}"), "first provider reply"),
+                responses::ev_completed(&format!("response-{index}")),
+            ]),
+        )
+        .await;
+        server
+            .turn_start(
+                thread_id,
+                format!("provider-turn-{index}"),
+                vec![UserInput::Text {
+                    text: "hello".into(),
+                    text_elements: Vec::new(),
+                }],
+                config.cwd.to_path_buf(),
+                /*approval_policy*/ None,
+                /*approvals_reviewer*/ None,
+                TurnPermissionsOverride::Preserve,
+                &config.workspace_roots,
+                "gpt-5.5".into(),
+                /*effort*/ None,
+                /*summary*/ None,
+                /*service_tier*/ None,
+                /*collaboration_mode*/ None,
+                /*output_schema*/ None,
+                antex_protocol::config_types::SubagentSpawnPolicy::default(),
+                /*cyber_access_program*/ None,
+            )
+            .await?;
+        tokio::time::timeout(std::time::Duration::from_secs(/*secs*/ 30), async {
+            while let Some(event) = server.next_event().await {
+                if let AppServerEvent::ServerNotification(notification) = event
+                    && let antex_app_server_protocol::ServerNotification::TurnCompleted(completed) =
+                        *notification
+                {
+                    assert_eq!(
+                        completed.turn.status,
+                        antex_app_server_protocol::TurnStatus::Completed
+                    );
+                    break;
+                }
+            }
+        })
+        .await?;
+        let request = response.single_request();
+        assert_eq!(
+            json!({"model":request.body_json()["model"], "authorization":request.header("authorization"), "history":request.body_json()["input"].to_string().contains("first provider reply")}),
+            json!({"model":"gpt-5.5", "authorization":token, "history":index>0})
+        );
+    }
+    let defaults = (
+        server.model_provider_override.clone(),
+        server.default_model.clone(),
+        server.available_models.clone(),
+    );
+    let mut rejected = config.clone();
+    rejected.model_provider_id = "missing-provider".into();
+    assert!(
+        server
+            .select_provider_thread(
+                &local_settings,
+                rejected,
+                Vec::new(),
+                ProviderThreadTarget::New
+            )
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        (
+            server.model_provider_override.clone(),
+            server.default_model.clone(),
+            server.available_models.clone()
+        ),
+        defaults
+    );
+    let next = server.start_thread(&config).await?;
+    assert_eq!(next.session.model_provider_id, "first");
+    server.shutdown().await?;
+    Ok(())
+}

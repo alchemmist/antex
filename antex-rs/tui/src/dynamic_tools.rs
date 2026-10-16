@@ -1277,6 +1277,7 @@ async fn background_turn_program(
         request::<ModelListResponse>(handle, |request_id| ClientRequest::ModelList {
             request_id,
             params: ModelListParams {
+                model_provider: None,
                 cursor: None,
                 limit: None,
                 include_hidden: Some(true)

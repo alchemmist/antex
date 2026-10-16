@@ -1,0 +1,15 @@
+---
+source: tui/src/chatwidget/tests/provider_models_tests.rs
+assertion_line: 21
+expression: "render_bottom_popup(&chat, 100)"
+---
+  Select Model
+  Subscription and configured providers · current session
+
+
+› 1. Shared Model · OpenAI subscription (openai)  Same model identifier, different credentials
+  2. Shared Model · LiteLLM (litellm)             Same model identifier, different credentials
+  3. Offline provider (offline)                   Unable to load models; check endpoint and
+                                                  credentials
+
+  enter select · esc back

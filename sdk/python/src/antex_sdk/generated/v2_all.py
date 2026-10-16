@@ -2810,6 +2810,7 @@ class ModelListParams(BaseModel):
         int | None,
         Field(description="Optional page size; defaults to a reasonable server-side value.", ge=0),
     ] = None
+    model_provider: Annotated[str | None, Field(alias="modelProvider")] = None
 
 
 class ModelProviderCapabilitiesReadParams(BaseModel):

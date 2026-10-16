@@ -235,6 +235,7 @@ mod misalignment_policy;
 mod model_defaults;
 mod new_session;
 mod primary_directory;
+mod provider_models;
 mod turn_tips;
 pub(crate) use new_session::has_launch_setting;
 mod clipboard;

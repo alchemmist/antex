@@ -7,7 +7,7 @@ use super::*;
 
 impl ChatWidget {
     fn model_popup_view_id(&self) -> Option<&'static str> {
-        [MODEL_SELECTION_VIEW_ID, ALL_MODELS_SELECTION_VIEW_ID]
+        [ALL_MODELS_SELECTION_VIEW_ID, MODEL_SELECTION_VIEW_ID]
             .into_iter()
             .find(|view_id| {
                 self.bottom_pane

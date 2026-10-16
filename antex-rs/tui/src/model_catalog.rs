@@ -16,8 +16,17 @@ pub(crate) fn model_display_name(model: &str) -> &str {
 }
 
 #[derive(Debug, Clone)]
+pub(crate) struct ProviderCatalog {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) models: Vec<ModelPreset>,
+    pub(crate) unavailable: bool,
+}
+
+#[derive(Debug, Clone)]
 pub(crate) struct ModelCatalog {
     pub(crate) models: Vec<ModelPreset>,
+    pub(crate) providers: Vec<ProviderCatalog>,
     pub(crate) collaboration_modes: Vec<CollaborationModeMask>,
 }
 
@@ -25,6 +34,7 @@ impl ModelCatalog {
     pub(crate) fn new(models: Vec<ModelPreset>) -> Self {
         Self {
             models,
+            providers: Vec::new(),
             collaboration_modes: Vec::new(),
         }
     }

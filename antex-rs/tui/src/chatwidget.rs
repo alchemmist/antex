@@ -328,6 +328,7 @@ mod notifications;
 mod plan_follow_up;
 mod plan_implementation;
 mod prompt_stash;
+mod provider_models;
 mod session_model_selection;
 use self::notifications::Notification;
 pub(crate) use self::session_model_selection::AstraModelPickerAction;

@@ -3721,6 +3721,7 @@ mod tests {
                 "method": "model/list",
                 "id": 6,
                 "params": {
+                    "modelProvider": null,
                     "limit": null,
                     "cursor": null,
                     "includeHidden": null

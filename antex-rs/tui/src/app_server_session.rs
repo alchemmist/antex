@@ -8,6 +8,7 @@ mod external_agent_config;
 pub(crate) mod fs;
 mod history;
 mod models;
+pub(crate) use models::ProviderThreadTarget;
 pub(crate) mod provider_selection;
 #[cfg(test)]
 #[path = "app_server_session/provider_selection_tests.rs"]
@@ -694,6 +695,7 @@ impl AppServerSession {
                     .request_typed::<ModelListResponse>(ClientRequest::ModelList {
                         request_id: model_request_id,
                         params: ModelListParams {
+                            model_provider: None,
                             cursor: None,
                             limit: None,
                             include_hidden: Some(true),

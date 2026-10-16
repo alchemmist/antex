@@ -137,6 +137,33 @@ impl App {
         // Keep the picker check and model update in one event without recursively polling this
         // large dispatcher on the TUI thread's stack.
         let (event, sparkle_model) = match event {
+            AppEvent::SelectProviderModel {
+                thread_id,
+                origin_provider,
+                provider,
+                model,
+            } if provider == self.chat_widget.config_ref().model_provider_id => {
+                if self.chat_widget.thread_id() != thread_id
+                    || self.chat_widget.config_ref().model_provider_id != origin_provider
+                {
+                    return Ok(AppRunControl::Continue);
+                }
+                let should_offer = self.chat_widget.current_model() != model.model
+                    && self
+                        .chat_widget
+                        .sparkle_thread_for_picker_action(&model.model)
+                        .is_some();
+                let sparkle = should_offer.then(|| model.model.clone());
+                let effort = (!model.supported_reasoning_efforts.is_empty())
+                    .then_some(model.default_reasoning_effort);
+                (
+                    AppEvent::SelectSessionModel {
+                        model: model.model,
+                        effort,
+                    },
+                    sparkle,
+                )
+            }
             AppEvent::AstraSelectedFromModelPicker {
                 thread_id,
                 model,
@@ -2290,7 +2317,64 @@ impl App {
             }
             AppEvent::FetchModels { request_id } => {
                 if self.chat_widget.model_popup_request_is_current(request_id) {
-                    app_server.fetch_models(request_id, self.app_event_tx.clone());
+                    self.refresh_in_memory_config_from_disk_best_effort("loading model providers")
+                        .await;
+                    let providers = self.model_picker_providers();
+                    if providers.len() > 1 {
+                        app_server.fetch_provider_models(
+                            request_id,
+                            providers,
+                            self.app_event_tx.clone(),
+                        );
+                    } else {
+                        app_server.fetch_models(request_id, self.app_event_tx.clone());
+                    }
+                }
+            }
+            AppEvent::ProviderModelsLoaded {
+                request_id,
+                catalogs,
+            } => {
+                if self
+                    .chat_widget
+                    .on_provider_models_loaded(request_id, catalogs)
+                {
+                    self.model_catalog = self.chat_widget.model_catalog();
+                    if let Some(defaults) = self.model_catalog.providers.iter().find(|catalog| {
+                        catalog.id == self.config.model_provider_id && !catalog.unavailable
+                    }) {
+                        app_server.set_available_models(defaults.models.clone());
+                    }
+                    self.sync_active_thread_service_tier_to_cached_session()
+                        .await;
+                }
+            }
+            AppEvent::OpenProviderReasoning {
+                thread_id,
+                origin_provider,
+                provider,
+                model,
+            } => {
+                if self.chat_widget.thread_id() == thread_id
+                    && self.chat_widget.config_ref().model_provider_id == origin_provider
+                {
+                    self.chat_widget
+                        .open_provider_reasoning_popup(provider, model);
+                }
+            }
+            AppEvent::SelectProviderModel {
+                thread_id,
+                origin_provider,
+                provider,
+                model,
+            } => {
+                if self.chat_widget.thread_id() == thread_id
+                    && self.chat_widget.config_ref().model_provider_id == origin_provider
+                    && Box::pin(self.select_provider_model(tui, app_server, provider, model))
+                        .await
+                        .is_err()
+                {
+                    self.chat_widget.add_error_message("Unable to switch providers. Check provider configuration or resume the saved session.".into());
                 }
             }
             AppEvent::ModelsLoaded { request_id, result } => {

@@ -178,6 +178,33 @@ impl CatalogRequestProcessor {
         &self,
         params: ModelListParams,
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
+        if let Some(provider_id) = params.model_provider.as_ref() {
+            let config = self
+                .config_manager
+                .load_for_cwd(
+                    /*request_overrides*/ None,
+                    ConfigOverrides {
+                        model_provider: Some(provider_id.clone()),
+                        ..Default::default()
+                    },
+                    /*cwd*/ None,
+                )
+                .await
+                .map_err(|error| config_load_error(&error))?;
+            if config.model_provider_id != *provider_id {
+                return Err(invalid_request(
+                    "Provider selection is restricted by configuration",
+                ));
+            }
+            self.config_manager
+                .check_thread_model_provider(&config)
+                .await
+                .map_err(|error| config_load_error(&error))?;
+            let models =
+                crate::provider_models::list_models(&config, self.thread_manager.auth_manager())
+                    .await?;
+            return paginate_models(models, params).map(|response| Some(response.into()));
+        }
         // Gate the same provider used by the catalog, including when its model cache is warm.
         // Resolving credentials may refresh them, but explicit host policy prevents browser login.
         if let Some(gateway) = antex_model_provider::create_model_provider(
@@ -281,52 +308,13 @@ impl CatalogRequestProcessor {
         &self,
         params: ModelListParams,
     ) -> Result<ModelListResponse, JSONRPCErrorError> {
-        let ModelListParams {
-            limit,
-            cursor,
-            include_hidden,
-        } = params;
         let presets = self
             .model_catalog
             .list_models(antex_models_manager::manager::RefreshStrategy::OnlineIfUncached)
             .await
             .map_err(|err| config_load_error(&err))?;
-        let models = supported_models(presets, include_hidden.unwrap_or(false));
-        let total = models.len();
-
-        if total == 0 {
-            return Ok(ModelListResponse {
-                data: Vec::new(),
-                next_cursor: None,
-            });
-        }
-
-        let effective_limit = limit.unwrap_or(total as u32).max(1) as usize;
-        let effective_limit = effective_limit.min(total);
-        let start = match cursor {
-            Some(cursor) => cursor
-                .parse::<usize>()
-                .map_err(|_| invalid_request(format!("invalid cursor: {cursor}")))?,
-            None => 0,
-        };
-
-        if start > total {
-            return Err(invalid_request(format!(
-                "cursor {start} exceeds total models {total}"
-            )));
-        }
-
-        let end = start.saturating_add(effective_limit).min(total);
-        let items = models[start..end].to_vec();
-        let next_cursor = if end < total {
-            Some(end.to_string())
-        } else {
-            None
-        };
-        Ok(ModelListResponse {
-            data: items,
-            next_cursor,
-        })
+        let models = supported_models(presets, params.include_hidden.unwrap_or(false));
+        paginate_models(models, params)
     }
 
     async fn list_collaboration_modes(
@@ -715,4 +703,51 @@ impl CatalogRequestProcessor {
             })
             .map_err(|err| internal_error(format!("failed to update skill settings: {err}")))
     }
+}
+
+fn paginate_models(
+    models: Vec<antex_app_server_protocol::Model>,
+    params: ModelListParams,
+) -> Result<ModelListResponse, JSONRPCErrorError> {
+    let include_hidden = params.include_hidden.unwrap_or(false);
+    let models: Vec<_> = models
+        .into_iter()
+        .filter(|model| include_hidden || !model.hidden)
+        .collect();
+    let ModelListParams { cursor, limit, .. } = params;
+    let total = models.len();
+
+    if total == 0 {
+        return Ok(ModelListResponse {
+            data: Vec::new(),
+            next_cursor: None,
+        });
+    }
+
+    let effective_limit = limit.unwrap_or(total as u32).max(1) as usize;
+    let effective_limit = effective_limit.min(total);
+    let start = match cursor {
+        Some(cursor) => cursor
+            .parse::<usize>()
+            .map_err(|_| invalid_request(format!("invalid cursor: {cursor}")))?,
+        None => 0,
+    };
+
+    if start > total {
+        return Err(invalid_request(format!(
+            "cursor {start} exceeds total models {total}"
+        )));
+    }
+
+    let end = start.saturating_add(effective_limit).min(total);
+    let items = models[start..end].to_vec();
+    let next_cursor = if end < total {
+        Some(end.to_string())
+    } else {
+        None
+    };
+    Ok(ModelListResponse {
+        data: items,
+        next_cursor,
+    })
 }

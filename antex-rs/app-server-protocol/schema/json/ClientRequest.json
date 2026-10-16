@@ -2361,6 +2361,12 @@
             "integer",
             "null"
           ]
+        },
+        "modelProvider": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "type": "object"

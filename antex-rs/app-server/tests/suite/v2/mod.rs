@@ -104,6 +104,7 @@ mod plugin_share;
 mod plugin_uninstall;
 mod process_exec;
 mod projects;
+mod provider_model_list;
 mod rate_limit_reset_credits;
 mod rate_limits;
 #[path = "rate_limits_identity_tests.rs"]
