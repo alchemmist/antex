@@ -457,10 +457,25 @@ impl App {
         {
             tracing::warn!(%error, "TUI task delegation is unavailable without its MCP server");
         }
-        let model_catalog = Arc::new(
-            ModelCatalog::new(available_models.clone())
-                .with_collaboration_modes(bootstrap.collaboration_modes),
-        );
+        let mut model_catalog = ModelCatalog::new(available_models.clone())
+            .with_collaboration_modes(bootstrap.collaboration_modes);
+        let cached = crate::provider_model_cache::ProviderModelCache::new(&config).load(&config);
+        if !cached.is_empty() {
+            model_catalog.providers = cached;
+            model_catalog
+                .providers
+                .retain(|catalog| catalog.id != config.model_provider_id);
+            model_catalog
+                .providers
+                .push(crate::model_catalog::ProviderCatalog {
+                    id: config.model_provider_id.clone(),
+                    name: config.model_provider.name.clone(),
+                    models: available_models.clone(),
+                    unavailable: false,
+                });
+            model_catalog.providers.sort_by(|a, b| a.id.cmp(&b.id));
+        }
+        let model_catalog = Arc::new(model_catalog);
         let feedback_audience = bootstrap.feedback_audience;
         let auth_mode = bootstrap.auth_mode;
         let has_chatgpt_account = bootstrap.has_chatgpt_account;

@@ -670,7 +670,7 @@ async fn model_migration_prompt_shows_for_hidden_model() {
 }
 
 #[tokio::test]
-async fn selecting_provider_model_preserves_session_state() -> Result<()> {
+async fn selecting_provider_model_during_mcp_startup_preserves_session_state() -> Result<()> {
     for saved_empty in [false, true] {
         let (mut app, mut events, _) = make_test_app_with_channels().await;
         let home = tempfile::tempdir()?;
@@ -739,6 +739,47 @@ async fn selecting_provider_model_preserves_session_state() -> Result<()> {
             .into_iter()
             .find(|model| model.model == "gpt-5.5")
             .expect("test model");
+        app.chat_widget.handle_server_notification(
+            turn_started_notification(id, "active-turn"),
+            /*replay_kind*/ None,
+        );
+        Box::pin(app.select_provider_model(
+            &mut tui,
+            &mut server,
+            "alternative".into(),
+            model.clone(),
+        ))
+        .await?;
+        assert_eq!(
+            (
+                app.chat_widget.thread_id(),
+                app.chat_widget.config_ref().model_provider_id.as_str(),
+            ),
+            (Some(id), defaults.0.as_str())
+        );
+        app.chat_widget.handle_server_notification(
+            turn_completed_notification(id, "active-turn", TurnStatus::Completed),
+            /*replay_kind*/ None,
+        );
+        app.chat_widget
+            .set_mcp_startup_expected_servers(["slow-starting-server".to_string()]);
+        app.chat_widget.handle_server_notification(
+            ServerNotification::McpServerStatusUpdated(McpServerStatusUpdatedNotification {
+                thread_id: Some(id.to_string()),
+                name: "slow-starting-server".into(),
+                status: McpServerStartupState::Starting,
+                error: None,
+                failure_reason: None,
+            }),
+            /*replay_kind*/ None,
+        );
+        assert_eq!(
+            (
+                app.chat_widget.has_running_task(),
+                app.chat_widget.is_user_turn_pending_or_running(),
+            ),
+            (true, false)
+        );
         app.chat_widget.requires_openai_auth = true;
         app.chat_widget.insert_str("preserve this draft");
         Box::pin(app.select_provider_model(

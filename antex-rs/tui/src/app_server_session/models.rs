@@ -55,12 +55,13 @@ impl AppServerSession {
         &self,
         request_id: Uuid,
         providers: Vec<(String, String)>,
+        cache: crate::provider_model_cache::ProviderModelCache,
         tx: AppEventSender,
     ) {
         let handle = self.request_handle();
         tokio::spawn(async move {
             use futures::StreamExt;
-            let mut catalogs: Vec<_> =
+            let mut pending =
                 futures::stream::iter(providers.into_iter().take(/*n*/ 16).map(|(id, name)| {
                     let handle = handle.clone();
                     async move {
@@ -97,13 +98,24 @@ impl AppServerSession {
                         }
                     }
                 }))
-                .buffer_unordered(/*n*/ 4)
-                .collect()
-                .await;
-            catalogs.sort_by(|a, b| a.id.cmp(&b.id));
+                .buffer_unordered(/*n*/ 4);
+            let mut catalogs = Vec::new();
+            while let Some(catalog) = pending.next().await {
+                catalogs.push(catalog);
+                catalogs.sort_by(|a, b| a.id.cmp(&b.id));
+                if let Err(error) = cache.store(&catalogs) {
+                    tracing::debug!(%error, "Unable to cache provider models");
+                }
+                tx.send(AppEvent::ProviderModelsLoaded {
+                    request_id,
+                    catalogs: catalogs.clone(),
+                    complete: false,
+                });
+            }
             tx.send(AppEvent::ProviderModelsLoaded {
                 request_id,
                 catalogs,
+                complete: true,
             });
         });
     }

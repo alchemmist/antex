@@ -51,7 +51,9 @@ impl App {
             .await;
             return Ok(());
         }
-        if self.chat_widget.has_running_task() || self.chat_widget.is_external_writer_view() {
+        if self.chat_widget.is_user_turn_pending_or_running()
+            || self.chat_widget.is_external_writer_view()
+        {
             self.chat_widget.add_info_message(
                 "Finish the current turn before switching providers.".into(),
                 /*hint*/ None,

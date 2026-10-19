@@ -1269,6 +1269,7 @@ pub(crate) enum AppEvent {
 
     /// Fetch the current catalog even when cached models produce no picker.
     ProviderModelsLoaded {
+        complete: bool,
         request_id: uuid::Uuid,
         catalogs: Vec<crate::model_catalog::ProviderCatalog>,
     },

@@ -2324,6 +2324,7 @@ impl App {
                         app_server.fetch_provider_models(
                             request_id,
                             providers,
+                            crate::provider_model_cache::ProviderModelCache::new(&self.config),
                             self.app_event_tx.clone(),
                         );
                     } else {
@@ -2334,10 +2335,11 @@ impl App {
             AppEvent::ProviderModelsLoaded {
                 request_id,
                 catalogs,
+                complete,
             } => {
                 if self
                     .chat_widget
-                    .on_provider_models_loaded(request_id, catalogs)
+                    .on_provider_models_loaded(request_id, catalogs, complete)
                 {
                     self.model_catalog = self.chat_widget.model_catalog();
                     if let Some(defaults) = self.model_catalog.providers.iter().find(|catalog| {

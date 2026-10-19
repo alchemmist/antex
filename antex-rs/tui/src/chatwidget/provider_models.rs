@@ -8,11 +8,14 @@ impl ChatWidget {
         &mut self,
         request_id: uuid::Uuid,
         catalogs: Vec<ProviderCatalog>,
+        complete: bool,
     ) -> bool {
         if !self.model_popup_request_is_current(request_id) {
             return false;
         }
-        self.model_popup_request_id = None;
+        if complete {
+            self.model_popup_request_id = None;
+        }
         if self.model_catalog.providers.is_empty() {
             let provider = &self.config.model_provider_id;
             for id in &mut self.model_popup_model_ids {
@@ -25,7 +28,30 @@ impl ChatWidget {
         {
             Arc::make_mut(&mut self.model_catalog).models = current.models.clone();
         }
-        Arc::make_mut(&mut self.model_catalog).providers = catalogs;
+        let model_catalog = Arc::make_mut(&mut self.model_catalog);
+        if model_catalog.providers.is_empty() && !complete {
+            model_catalog.providers.push(ProviderCatalog {
+                id: self.config.model_provider_id.clone(),
+                name: self.config.model_provider.name.clone(),
+                models: model_catalog.models.clone(),
+                unavailable: false,
+            });
+        }
+        if complete {
+            model_catalog.providers = catalogs;
+        } else {
+            for catalog in catalogs {
+                if let Some(existing) = model_catalog
+                    .providers
+                    .iter_mut()
+                    .find(|entry| entry.id == catalog.id)
+                {
+                    *existing = catalog;
+                } else {
+                    model_catalog.providers.push(catalog);
+                }
+            }
+        }
         self.set_daybreak_enabled(self.daybreak_enabled);
         self.refresh_effective_service_tier();
         self.refresh_model_dependent_surfaces();

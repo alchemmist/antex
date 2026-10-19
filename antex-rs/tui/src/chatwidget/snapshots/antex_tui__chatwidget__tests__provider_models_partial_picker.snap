@@ -1,0 +1,12 @@
+---
+source: tui/src/chatwidget/tests/provider_models_tests.rs
+expression: rendered
+---
+  Select Model
+  Subscription and configured providers · current session
+
+
+› 1. GPT-6.1-Sol · OpenAI (openai)   Latest workhorse model for coding and everyday work.
+  2. Qwen Local · LiteLLM (litellm)  Latest workhorse model for coding and everyday work.
+
+  enter select · esc back
