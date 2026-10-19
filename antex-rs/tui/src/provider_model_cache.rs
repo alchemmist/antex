@@ -97,7 +97,7 @@ impl ProviderModelCache {
             self.fingerprints.get(id) == Some(&entry.fingerprint)
                 && entry.updated_at <= now
                 && now - entry.updated_at <= MAX_AGE_SECONDS
-                && entry.models.len() <= 256
+                && entry.models.len() <= 512
         });
         entries
     }
@@ -137,7 +137,7 @@ impl ProviderModelCache {
             .as_secs();
         for catalog in catalogs
             .iter()
-            .filter(|catalog| !catalog.unavailable && catalog.models.len() <= 256)
+            .filter(|catalog| !catalog.unavailable && catalog.models.len() <= 512)
             .take(/*n*/ 16)
         {
             if let Some(fingerprint) = self.fingerprints.get(&catalog.id) {

@@ -98,7 +98,7 @@ pub(crate) async fn list_models(
             .map_err(|_| failed())?;
         let response: ApiModels = serde_json::from_slice(&body).map_err(|_| failed())?;
         let mut ids = std::collections::BTreeSet::new();
-        for model in response.data.into_iter().take(/*n*/ 256) {
+        for model in response.data.into_iter().take(/*n*/ 512) {
             if !model.id.is_empty()
                 && model.id.len() <= 256
                 && !model.id.chars().any(char::is_control)

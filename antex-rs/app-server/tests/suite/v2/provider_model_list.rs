@@ -141,3 +141,62 @@ async fn openai_catalog_requires_its_own_login() -> Result<()> {
     );
     Ok(())
 }
+
+#[test_case::test_case(265, 265; "preserves_large_catalog")]
+#[test_case::test_case(513, 512; "bounds_large_catalog")]
+#[tokio::test]
+async fn provider_catalog_capacity(input_count: usize, expected_count: usize) -> Result<()> {
+    let server = MockServer::start().await;
+    let home = tempfile::tempdir()?;
+    std::fs::write(
+        home.path().join("config.toml"),
+        format!(
+            r#"
+model_provider = "local"
+[model_providers.local]
+name = "Local"
+base_url = "{}/v1"
+"#,
+            server.uri()
+        ),
+    )?;
+    let data: Vec<_> = (0..input_count)
+        .map(|index| json!({"id": format!("model-{index:03}")}))
+        .collect();
+    Mock::given(method("GET"))
+        .and(path("/v1/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"data": data})))
+        .mount(&server)
+        .await;
+    let mut app = TestAppServer::builder()
+        .with_antex_home(home.path())
+        .build_initialized()
+        .await?;
+    let mut cursor = None;
+    let mut models = Vec::new();
+    loop {
+        let response = app
+            .request::<ModelListResponse>(|request_id| ClientRequest::ModelList {
+                request_id,
+                params: ModelListParams {
+                    model_provider: Some("local".into()),
+                    cursor,
+                    limit: Some(100),
+                    include_hidden: None,
+                },
+            })
+            .await?;
+        models.extend(response.data.into_iter().map(|model| model.model));
+        cursor = response.next_cursor;
+        if cursor.is_none() {
+            break;
+        }
+    }
+    assert_eq!(
+        models,
+        (0..expected_count)
+            .map(|index| format!("model-{index:03}"))
+            .collect::<Vec<_>>()
+    );
+    Ok(())
+}

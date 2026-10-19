@@ -91,3 +91,58 @@ fn fingerprint_json_is_independent_of_header_insertion_order() {
         serde_json::to_vec(&b).unwrap()
     );
 }
+
+#[tokio::test]
+async fn large_provider_catalog_survives_restart_and_oversized_catalog_is_ignored() {
+    let home = tempfile::tempdir().unwrap();
+    std::fs::write(
+        home.path().join("config.toml"),
+        r#"
+[model_providers.local]
+name = "Local"
+base_url = "http://localhost:1234/v1"
+"#,
+    )
+    .unwrap();
+    let config = crate::legacy_core::config::ConfigBuilder::default()
+        .codex_home(home.path().to_path_buf())
+        .build()
+        .await
+        .unwrap();
+    let models: Vec<_> = (0..512)
+        .map(|index| {
+            let mut model = crate::test_support::TEST_MODEL_PRESETS[0].clone();
+            model.id = format!("model-{index:03}");
+            model.model = model.id.clone();
+            model
+        })
+        .collect();
+    let mut catalog = ProviderCatalog {
+        id: "local".into(),
+        name: "Local".into(),
+        models: models.clone(),
+        unavailable: false,
+    };
+    let cache = ProviderModelCache::new(&config);
+    cache.store(std::slice::from_ref(&catalog)).unwrap();
+    let cached = ProviderModelCache::new(&config).load(&config);
+    assert_eq!(
+        cached
+            .into_iter()
+            .map(|catalog| catalog.models)
+            .collect::<Vec<_>>(),
+        vec![models]
+    );
+    let mut entries = cache.read();
+    let entry = entries.get_mut("local").unwrap();
+    entry.models.push(CachedModel {
+        preset: catalog.models[0].clone(),
+        multi_agent_version: catalog.models[0].multi_agent_version,
+    });
+    std::fs::write(&cache.path, serde_json::to_vec(&entries).unwrap()).unwrap();
+    assert!(cache.load(&config).is_empty());
+    std::fs::remove_file(&cache.path).unwrap();
+    catalog.models.push(catalog.models[0].clone());
+    cache.store(std::slice::from_ref(&catalog)).unwrap();
+    assert!(cache.load(&config).is_empty());
+}
