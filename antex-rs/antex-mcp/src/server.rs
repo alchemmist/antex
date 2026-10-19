@@ -82,6 +82,10 @@ impl EffectiveMcpServer {
         &self.config
     }
 
+    pub(crate) fn disable_for_activation(&mut self) {
+        self.config.enabled = false;
+    }
+
     pub fn enabled(&self) -> bool {
         self.config.enabled
     }

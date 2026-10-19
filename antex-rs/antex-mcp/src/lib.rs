@@ -1,3 +1,4 @@
+mod activation;
 pub use antex_rmcp_client::McpProtocolMode;
 pub use binding::McpBinding;
 pub use binding::PreparedMcpCall;

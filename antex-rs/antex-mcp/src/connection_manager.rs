@@ -254,10 +254,15 @@ impl McpConnectionSet {
     async fn new_with_call_auth(
         previous: Option<&Self>,
         publication_gate: McpPublicationGate,
-        input: McpRuntimeInput,
+        mut input: McpRuntimeInput,
         elicitation_router: ElicitationRequestRouter,
         call_auth: Option<antex_api::SharedAuthProvider>,
     ) -> Self {
+        crate::activation::apply_activation(
+            &mut input.mcp_servers,
+            &input.runtime_context.local_process_cwd(),
+        )
+        .await;
         let trusted_access = TrustedAccessContext::from_runtime(&input);
         let mut new_call_connection =
             new_call::NewCallConnection::capture(&input, elicitation_router.clone());

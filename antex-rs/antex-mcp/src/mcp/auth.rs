@@ -204,8 +204,12 @@ pub async fn compute_auth_statuses<'a, I>(
 where
     I: IntoIterator<Item = (&'a String, &'a EffectiveMcpServer)>,
 {
+    let mut servers = servers
+        .into_iter()
+        .map(|(name, server)| (name.clone(), server.clone()))
+        .collect::<HashMap<_, _>>();
+    crate::activation::apply_activation(&mut servers, &runtime_context.local_process_cwd()).await;
     let futures = servers.into_iter().map(|(name, server)| {
-        let name = name.clone();
         let redirect_mode = if server.is_agent_plugin() {
             StreamableHttpRedirectMode::AgentPluginV1
         } else {

@@ -33,6 +33,8 @@ impl McpRuntime {
         );
         let mut servers = effective_mcp_servers(&config, current.auth.as_ref());
         servers.retain(|name, _| name == server);
+        crate::activation::apply_activation(&mut servers, &runtime_context.local_process_cwd())
+            .await;
         let auth_statuses = compute_auth_statuses(
             servers.iter(),
             config.mcp_oauth_credentials_store_mode,

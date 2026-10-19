@@ -7,6 +7,7 @@ use std::num::NonZeroUsize;
 use std::time::Duration;
 
 use antex_protocol::config_types::ToolExposureSurface;
+use antex_utils_absolute_path::AbsolutePathBuf;
 use antex_utils_path_uri::LegacyAppPathString;
 use antex_utils_redacted_string::RedactedString;
 use base64::Engine;
@@ -219,6 +220,16 @@ fn is_default<T: Default + PartialEq>(value: &T) -> bool {
     value == &T::default()
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum McpServerActivation {
+    Directories {
+        #[schemars(length(min = 1))]
+        roots: Vec<AbsolutePathBuf>,
+    },
+    Arcadia {},
+}
+
 #[derive(Serialize, Debug, Clone, PartialEq)]
 pub struct McpServerConfig {
     #[serde(flatten)]
@@ -234,6 +245,9 @@ pub struct McpServerConfig {
     /// When `false`, Antex skips initializing this MCP server.
     #[serde(default = "default_enabled")]
     pub enabled: bool,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activation: Option<McpServerActivation>,
 
     /// When `true`, `antex exec` exits with an error if this MCP server fails to initialize.
     /// With `startup_readiness = "catalog"`, a valid cached catalog can satisfy startup;
@@ -401,6 +415,8 @@ pub struct RawMcpServerConfig {
     #[serde(default)]
     pub enabled: Option<bool>,
     #[serde(default)]
+    pub activation: Option<McpServerActivation>,
+    #[serde(default)]
     pub required: Option<bool>,
     /// Whether startup requires a live connection or can use a valid cached tool catalog.
     #[serde(default)]
@@ -456,6 +472,7 @@ impl TryFrom<RawMcpServerConfig> for McpServerConfig {
             startup_timeout_ms,
             tool_timeout_sec,
             enabled,
+            activation,
             required,
             startup_readiness,
             supports_parallel_tool_calls,
@@ -470,6 +487,12 @@ impl TryFrom<RawMcpServerConfig> for McpServerConfig {
             _name: _,
             tools,
         } = raw;
+
+        if let Some(McpServerActivation::Directories { roots }) = &activation
+            && roots.is_empty()
+        {
+            return Err("activation.roots must not be empty".to_string());
+        }
 
         let startup_timeout_sec = match (startup_timeout_sec, startup_timeout_ms) {
             (Some(sec), _) => {
@@ -577,6 +600,7 @@ impl TryFrom<RawMcpServerConfig> for McpServerConfig {
             startup_timeout_sec,
             tool_timeout_sec,
             enabled: enabled.unwrap_or_else(default_enabled),
+            activation,
             required: required.unwrap_or_default(),
             startup_readiness: startup_readiness.unwrap_or_default(),
             supports_parallel_tool_calls: supports_parallel_tool_calls.unwrap_or_default(),
@@ -674,3 +698,7 @@ mod option_duration_secs {
 #[cfg(test)]
 #[path = "mcp_types_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "mcp_activation_tests.rs"]
+mod activation_tests;

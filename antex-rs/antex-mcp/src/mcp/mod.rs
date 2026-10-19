@@ -524,6 +524,9 @@ pub async fn collect_mcp_server_status_snapshot_with_detail(
         };
     }
 
+    crate::activation::apply_activation(&mut mcp_servers, &runtime_context.local_process_cwd())
+        .await;
+
     let auth_status_entries = compute_auth_statuses(
         mcp_servers.iter(),
         config.mcp_oauth_credentials_store_mode,
@@ -678,6 +681,7 @@ fn mcp_server_config_for_url(
         supports_parallel_tool_calls: false,
         tool_input_schema_max_bytes: None,
         omit_tools_from: None,
+        activation: None,
         disabled_reason: None,
         startup_timeout_sec: Some(Duration::from_secs(30)),
         tool_timeout_sec: None,

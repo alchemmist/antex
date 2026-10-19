@@ -180,6 +180,7 @@ pub use mcp_ema::McpEnterpriseManagedAuthConfig;
 pub use mcp_ema::McpServerIdpOAuthConfig;
 pub use mcp_types::AppToolApproval;
 pub use mcp_types::DEFAULT_MCP_SERVER_ENVIRONMENT_ID;
+pub use mcp_types::McpServerActivation;
 pub use mcp_types::McpServerAuth;
 pub use mcp_types::McpServerConfig;
 pub use mcp_types::McpServerDisabledReason;
