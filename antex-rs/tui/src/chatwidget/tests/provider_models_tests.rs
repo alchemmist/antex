@@ -268,6 +268,71 @@ wire_api = "responses"
 }
 
 #[tokio::test]
+async fn provider_discovery_reads_every_catalog_page() -> color_eyre::Result<()> {
+    let endpoint = wiremock::MockServer::start().await;
+    let data: Vec<_> = (0..265)
+        .map(|index| serde_json::json!({"id": format!("model-{index:03}")}))
+        .collect();
+    wiremock::Mock::given(wiremock::matchers::path("/v1/models"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({ "data": data })),
+        )
+        .mount(&endpoint)
+        .await;
+    let home = tempfile::tempdir()?;
+    std::fs::write(
+        home.path().join("config.toml"),
+        format!(
+            r#"
+[model_providers.cursor]
+name = "Cursor subscription"
+base_url = "{}/v1"
+wire_api = "responses"
+"#,
+            endpoint.uri()
+        ),
+    )?;
+    let config = ConfigBuilder::default()
+        .codex_home(home.path().to_path_buf())
+        .build()
+        .await?;
+    let server = crate::start_embedded_app_server_for_picker(&config).await?;
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let request_id = uuid::Uuid::new_v4();
+    server.fetch_provider_models(
+        request_id,
+        vec![("cursor".into(), "Cursor subscription".into())],
+        crate::provider_model_cache::ProviderModelCache::new(&config),
+        AppEventSender::new(tx),
+    );
+    let mut catalogs = Vec::new();
+    let mut complete = false;
+    while !complete {
+        let event = tokio::time::timeout(std::time::Duration::from_secs(/*secs*/ 8), rx.recv())
+            .await?
+            .expect("provider event");
+        let AppEvent::ProviderModelsLoaded {
+            catalogs: loaded,
+            complete: finished,
+            ..
+        } = event
+        else {
+            panic!("expected provider models");
+        };
+        catalogs = loaded;
+        complete = finished;
+    }
+    assert_eq!(
+        catalogs
+            .iter()
+            .find(|catalog| catalog.id == "cursor")
+            .map(|catalog| catalog.models.len()),
+        Some(265)
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn provider_picker_displays_disk_cached_models_before_fetch_completes() -> anyhow::Result<()>
 {
     let home = tempfile::tempdir()?;

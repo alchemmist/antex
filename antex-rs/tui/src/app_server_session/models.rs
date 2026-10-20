@@ -67,27 +67,48 @@ impl AppServerSession {
                     async move {
                         let result = tokio::time::timeout(
                             std::time::Duration::from_secs(/*secs*/ 8),
-                            handle.request_typed::<ModelListResponse>(ClientRequest::ModelList {
-                                request_id: RequestId::String(format!(
-                                    "provider-models-{request_id}-{id}"
-                                )),
-                                params: ModelListParams {
-                                    model_provider: Some(id.clone()),
-                                    cursor: None,
-                                    limit: Some(256),
-                                    include_hidden: Some(true),
-                                },
-                            }),
+                            async {
+                                let mut models = Vec::new();
+                                let mut cursor = None;
+                                loop {
+                                    if models.len() >= 512 {
+                                        break;
+                                    }
+                                    let response = handle
+                                        .request_typed::<ModelListResponse>(
+                                            ClientRequest::ModelList {
+                                                request_id: RequestId::String(format!(
+                                                    "provider-models-{request_id}-{id}-{}",
+                                                    cursor.as_deref().unwrap_or("0")
+                                                )),
+                                                params: ModelListParams {
+                                                    model_provider: Some(id.clone()),
+                                                    cursor: cursor.clone(),
+                                                    limit: Some(256),
+                                                    include_hidden: Some(true),
+                                                },
+                                            },
+                                        )
+                                        .await
+                                        .map_err(|_| ())?;
+                                    models.extend(
+                                        response.data.into_iter().map(model_preset_from_api_model),
+                                    );
+                                    let Some(next) = response.next_cursor else {
+                                        break;
+                                    };
+                                    if cursor.as_ref() == Some(&next) {
+                                        break;
+                                    }
+                                    cursor = Some(next);
+                                }
+                                models.truncate(/*len*/ 512);
+                                Ok::<_, ()>(models)
+                            },
                         )
                         .await;
                         let models = match result {
-                            Ok(Ok(response)) => Some(
-                                response
-                                    .data
-                                    .into_iter()
-                                    .map(model_preset_from_api_model)
-                                    .collect(),
-                            ),
+                            Ok(Ok(models)) => Some(models),
                             _ => None,
                         };
                         crate::model_catalog::ProviderCatalog {

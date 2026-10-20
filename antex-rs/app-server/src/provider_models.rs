@@ -13,6 +13,8 @@ use antex_login::default_client::create_client_for_route_async;
 use antex_models_manager::manager::RefreshStrategy;
 use antex_protocol::openai_models::ModelPreset;
 use antex_protocol::openai_models::ModelVisibility;
+use antex_protocol::openai_models::ReasoningEffort;
+use antex_protocol::openai_models::ReasoningEffortPreset;
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -106,18 +108,112 @@ pub(crate) async fn list_models(
                 ids.insert(model.id);
             }
         }
-        let models = ids
-            .into_iter()
-            .map(|id| {
-                let mut info = antex_models_manager::model_info::model_info_from_slug(&id);
-                info.visibility = ModelVisibility::List;
-                ModelPreset::from(info)
-            })
-            .collect();
+        let models = catalog_presets(ids);
         Ok(crate::models::supported_models(
             models, /*include_hidden*/ true,
         ))
     })
     .await
     .map_err(|_| failed())?
+}
+
+const EFFORT_SUFFIXES: &[(&str, ReasoningEffort)] = &[
+    ("extra-high", ReasoningEffort::XHigh),
+    ("minimal", ReasoningEffort::Minimal),
+    ("medium", ReasoningEffort::Medium),
+    ("xhigh", ReasoningEffort::XHigh),
+    ("high", ReasoningEffort::High),
+    ("none", ReasoningEffort::None),
+    ("low", ReasoningEffort::Low),
+    ("max", ReasoningEffort::Max),
+];
+
+fn catalog_presets(ids: std::collections::BTreeSet<String>) -> Vec<ModelPreset> {
+    let mut grouped: std::collections::BTreeMap<String, Vec<ReasoningEffort>> =
+        std::collections::BTreeMap::new();
+    let mut plain = std::collections::BTreeSet::new();
+    for id in ids {
+        match split_effort_suffix(&id) {
+            Some((base, effort)) => grouped.entry(base).or_default().push(effort),
+            None => {
+                plain.insert(id);
+            }
+        }
+    }
+    for base in grouped.keys().cloned().collect::<Vec<_>>() {
+        if plain.remove(&base)
+            && let Some(efforts) = grouped.get_mut(&base)
+        {
+            efforts.push(ReasoningEffort::None);
+        }
+    }
+    let mut presets: Vec<_> = plain
+        .into_iter()
+        .map(|id| preset_for(&id, Vec::new()))
+        .chain(
+            grouped
+                .into_iter()
+                .map(|(base, efforts)| preset_for(&base, dedup_efforts(efforts))),
+        )
+        .collect();
+    presets.sort_by(|left, right| left.model.cmp(&right.model));
+    presets
+}
+
+fn preset_for(slug: &str, efforts: Vec<ReasoningEffort>) -> ModelPreset {
+    let mut info = antex_models_manager::model_info::model_info_from_slug(slug);
+    info.visibility = ModelVisibility::List;
+    info.default_reasoning_level = preferred_effort(&efforts);
+    info.supported_reasoning_levels = efforts
+        .into_iter()
+        .map(|effort| ReasoningEffortPreset {
+            description: effort.as_str().to_string(),
+            effort,
+        })
+        .collect();
+    ModelPreset::from(info)
+}
+
+fn preferred_effort(efforts: &[ReasoningEffort]) -> Option<ReasoningEffort> {
+    [
+        ReasoningEffort::Medium,
+        ReasoningEffort::Low,
+        ReasoningEffort::High,
+        ReasoningEffort::None,
+    ]
+    .into_iter()
+    .find(|effort| efforts.contains(effort))
+    .or_else(|| efforts.first().cloned())
+}
+
+fn dedup_efforts(efforts: Vec<ReasoningEffort>) -> Vec<ReasoningEffort> {
+    let mut ordered = Vec::new();
+    for effort in [
+        ReasoningEffort::None,
+        ReasoningEffort::Minimal,
+        ReasoningEffort::Low,
+        ReasoningEffort::Medium,
+        ReasoningEffort::High,
+        ReasoningEffort::XHigh,
+        ReasoningEffort::Max,
+    ] {
+        if efforts.contains(&effort) {
+            ordered.push(effort);
+        }
+    }
+    ordered
+}
+
+fn split_effort_suffix(id: &str) -> Option<(String, ReasoningEffort)> {
+    let (without_fast, fast) = id
+        .strip_suffix("-fast")
+        .map(|base| (base, true))
+        .unwrap_or((id, false));
+    let (base, effort) = EFFORT_SUFFIXES.iter().find_map(|(suffix, effort)| {
+        without_fast
+            .strip_suffix(&format!("-{suffix}"))
+            .filter(|base| !base.is_empty())
+            .map(|base| (base.to_string(), effort.clone()))
+    })?;
+    Some((if fast { format!("{base}-fast") } else { base }, effort))
 }

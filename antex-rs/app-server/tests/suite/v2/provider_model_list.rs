@@ -3,6 +3,7 @@ use antex_app_server_protocol::JSONRPCErrorError;
 use antex_app_server_protocol::ModelListParams;
 use antex_app_server_protocol::ModelListResponse;
 use antex_app_server_protocol::RequestId;
+use antex_protocol::openai_models::ReasoningEffort;
 use anyhow::Result;
 use app_test_support::TestAppServer;
 use pretty_assertions::assert_eq;
@@ -138,6 +139,85 @@ async fn openai_catalog_requires_its_own_login() -> Result<()> {
             message: "Sign in to OpenAI before loading its models.".into(),
             data: None
         }
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn provider_catalog_groups_effort_suffixes() -> Result<()> {
+    let server = MockServer::start().await;
+    let home = tempfile::tempdir()?;
+    std::fs::write(
+        home.path().join("config.toml"),
+        format!(
+            r#"
+model_provider = "local"
+[model_providers.local]
+name = "Local"
+base_url = "{}/v1"
+"#,
+            server.uri()
+        ),
+    )?;
+    Mock::given(method("GET"))
+        .and(path("/v1/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "data": [
+                {"id": "grok-4.7-high"},
+                {"id": "grok-4.7-low"},
+                {"id": "grok-4.7-low-fast"},
+                {"id": "gpt-6-astra"},
+                {"id": "composer-2.5-fast"}
+            ]
+        })))
+        .mount(&server)
+        .await;
+    let mut app = TestAppServer::builder()
+        .with_antex_home(home.path())
+        .build_initialized()
+        .await?;
+    let response = app
+        .request::<ModelListResponse>(|request_id| ClientRequest::ModelList {
+            request_id,
+            params: ModelListParams {
+                model_provider: Some("local".into()),
+                cursor: None,
+                limit: None,
+                include_hidden: None,
+            },
+        })
+        .await?;
+    let listed: Vec<_> = response
+        .data
+        .iter()
+        .map(|model| {
+            (
+                model.model.as_str(),
+                model
+                    .supported_reasoning_efforts
+                    .iter()
+                    .map(|effort| effort.reasoning_effort.clone())
+                    .collect::<Vec<_>>(),
+                model.default_reasoning_effort.clone(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        listed,
+        vec![
+            ("composer-2.5-fast", Vec::new(), ReasoningEffort::None),
+            ("gpt-6-astra", Vec::new(), ReasoningEffort::None),
+            (
+                "grok-4.7",
+                vec![ReasoningEffort::Low, ReasoningEffort::High],
+                ReasoningEffort::Low
+            ),
+            (
+                "grok-4.7-fast",
+                vec![ReasoningEffort::Low],
+                ReasoningEffort::Low
+            ),
+        ]
     );
     Ok(())
 }
