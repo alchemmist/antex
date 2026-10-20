@@ -74,11 +74,9 @@ impl McpConnectionSet {
         else {
             return Ok((Arc::clone(self), None));
         };
-        let manager = connection
-            .input
-            .auth_manager
-            .as_ref()
-            .expect("managed MCP auth");
+        let Some(manager) = connection.input.auth_manager.as_ref() else {
+            bail!("managed MCP auth is unavailable");
+        };
         // Capture once, before acquisition/startup awaits; never rebind this operation.
         let owner = Arc::new(manager.unauthorized_recovery());
         // Sparse source-less host tokens have a deliberately broader retained

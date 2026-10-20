@@ -327,10 +327,11 @@ fn root_write_preserves_a_read_only_system_installation() {
         policy,
         PermissionProfile::Disabled.file_system_sandbox_policy(),
     ] {
-        // Root can modify the system installation unless the policy protects it.
-        // SAFETY: geteuid has no preconditions.
+        // A full-disk policy can replace a system installation when this user can
+        // write it. That includes root and user namespaces where the access check
+        // succeeds for a non-zero euid.
         let can_modify_system =
-            policy.has_full_disk_write_access() && unsafe { libc::geteuid() } == 0;
+            policy.has_full_disk_write_access() && current_user_can_modify(&system_binary);
         assert_eq!(
             find_executable_in_search_paths(
                 "bwrap",

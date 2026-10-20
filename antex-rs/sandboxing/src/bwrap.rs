@@ -255,9 +255,12 @@ pub fn find_executable_in_search_paths(
                     let Some(parent) = component.parent() else {
                         return false;
                     };
-                    // Read-only carveouts are bind mounts and cannot themselves
-                    // be renamed/unlinked. Continue checking above them, since a
-                    // mutable ancestor could still redirect the installation path.
+                    // A mountpoint cannot be renamed by a writable parent: the
+                    // kernel returns EBUSY. Read-only carveouts are the same kind
+                    // of bind mount.
+                    if is_mountpoint(component) {
+                        return false;
+                    }
                     let is_read_only_mount = writable_roots.iter().any(|root| {
                         root.read_only_subpaths
                             .iter()
@@ -273,6 +276,19 @@ pub fn find_executable_in_search_paths(
                 Some(path)
             }
         })
+}
+
+fn is_mountpoint(path: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return false;
+    };
+    let Some(parent) = path.parent() else {
+        return false;
+    };
+    std::fs::metadata(parent)
+        .map(|parent| parent.dev() != metadata.dev())
+        .unwrap_or(false)
 }
 
 fn current_user_can_modify(path: &Path) -> bool {

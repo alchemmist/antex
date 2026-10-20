@@ -140,10 +140,15 @@ fn catalog_presets(ids: std::collections::BTreeSet<String>) -> Vec<ModelPreset> 
             }
         }
     }
-    for base in grouped.keys().cloned().collect::<Vec<_>>() {
-        if plain.remove(&base)
-            && let Some(efforts) = grouped.get_mut(&base)
-        {
+    let mut bare_variants = Vec::new();
+    for id in &plain {
+        if grouped.contains_key(id) {
+            bare_variants.push(id.clone());
+        }
+    }
+    for base in bare_variants {
+        plain.remove(&base);
+        if let Some(efforts) = grouped.get_mut(&base) {
             efforts.push(ReasoningEffort::None);
         }
     }

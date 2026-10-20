@@ -106,10 +106,15 @@ pub(crate) fn should_retry_with_rustls(error: &reqwest::Error) -> bool {
 }
 
 fn has_retryable_tls_error(error: &(dyn Error + 'static)) -> bool {
-    let mut source = Some(error);
+    let mut pending = vec![error];
     let mut recognized_negotiation_failure = false;
+    let mut seen = 0usize;
 
-    while let Some(error) = source {
+    while let Some(error) = pending.pop() {
+        seen += 1;
+        if seen > 32 {
+            break;
+        }
         let message = error.to_string().to_ascii_lowercase();
         if [
             "certificate",
@@ -131,7 +136,9 @@ fn has_retryable_tls_error(error: &(dyn Error + 'static)) -> bool {
         // macOS Secure Transport reports the protocol alert as "bad protocol version".
         let is_macos_protocol_version_error = message.contains("bad protocol version");
         // Linux OpenSSL reports the peer's "tlsv1 alert protocol version".
-        let is_linux_protocol_version_error = message.contains("tlsv1 alert protocol version");
+        let is_linux_protocol_version_error = message.contains("tlsv1 alert protocol version")
+            || message.contains("protocol version")
+            || message.contains("protocolversion");
         // Windows Schannel may expose the protocol alert as a raw or formatted OS error.
         let is_schannel_protocol_version_error = error
             .downcast_ref::<std::io::Error>()
@@ -145,7 +152,14 @@ fn has_retryable_tls_error(error: &(dyn Error + 'static)) -> bool {
         {
             recognized_negotiation_failure = true;
         }
-        source = error.source();
+        if let Some(io_error) = error.downcast_ref::<std::io::Error>()
+            && let Some(inner) = io_error.get_ref()
+        {
+            pending.push(inner);
+        }
+        if let Some(source) = error.source() {
+            pending.push(source);
+        }
     }
 
     recognized_negotiation_failure
