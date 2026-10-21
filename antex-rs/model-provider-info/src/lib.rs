@@ -108,12 +108,14 @@ pub enum WireApi {
     /// The Responses API exposed by OpenAI at `/v1/responses`.
     #[default]
     Responses,
+    Eliza,
 }
 
 impl fmt::Display for WireApi {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let value = match self {
             Self::Responses => "responses",
+            Self::Eliza => "eliza",
         };
         f.write_str(value)
     }
@@ -127,8 +129,12 @@ impl<'de> Deserialize<'de> for WireApi {
         let value = String::deserialize(deserializer)?;
         match value.as_str() {
             "responses" => Ok(Self::Responses),
+            "eliza" => Ok(Self::Eliza),
             "chat" => Err(serde::de::Error::custom(CHAT_WIRE_API_REMOVED_ERROR)),
-            _ => Err(serde::de::Error::unknown_variant(&value, &["responses"])),
+            _ => Err(serde::de::Error::unknown_variant(
+                &value,
+                &["responses", "eliza"],
+            )),
         }
     }
 }
@@ -478,8 +484,12 @@ other non-default provider fields are not supported"
         }
         let retry = ApiRetryConfig {
             max_attempts: self.request_max_retries(),
-            base_delay: Duration::from_millis(200),
-            retry_429: false,
+            base_delay: if self.wire_api == WireApi::Eliza {
+                Duration::from_secs(/*secs*/ 2)
+            } else {
+                Duration::from_millis(/*millis*/ 200)
+            },
+            retry_429: self.wire_api == WireApi::Eliza,
             retry_5xx: true,
             retry_transport: true,
         };
@@ -640,6 +650,10 @@ other non-default provider fields are not supported"
 
     pub fn is_openai(&self) -> bool {
         self.name == OPENAI_PROVIDER_NAME
+    }
+
+    pub fn accepts_custom_tools(&self) -> bool {
+        self.wire_api != WireApi::Eliza && !self.name.to_ascii_lowercase().contains("litellm")
     }
 
     pub fn supports_antex_backend_routes(&self) -> bool {

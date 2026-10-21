@@ -84,6 +84,8 @@ mod daybreak_access;
 mod deprecation_notice;
 mod direct_tool_metadata;
 mod dynamic_tool_cancellation;
+#[path = "eliza_tests.rs"]
+mod eliza;
 mod exec;
 mod exec_policy;
 #[cfg(not(target_os = "windows"))]

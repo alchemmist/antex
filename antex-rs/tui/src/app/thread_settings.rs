@@ -28,7 +28,12 @@ impl App {
         let Some(mut params) = self.active_thread_model_setting_update_params(model) else {
             return;
         };
-        params.effort = effort;
+        params.effort = effort.clone();
+        if let Some(effort) = effort
+            && let Some(mode) = params.collaboration_mode.as_mut()
+        {
+            mode.settings.reasoning_effort = Some(effort);
+        }
         let defaulted_to_auto_review = params.approvals_reviewer
             == Some(AppServerApprovalsReviewer::AutoReview)
             && (self.chat_widget.config_ref().approvals_reviewer != ApprovalsReviewer::AutoReview
@@ -75,10 +80,12 @@ impl App {
             })
         });
 
+        let mut collaboration_mode = self.chat_widget.effective_collaboration_mode();
+        collaboration_mode.settings.model = model.clone();
         let mut params = ThreadSettingsUpdateParams {
             thread_id: thread_id.to_string(),
             model: Some(model),
-            collaboration_mode: Some(self.chat_widget.effective_collaboration_mode()),
+            collaboration_mode: Some(collaboration_mode),
             ..ThreadSettingsUpdateParams::default()
         };
 
@@ -121,10 +128,14 @@ impl App {
         effort: Option<antex_protocol::openai_models::ReasoningEffort>,
     ) -> Option<ThreadSettingsUpdateParams> {
         let thread_id = self.active_thread_id?;
+        let mut collaboration_mode = self.chat_widget.current_collaboration_mode().clone();
+        if let Some(effort) = effort.clone() {
+            collaboration_mode.settings.reasoning_effort = Some(effort);
+        }
         Some(ThreadSettingsUpdateParams {
             thread_id: thread_id.to_string(),
             effort,
-            collaboration_mode: Some(self.chat_widget.current_collaboration_mode().clone()),
+            collaboration_mode: Some(collaboration_mode),
             ..ThreadSettingsUpdateParams::default()
         })
     }

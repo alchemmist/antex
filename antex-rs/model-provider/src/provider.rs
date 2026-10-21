@@ -476,7 +476,10 @@ impl ConfiguredModelProvider {
                 OpenAiModelsManager::new_with_cache(cache, endpoint, auth_manager)
             }
         };
-        if self.info.model_catalog_url.is_some() || self.info.name == "Cursor subscription" {
+        if self.info.model_catalog_url.is_some()
+            || self.info.name == "Cursor subscription"
+            || self.info.wire_api == antex_model_provider_info::WireApi::Eliza
+        {
             Arc::new(manager.with_provider_catalog())
         } else {
             Arc::new(manager)

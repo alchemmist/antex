@@ -69,6 +69,7 @@ use antex_api::WebsocketTelemetry;
 use antex_api::auth_header_telemetry;
 use antex_api::build_session_headers;
 use antex_api::create_text_param_for_request;
+use antex_api::downgrade_custom_tools;
 use antex_api::response_create_client_metadata;
 use antex_http_client::ClientRouteClass;
 use antex_http_client::HttpClientFactory;
@@ -321,6 +322,7 @@ pub struct ModelClientSession {
     /// appends, or continuation requests), and must not send it between different turns.
     /// An auth ownership change clears it so the new owner gets fresh routing state.
     turn_state: Arc<OnceLock<String>>,
+    inline_response_item_ids: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -693,6 +695,7 @@ impl ModelClient {
             operation_owner: None,
             websocket_session,
             turn_state: Arc::new(OnceLock::new()),
+            inline_response_item_ids: false,
         }
     }
 
@@ -1076,12 +1079,14 @@ impl ModelClient {
         Ok(request)
     }
 
-    fn prepare_response_items_for_request(&self, input: &mut [ResponseItem]) {
-        for item in input {
-            if item.id().is_some_and(|id| !id.is_prefixed()) {
-                item.set_id(/*new_id*/ None);
-            }
-            if !self.state.content_item_kinds_enabled || self.uses_chatgpt_direct() {
+    fn prepare_response_items_for_request(
+        &self,
+        input: &mut [ResponseItem],
+        id_wire: ResponseItemIdWire,
+    ) {
+        clear_response_item_ids_for_wire(input, id_wire);
+        if !self.state.content_item_kinds_enabled || self.uses_chatgpt_direct() {
+            for item in input {
                 item.clear_content_item_kinds();
             }
         }
@@ -1101,6 +1106,7 @@ impl ModelClient {
     /// WebSocket use is controlled by provider capability and session-scoped fallback state.
     pub fn responses_websocket_enabled(&self) -> bool {
         if self.uses_chatgpt_direct()
+            || self.state.provider.info().wire_api == WireApi::Eliza
             || !self.state.provider.info().supports_websockets
             || self.state.disable_websockets.load(Ordering::Relaxed)
         {
@@ -1434,6 +1440,19 @@ impl Drop for ModelClientSession {
 }
 
 impl ModelClientSession {
+    fn response_item_id_wire(&self) -> ResponseItemIdWire {
+        if self.inline_response_item_ids {
+            ResponseItemIdWire::Inline
+        } else {
+            ResponseItemIdWire::RetainPrefixed
+        }
+    }
+
+    fn retry_without_persisted_item_ids(&mut self) {
+        self.inline_response_item_ids = true;
+        self.websocket_session = WebsocketSession::default();
+    }
+
     pub(crate) fn inference_tools_changed(&self, tools: &Arc<[ToolSpec]>) -> bool {
         let previous = self
             .client
@@ -1787,7 +1806,11 @@ impl ModelClientSession {
             let transport = self.client.build_api_transport(
                 &client_setup.api_provider,
                 "/responses",
-                client_setup.redirect_policy,
+                if self.client.state.provider.info().wire_api == WireApi::Eliza {
+                    antex_login::default_client::ClientRedirectPolicy::Reject
+                } else {
+                    client_setup.redirect_policy
+                },
             )?;
             let request_auth_context = AuthRequestTelemetryContext::new(
                 client_setup.auth.as_ref().map(AntexAuth::auth_mode),
@@ -1843,8 +1866,10 @@ impl ModelClientSession {
                 prompt.cyber_access_program,
                 self.client.api_key_cyber_access_programs,
             )?;
-            self.client
-                .prepare_response_items_for_request(&mut request.input);
+            self.client.prepare_response_items_for_request(
+                &mut request.input,
+                self.response_item_id_wire(),
+            );
             if crate::guardian::is_basic_session_source(&self.client.state.session_source) {
                 crate::guardian::observe_guardian_request(session_telemetry, &request);
             }
@@ -1870,6 +1895,11 @@ impl ModelClientSession {
                 }
                 request.input = input;
             }
+            if self.client.state.provider.info().wire_api != WireApi::Eliza
+                && !self.client.state.provider.info().accepts_custom_tools()
+            {
+                downgrade_custom_tools(&mut request);
+            }
             self.client.record_latest_model_request(&request);
             inference_trace_attempt.record_started(&request);
             let client = ApiResponsesClient::new(
@@ -1880,7 +1910,11 @@ impl ModelClientSession {
             .with_telemetry(Some(request_telemetry), Some(sse_telemetry));
             self.ensure_operation_owner()?;
             auth_owner::ensure_same_owner(auth_recovery.as_ref())?;
-            let stream_result = client.stream_request(request, options).await;
+            let stream_result = if self.client.state.provider.info().wire_api == WireApi::Eliza {
+                client.stream_eliza_request(request).await
+            } else {
+                client.stream_request(request, options).await
+            };
             self.ensure_operation_owner()?;
             auth_owner::ensure_same_owner(auth_recovery.as_ref())?;
 
@@ -2135,8 +2169,10 @@ impl ModelClientSession {
                 None => (None, None),
             };
             let original_item_ids = if let Some(incremental_items) = &mut incremental_items {
-                self.client
-                    .prepare_response_items_for_request(incremental_items);
+                self.client.prepare_response_items_for_request(
+                    incremental_items,
+                    self.response_item_id_wire(),
+                );
                 None
             } else {
                 let original_item_ids = request
@@ -2144,8 +2180,10 @@ impl ModelClientSession {
                     .iter()
                     .map(|item| item.id().cloned())
                     .collect::<Vec<_>>();
-                self.client
-                    .prepare_response_items_for_request(&mut request.input);
+                self.client.prepare_response_items_for_request(
+                    &mut request.input,
+                    self.response_item_id_wire(),
+                );
                 Some(original_item_ids)
             };
             let mut ws_payload = ResponseCreateWsRequest {
@@ -2192,8 +2230,10 @@ impl ModelClientSession {
                 let mut logical_request = request.clone();
                 let ResponsesWsRequest::ResponseCreate(payload) = &ws_request;
                 logical_request.client_metadata = payload.client_metadata.clone();
-                self.client
-                    .prepare_response_items_for_request(&mut logical_request.input);
+                self.client.prepare_response_items_for_request(
+                    &mut logical_request.input,
+                    ResponseItemIdWire::RetainPrefixed,
+                );
                 self.client.record_latest_model_request(&logical_request);
             }
             if !previous_response_id_from_untraced_warmup {
@@ -2386,11 +2426,77 @@ impl ModelClientSession {
         let result = async {
             let wire_api = operation.client.state.provider.info().wire_api;
             match wire_api {
-                WireApi::Responses => {
-                    if operation.client.responses_websocket_enabled() {
-                        let request_trace = current_span_w3c_trace_context();
+                WireApi::Responses | WireApi::Eliza => {
+                    let mut retried_without_item_ids = false;
+                    loop {
+                        if operation.client.responses_websocket_enabled() {
+                            let request_trace = current_span_w3c_trace_context();
+                            match operation
+                                .stream_responses_websocket(
+                                    prompt,
+                                    model_info,
+                                    session_telemetry,
+                                    effort.clone(),
+                                    summary,
+                                    service_tier.clone(),
+                                    responses_metadata,
+                                    /*warmup*/ false,
+                                    request_trace,
+                                    inference_trace,
+                                )
+                                .await
+                            {
+                                Ok(WebsocketStreamOutcome::Stream(stream)) => {
+                                    match accept_or_reject_persisted_item_ids(stream).await {
+                                        Ok(stream) => {
+                                            match accept_or_reject_persisted_item_ids(stream).await
+                                            {
+                                                Ok(stream) => return Ok(stream),
+                                                Err(err)
+                                                    if !retried_without_item_ids
+                                                        && error_rejects_persisted_item_ids(
+                                                            &err,
+                                                        ) =>
+                                                {
+                                                    retried_without_item_ids = true;
+                                                    operation.retry_without_persisted_item_ids();
+                                                    continue;
+                                                }
+                                                Err(err) => return Err(err),
+                                            }
+                                        }
+                                        Err(err)
+                                            if !retried_without_item_ids
+                                                && error_rejects_persisted_item_ids(&err) =>
+                                        {
+                                            retried_without_item_ids = true;
+                                            operation.retry_without_persisted_item_ids();
+                                            continue;
+                                        }
+                                        Err(err) => return Err(err),
+                                    }
+                                }
+                                Ok(WebsocketStreamOutcome::FallbackToHttp) => {
+                                    operation.ensure_operation_owner()?;
+                                    operation.try_switch_fallback_transport(
+                                        session_telemetry,
+                                        model_info,
+                                    );
+                                }
+                                Err(err)
+                                    if !retried_without_item_ids
+                                        && error_rejects_persisted_item_ids(&err) =>
+                                {
+                                    retried_without_item_ids = true;
+                                    operation.retry_without_persisted_item_ids();
+                                    continue;
+                                }
+                                Err(err) => return Err(err),
+                            }
+                        }
+
                         match operation
-                            .stream_responses_websocket(
+                            .stream_responses_api(
                                 prompt,
                                 model_info,
                                 session_telemetry,
@@ -2398,33 +2504,22 @@ impl ModelClientSession {
                                 summary,
                                 service_tier.clone(),
                                 responses_metadata,
-                                /*warmup*/ false,
-                                request_trace,
                                 inference_trace,
                             )
-                            .await?
+                            .await
                         {
-                            WebsocketStreamOutcome::Stream(stream) => return Ok(stream),
-                            WebsocketStreamOutcome::FallbackToHttp => {
-                                operation.ensure_operation_owner()?;
-                                operation
-                                    .try_switch_fallback_transport(session_telemetry, model_info);
+                            Ok(stream) => return Ok(stream),
+                            Err(err)
+                                if !retried_without_item_ids
+                                    && error_rejects_persisted_item_ids(&err) =>
+                            {
+                                retried_without_item_ids = true;
+                                operation.retry_without_persisted_item_ids();
+                                continue;
                             }
+                            Err(err) => return Err(err),
                         }
                     }
-
-                    operation
-                        .stream_responses_api(
-                            prompt,
-                            model_info,
-                            session_telemetry,
-                            effort,
-                            summary,
-                            service_tier,
-                            responses_metadata,
-                            inference_trace,
-                        )
-                        .await
                 }
             }
         }
@@ -3101,6 +3196,98 @@ impl WebsocketTelemetry for ApiTelemetry {
     ) {
         self.session_telemetry
             .record_websocket_event(result, duration);
+    }
+}
+
+enum ResponseItemIdWire {
+    Inline,
+    RetainPrefixed,
+}
+
+fn error_rejects_persisted_item_ids(err: &impl std::fmt::Display) -> bool {
+    err.to_string().contains("persisted-item lookup")
+}
+
+fn response_event_is_id_error_preamble(event: &ResponseEvent) -> bool {
+    matches!(
+        event,
+        ResponseEvent::Created { .. }
+            | ResponseEvent::SafetyBuffering(_)
+            | ResponseEvent::ServerModel(_)
+            | ResponseEvent::ModelVerifications(_)
+            | ResponseEvent::TurnModerationMetadata(_)
+            | ResponseEvent::ServerReasoningIncluded(_)
+            | ResponseEvent::RateLimits(_)
+            | ResponseEvent::ModelsEtag(_)
+    )
+}
+
+async fn accept_or_reject_persisted_item_ids(mut stream: ResponseStream) -> Result<ResponseStream> {
+    let mut buffered = Vec::new();
+    loop {
+        if buffered.len() >= 8 {
+            break;
+        }
+        match stream.next().await {
+            Some(Err(err)) if error_rejects_persisted_item_ids(&err) => {
+                drop(stream);
+                return Err(err);
+            }
+            Some(Ok(event)) if response_event_is_id_error_preamble(&event) => {
+                buffered.push(Ok(event));
+            }
+            Some(item) => {
+                buffered.push(item);
+                break;
+            }
+            None => break,
+        }
+    }
+    Ok(prepend_response_events(stream, buffered))
+}
+
+fn prepend_response_events(
+    mut stream: ResponseStream,
+    buffered: Vec<Result<ResponseEvent>>,
+) -> ResponseStream {
+    if buffered.is_empty() {
+        return stream;
+    }
+    let (tx, rx_event) = mpsc::channel(buffered.len().saturating_add(8));
+    let consumer_dropped = CancellationToken::new();
+    let dropped = consumer_dropped.clone();
+    let interrupt = stream.interrupt.take();
+    tokio::spawn(async move {
+        for item in buffered {
+            if tx.send(item).await.is_err() {
+                return;
+            }
+        }
+        loop {
+            tokio::select! {
+                _ = dropped.cancelled() => break,
+                next = stream.next() => {
+                    let Some(item) = next else { break };
+                    if tx.send(item).await.is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+    });
+    ResponseStream {
+        rx_event,
+        interrupt,
+        consumer_dropped,
+    }
+}
+
+fn clear_response_item_ids_for_wire(input: &mut [ResponseItem], id_wire: ResponseItemIdWire) {
+    let inline_items = matches!(id_wire, ResponseItemIdWire::Inline);
+    for item in input {
+        if inline_items || item.id().is_some_and(|id| !id.is_prefixed()) {
+            item.set_id(/*new_id*/ None);
+        }
     }
 }
 

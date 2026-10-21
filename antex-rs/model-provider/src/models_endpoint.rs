@@ -25,6 +25,7 @@ use antex_login::default_client::ClientRedirectPolicy;
 use antex_login::default_client::create_client_for_route_async;
 use antex_model_provider_info::CHATGPT_CODEX_BASE_URL;
 use antex_model_provider_info::ModelProviderInfo;
+use antex_model_provider_info::WireApi;
 use antex_models_manager::manager::ModelsEndpointClient;
 use antex_models_manager::manager::ModelsEndpointFuture;
 use antex_models_manager::manager::ModelsEndpointResponse;
@@ -61,7 +62,9 @@ impl OpenAiModelsEndpoint {
         auth_manager: Option<Arc<AuthManager>>,
         gateway_auth_manager: Option<Result<Arc<GatewayAuthManager>, String>>,
     ) -> Self {
-        let redirect_policy = if provider_info.model_catalog_url.is_some() {
+        let redirect_policy = if provider_info.model_catalog_url.is_some()
+            || provider_info.wire_api == WireApi::Eliza
+        {
             ClientRedirectPolicy::Reject
         } else {
             ClientRedirectPolicy::Default
@@ -174,6 +177,17 @@ impl OpenAiModelsEndpoint {
             }
             let client = ModelsClient::new(transport, api_provider, api_auth)
                 .with_telemetry(Some(request_telemetry));
+            if self.provider_info.wire_api == WireApi::Eliza {
+                let (body, etag) = client
+                    .list_models_raw(
+                        request_url,
+                        HeaderMap::new(),
+                        Some(antex_protocol::eliza::MAX_CATALOG_BYTES),
+                    )
+                    .await
+                    .map_err(map_api_error)?;
+                return Ok((antex_models_manager::eliza_catalog_models(&body)?, etag));
+            }
             if self.provider_info.name == "Cursor subscription"
                 && self.provider_info.model_catalog_url.is_none()
             {
@@ -255,6 +269,7 @@ impl ModelsEndpointClient for OpenAiModelsEndpoint {
 
     fn supports_api_key_models(&self) -> bool {
         self.provider_info.model_catalog_url.is_some()
+            || self.provider_info.wire_api == WireApi::Eliza
             || self.provider_info.name == "Cursor subscription"
             || (self.provider_info.is_openai() && self.provider_info.base_url.is_none())
     }

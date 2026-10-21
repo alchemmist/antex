@@ -35,6 +35,14 @@ use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use tracing::instrument;
 
+fn freeform_input(arguments: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(arguments).ok()?;
+    value
+        .get("input")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+}
+
 pub use crate::tools::context::ToolCallSource;
 
 const EXPOSURE_DIRECT: &str = "direct";
@@ -253,8 +261,23 @@ impl ToolRouter {
         self.registry.registered_tool(tool_name)
     }
 
+    #[cfg(test)]
     #[instrument(level = "trace", skip_all, err)]
     pub fn build_tool_call(item: ResponseItem) -> Result<Option<ToolCall>, FunctionCallError> {
+        Self::tool_call_from_item(item, None)
+    }
+
+    pub(crate) fn build_registered_tool_call(
+        &self,
+        item: ResponseItem,
+    ) -> Result<Option<ToolCall>, FunctionCallError> {
+        Self::tool_call_from_item(item, Some(self))
+    }
+
+    fn tool_call_from_item(
+        item: ResponseItem,
+        router: Option<&Self>,
+    ) -> Result<Option<ToolCall>, FunctionCallError> {
         match item {
             ResponseItem::FunctionCall {
                 name,
@@ -265,10 +288,17 @@ impl ToolRouter {
                 ..
             } => {
                 let tool_name = ToolName::new(namespace, name).with_default_namespace();
+                let payload = router
+                    .and_then(|router| router.registered_tool(&tool_name))
+                    .map(super::registry::RegisteredTool::spec)
+                    .filter(|spec| matches!(spec.as_ref(), ToolSpec::Freeform(_)))
+                    .and_then(|_| freeform_input(&arguments))
+                    .map(|input| ToolPayload::Custom { input })
+                    .unwrap_or(ToolPayload::Function { arguments });
                 Ok(Some(ToolCall {
                     tool_name,
                     call_id,
-                    payload: ToolPayload::Function { arguments },
+                    payload,
                     encrypted_function_args,
                 }))
             }

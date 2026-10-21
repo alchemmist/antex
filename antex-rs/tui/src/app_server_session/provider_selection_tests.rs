@@ -178,6 +178,12 @@ async fn provider_switch_preserves_history_and_routes_credentials() -> Result<()
     use serde_json::json;
     let first = responses::start_mock_server().await;
     let second = responses::start_mock_server().await;
+    let third = responses::start_mock_server().await;
+    let fourth = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/v1/models"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(json!({"data":[{"id":"gpt-5.5","vendor":"internal","namespace":"communal","endpoint":"/internal/test/v1/chat/completions","architecture":{"context_length":262144}}]})))
+        .mount(&fourth).await;
     let home = tempfile::tempdir()?;
     std::fs::write(
         home.path().join("config.toml"),
@@ -186,16 +192,27 @@ async fn provider_switch_preserves_history_and_routes_credentials() -> Result<()
 model_provider = "first"
 model = "gpt-5.5"
 [model_providers.first]
-name = "First"
+name = "OpenAI"
 base_url = "{}/v1"
 experimental_bearer_token = "first-secret"
 [model_providers.second]
-name = "Second"
+name = "Cursor subscription"
 base_url = "{}/v1"
 experimental_bearer_token = "second-secret"
+[model_providers.third]
+name = "LiteLLM"
+base_url = "{}/v1"
+experimental_bearer_token = "third-secret"
+[model_providers.fourth]
+name = "Yandex Internal"
+base_url = "{}/v1"
+wire_api = "eliza"
+experimental_bearer_token = "fourth-secret"
 "#,
             first.uri(),
-            second.uri()
+            second.uri(),
+            third.uri(),
+            fourth.uri()
         ),
     )?;
     let mut config = ConfigBuilder::default()
@@ -208,6 +225,10 @@ experimental_bearer_token = "second-secret"
     let thread_id = started.session.thread_id;
     for (index, (endpoint, provider, token)) in [
         (&first, "first", "Bearer first-secret"),
+        (&second, "second", "Bearer second-secret"),
+        (&third, "third", "Bearer third-secret"),
+        (&fourth, "fourth", "Bearer fourth-secret"),
+        (&third, "third", "Bearer third-secret"),
         (&second, "second", "Bearer second-secret"),
         (&first, "first", "Bearer first-secret"),
     ]
@@ -243,15 +264,28 @@ experimental_bearer_token = "second-secret"
                 (thread_id, provider.to_string())
             );
         }
-        let response = responses::mount_sse_once(
-            endpoint,
-            responses::sse(vec![
-                responses::ev_response_created(&format!("response-{index}")),
-                responses::ev_assistant_message(&format!("answer-{index}"), "first provider reply"),
-                responses::ev_completed(&format!("response-{index}")),
-            ]),
-        )
-        .await;
+        let response = if provider == "fourth" {
+            wiremock::Mock::given(wiremock::matchers::method("POST"))
+                .and(wiremock::matchers::path("/raw/internal/test/v1/chat/completions"))
+                .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(json!({"id":"eliza","choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"first provider reply"}}]})))
+                .expect(1).mount(endpoint).await;
+            None
+        } else {
+            Some(
+                responses::mount_sse_once(
+                    endpoint,
+                    responses::sse(vec![
+                        responses::ev_response_created(&format!("response-{index}")),
+                        responses::ev_assistant_message(
+                            &format!("answer-{index}"),
+                            "first provider reply",
+                        ),
+                        responses::ev_completed(&format!("response-{index}")),
+                    ]),
+                )
+                .await,
+            )
+        };
         server
             .turn_start(
                 thread_id,
@@ -283,16 +317,29 @@ experimental_bearer_token = "second-secret"
                 {
                     assert_eq!(
                         completed.turn.status,
-                        antex_app_server_protocol::TurnStatus::Completed
+                        antex_app_server_protocol::TurnStatus::Completed,
+                        "provider {provider}, error: {:?}",
+                        completed.turn.error
                     );
                     break;
                 }
             }
         })
         .await?;
-        let request = response.single_request();
+        let actual = if let Some(response) = response {
+            let request = response.single_request();
+            json!({"model":request.body_json()["model"], "authorization":request.header("authorization"), "history":request.body_json()["input"].to_string().contains("first provider reply")})
+        } else {
+            let requests = endpoint.received_requests().await.expect("recording");
+            let request = requests
+                .iter()
+                .find(|request| request.method == "POST")
+                .expect("completion request");
+            let body: serde_json::Value = serde_json::from_slice(&request.body)?;
+            json!({"model":body["model"],"authorization":request.headers.get("authorization").expect("auth header").to_str()?,"history":body["messages"].to_string().contains("first provider reply")})
+        };
         assert_eq!(
-            json!({"model":request.body_json()["model"], "authorization":request.header("authorization"), "history":request.body_json()["input"].to_string().contains("first provider reply")}),
+            actual,
             json!({"model":"gpt-5.5", "authorization":token, "history":index>0})
         );
     }

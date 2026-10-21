@@ -1,0 +1,14 @@
+---
+source: tui/src/chatwidget/tests/provider_models_tests.rs
+expression: "render_bottom_popup(&chat, 100)"
+---
+  Select Model
+  Subscription and configured providers · current session
+
+
+› 1. gpt-5.5 · OpenAI (openai) (current)
+  2. composer · Cursor subscription (cursor)
+  3. proxy-model · LiteLLM (litellm)
+  4. internal-model · Yandex Internal (eliza)
+
+  enter select · esc back

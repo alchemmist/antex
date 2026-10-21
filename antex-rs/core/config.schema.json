@@ -7013,6 +7013,12 @@
       "description": "Wire protocol that the provider speaks.",
       "oneOf": [
         {
+          "enum": [
+            "eliza"
+          ],
+          "type": "string"
+        },
+        {
           "description": "The Responses API exposed by OpenAI at `/v1/responses`.",
           "enum": [
             "responses"

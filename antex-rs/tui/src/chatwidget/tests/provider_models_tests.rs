@@ -371,3 +371,37 @@ base_url = "http://127.0.0.1:9/v1"
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn eliza_picker_preserves_other_providers() {
+    let (mut chat, _, _) = make_chatwidget_manual(Some("gpt-5.5")).await;
+    chat.thread_id = Some(ThreadId::new());
+    chat.open_model_popup();
+    let request_id = chat.model_popup_request_id.expect("catalog request");
+    let base = chat.model_catalog.models[0].clone();
+    let catalogs = [
+        ("openai", "OpenAI", "gpt-5.5"),
+        ("cursor", "Cursor subscription", "composer"),
+        ("litellm", "LiteLLM", "proxy-model"),
+        ("eliza", "Yandex Internal", "internal-model"),
+    ]
+    .into_iter()
+    .map(|(id, name, slug)| {
+        let mut model = base.clone();
+        model.model = slug.into();
+        model.display_name = slug.into();
+        model.description.clear();
+        ProviderCatalog {
+            id: id.into(),
+            name: name.into(),
+            models: vec![model],
+            unavailable: false,
+        }
+    })
+    .collect();
+    assert!(chat.on_provider_models_loaded(request_id, catalogs, /*complete*/ true));
+    assert_chatwidget_snapshot!(
+        "eliza_picker_preserves_other_providers",
+        render_bottom_popup(&chat, /*width*/ 100)
+    );
+}

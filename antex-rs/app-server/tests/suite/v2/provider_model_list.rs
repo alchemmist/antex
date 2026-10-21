@@ -298,3 +298,65 @@ base_url = "{}/v1"
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn eliza_catalog_exposes_only_interactive_internal_models() -> Result<()> {
+    let server = MockServer::start().await;
+    let home = tempfile::tempdir()?;
+    std::fs::write(
+        home.path().join("config.toml"),
+        format!(
+            r#"
+[features]
+api_key_model_discovery = true
+[model_providers.eliza]
+name = "Yandex Internal"
+wire_api = "eliza"
+base_url = "{}/v1"
+experimental_bearer_token = "test-token"
+"#,
+            server.uri()
+        ),
+    )?;
+    let model = json!({"id":"test-model","title":"Internal model","vendor":"internal","namespace":"communal","endpoint":"/internal/test-model/v1/chat/completions","architecture":{"context_length":32768}});
+    let mut external = model.clone();
+    external["vendor"] = json!("external");
+    external["id"] = json!("external");
+    let mut batch = model.clone();
+    batch["tags"] = json!(["communal_batch"]);
+    batch["id"] = json!("batch");
+    let mut unsafe_route = model.clone();
+    unsafe_route["endpoint"] = json!("/internal/../../external/v1/chat/completions");
+    Mock::given(method("GET"))
+        .and(path("/v1/models"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"data":[external,batch,unsafe_route,model]})),
+        )
+        .mount(&server)
+        .await;
+    let mut app = TestAppServer::builder()
+        .with_antex_home(home.path())
+        .build_initialized()
+        .await?;
+    let response = app
+        .request::<ModelListResponse>(|request_id| ClientRequest::ModelList {
+            request_id,
+            params: ModelListParams {
+                model_provider: Some("eliza".into()),
+                cursor: None,
+                limit: None,
+                include_hidden: None,
+            },
+        })
+        .await?;
+    assert_eq!(
+        response
+            .data
+            .iter()
+            .map(|model| (model.model.as_str(), model.display_name.as_str()))
+            .collect::<Vec<_>>(),
+        vec![("test-model", "Internal model")]
+    );
+    Ok(())
+}

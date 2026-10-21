@@ -25,6 +25,7 @@ pub mod config_types;
 mod guardian_transcript;
 pub use guardian_transcript::TranscriptFormat;
 pub mod dynamic_tools;
+pub mod eliza;
 mod environment;
 pub mod error;
 pub mod exec_output;

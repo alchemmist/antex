@@ -1,6 +1,7 @@
 pub mod cache;
 pub mod collaboration_mode_presets;
 pub(crate) mod config;
+mod eliza;
 pub mod manager;
 pub mod model_info;
 pub mod model_presets;
@@ -9,6 +10,7 @@ pub mod test_support;
 
 pub use antex_protocol::auth::AuthMode;
 pub use config::ModelsManagerConfig;
+pub use eliza::eliza_catalog_models;
 pub use provider_catalog::provider_catalog_models;
 
 /// Load the bundled model catalog shipped with `antex-models-manager`.

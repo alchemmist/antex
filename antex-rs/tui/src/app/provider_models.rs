@@ -193,6 +193,12 @@ impl App {
             .set_reasoning_effort(self.config.model_reasoning_effort.clone());
         self.chat_widget
             .set_plan_mode_reasoning_effort(self.config.model_reasoning_effort.clone());
+        self.sync_active_thread_model_setting(
+            server,
+            model.model.clone(),
+            self.config.model_reasoning_effort.clone(),
+        )
+        .await;
         Ok(())
     }
 }

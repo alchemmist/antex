@@ -54,6 +54,7 @@ pub(crate) async fn list_models(
     }
     if config.model_provider_id == "openai"
         || config.model_provider.model_catalog_url.is_some()
+        || config.model_provider.wire_api == antex_model_provider_info::WireApi::Eliza
         || config.model_catalog.is_some()
         || config.model_provider.is_amazon_bedrock()
     {

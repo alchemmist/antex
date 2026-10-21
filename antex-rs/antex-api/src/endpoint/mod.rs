@@ -1,3 +1,5 @@
+mod chat_conversion;
+mod eliza;
 pub(crate) mod images;
 pub(crate) mod memories;
 pub(crate) mod models;

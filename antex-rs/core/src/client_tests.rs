@@ -2278,3 +2278,64 @@ fn cursor_fast_mode_appends_fast_suffix_and_drops_service_tier() {
         ("grok-4.7".to_string(), Some("priority".to_string()))
     );
 }
+
+#[test]
+fn stateless_request_drops_prefixed_item_ids_from_other_providers() {
+    let mut inlined = vec![
+        output_message("foreign", "hello"),
+        ResponseItem::Message {
+            status: None,
+            encrypted_content: None,
+            id: Some(antex_protocol::ResponseItemId::from_server(
+                "legacy".to_string(),
+            )),
+            role: "user".to_string(),
+            content: Vec::new(),
+            phase: None,
+            internal_chat_message_metadata_passthrough: None,
+        },
+    ];
+    super::clear_response_item_ids_for_wire(&mut inlined, super::ResponseItemIdWire::Inline);
+    assert!(inlined.iter().all(|item| item.id().is_none()));
+
+    let mut retained = vec![
+        output_message("same-provider", "hello"),
+        ResponseItem::Message {
+            status: None,
+            encrypted_content: None,
+            id: Some(antex_protocol::ResponseItemId::from_server(
+                "legacy".to_string(),
+            )),
+            role: "user".to_string(),
+            content: Vec::new(),
+            phase: None,
+            internal_chat_message_metadata_passthrough: None,
+        },
+    ];
+    super::clear_response_item_ids_for_wire(
+        &mut retained,
+        super::ResponseItemIdWire::RetainPrefixed,
+    );
+    assert!(retained[0].id().is_some());
+    assert!(retained[1].id().is_none());
+}
+
+#[test]
+fn created_response_event_is_only_an_id_error_preamble() {
+    assert!(super::response_event_is_id_error_preamble(
+        &crate::client_common::ResponseEvent::Created { response_id: None },
+    ));
+    assert!(!super::response_event_is_id_error_preamble(
+        &crate::client_common::ResponseEvent::OutputTextDelta("hello".to_string()),
+    ));
+}
+
+#[test]
+fn persisted_item_lookup_rejection_is_recognized() {
+    assert!(super::error_rejects_persisted_item_ids(
+        &"Supplied input item IDs require persisted-item lookup that is not supported by rustponsesapi.",
+    ));
+    assert!(!super::error_rejects_persisted_item_ids(
+        &"Invalid model name passed in model=gpt-6-astra.",
+    ));
+}

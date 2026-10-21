@@ -46,6 +46,13 @@ impl<T: HttpTransport> ResponsesClient<T> {
         }
     }
 
+    pub async fn stream_eliza_request(
+        &self,
+        request: ResponsesApiRequest,
+    ) -> Result<ResponseStream, ApiError> {
+        super::eliza::stream(&self.session, request).await
+    }
+
     pub fn with_telemetry(
         self,
         request: Option<Arc<dyn RequestTelemetry>>,

@@ -923,3 +923,23 @@ model_catalog_url = "https://gateway.example/codex/catalog?token=catalog-secret"
         "https://gateway.example/v1"
     );
 }
+
+#[test]
+fn responses_providers_keep_custom_tools_except_litellm_and_eliza() {
+    let responses = ModelProviderInfo {
+        name: "Mock provider for test".to_string(),
+        ..ModelProviderInfo::default()
+    };
+    let litellm = ModelProviderInfo {
+        name: "LiteLLM".to_string(),
+        ..ModelProviderInfo::default()
+    };
+    let eliza = ModelProviderInfo {
+        name: "Yandex Internal".to_string(),
+        wire_api: WireApi::Eliza,
+        ..ModelProviderInfo::default()
+    };
+    assert!(responses.accepts_custom_tools());
+    assert!(!litellm.accepts_custom_tools());
+    assert!(!eliza.accepts_custom_tools());
+}

@@ -29,6 +29,14 @@ impl Default for ProviderCapabilities {
 
 impl ProviderCapabilities {
     pub(crate) fn from_config(info: &ModelProviderInfo) -> Self {
+        if info.wire_api == antex_model_provider_info::WireApi::Eliza {
+            return Self {
+                image_generation: false,
+                web_search: false,
+                external_web_access: false,
+                remote_compaction: RemoteCompactionSupport::Unsupported,
+            };
+        }
         let defaults = Self {
             remote_compaction: if info.is_openai()
                 || is_azure_responses_provider(&info.name, info.base_url.as_deref())
