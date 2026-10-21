@@ -2258,3 +2258,23 @@ async fn inference_tools_changes_follow_full_specs_across_turns() {
         );
     }
 }
+
+#[test]
+fn cursor_fast_mode_appends_fast_suffix_and_drops_service_tier() {
+    assert_eq!(
+        ModelClient::cursor_fast_model(
+            "Cursor subscription",
+            "grok-4.7",
+            Some("priority".to_string())
+        ),
+        ("grok-4.7-fast".to_string(), None)
+    );
+    assert_eq!(
+        ModelClient::cursor_fast_model("Cursor subscription", "grok-4.7", Some("fast".to_string())),
+        ("grok-4.7-fast".to_string(), None)
+    );
+    assert_eq!(
+        ModelClient::cursor_fast_model("OpenAI", "grok-4.7", Some("priority".to_string())),
+        ("grok-4.7".to_string(), Some("priority".to_string()))
+    );
+}

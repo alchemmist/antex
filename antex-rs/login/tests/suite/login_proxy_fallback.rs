@@ -1,4 +1,5 @@
 //! Browser callback coverage for one-time OAuth codes and system-proxy fallback.
+#![allow(clippy::expect_used)]
 
 use std::io::Read;
 use std::net::TcpListener;

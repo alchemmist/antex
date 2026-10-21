@@ -1,3 +1,5 @@
+#![allow(clippy::expect_used)]
+
 use antex_config::types::AuthCredentialsStoreMode;
 use antex_http_client::HttpClientFactory;
 use antex_http_client::OutboundProxyPolicy;

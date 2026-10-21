@@ -173,7 +173,7 @@ impl TurnCostWorkerHandle {
             let Some(auth) = auth_manager.auth_cached() else {
                 return;
             };
-            if !auth.is_api_key_auth() && !(auth.is_chatgpt_auth() && auth.uses_antex_backend()) {
+            if !(auth.is_api_key_auth() || (auth.is_chatgpt_auth() && auth.uses_antex_backend())) {
                 return;
             }
         }

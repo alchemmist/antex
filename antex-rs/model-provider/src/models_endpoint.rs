@@ -174,6 +174,17 @@ impl OpenAiModelsEndpoint {
             }
             let client = ModelsClient::new(transport, api_provider, api_auth)
                 .with_telemetry(Some(request_telemetry));
+            if self.provider_info.name == "Cursor subscription"
+                && self.provider_info.model_catalog_url.is_none()
+            {
+                let (body, etag) = client
+                    .list_models_raw(request_url, HeaderMap::new(), Some(MAX_MODEL_CATALOG_BYTES))
+                    .await
+                    .map_err(map_api_error)?;
+                let models =
+                    antex_models_manager::provider_catalog_models(&body, &self.provider_info.name)?;
+                return Ok((models, etag));
+            }
             let response_body_limit_bytes = self
                 .provider_info
                 .model_catalog_url
@@ -244,6 +255,7 @@ impl ModelsEndpointClient for OpenAiModelsEndpoint {
 
     fn supports_api_key_models(&self) -> bool {
         self.provider_info.model_catalog_url.is_some()
+            || self.provider_info.name == "Cursor subscription"
             || (self.provider_info.is_openai() && self.provider_info.base_url.is_none())
     }
 

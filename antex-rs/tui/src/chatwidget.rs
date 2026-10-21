@@ -326,6 +326,7 @@ mod model_popup_state;
 mod model_popups;
 mod notifications;
 mod plan_follow_up;
+#[cfg(test)]
 mod plan_implementation;
 mod prompt_stash;
 mod provider_models;

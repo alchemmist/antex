@@ -142,7 +142,11 @@ impl EmbeddedTrustTest {
     async fn assert_no_model_requests(&self) {
         // Inspect all received Responses requests, including titles and unmatched requests,
         // rather than treating an empty user-response recorder as proof of inactivity.
-        let requests = self.server.received_requests().await.unwrap();
+        let requests = self
+            .server
+            .received_requests()
+            .await
+            .expect("request recording should be enabled");
         assert!(
             requests
                 .iter()

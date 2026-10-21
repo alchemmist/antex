@@ -92,6 +92,8 @@ async fn policy_resolution_recovers_after_unauthorized() {
 async fn policy_resolution_retries_after_auth_refresh() {
     let server = MockServer::start().await;
     let request_started = Arc::new(Notify::new());
+    let (auth_updated, wait_for_auth_update) = std::sync::mpsc::channel();
+    let wait_for_auth_update = std::sync::Mutex::new(wait_for_auth_update);
     let request_count = Arc::new(AtomicUsize::new(0));
     Mock::given(method("GET"))
         .and(path("/backend-api/wham/settings/user"))
@@ -101,11 +103,14 @@ async fn policy_resolution_retries_after_auth_refresh() {
             move |_request: &wiremock::Request| match request_count.fetch_add(1, Ordering::SeqCst) {
                 0 => {
                     request_started.notify_one();
-                    ResponseTemplate::new(200)
-                        .set_delay(Duration::from_millis(100))
-                        .set_body_json(serde_json::json!({
-                            "commit_attribution_enabled": true,
-                        }))
+                    wait_for_auth_update
+                        .lock()
+                        .expect("auth update receiver")
+                        .recv_timeout(Duration::from_secs(5))
+                        .expect("auth should update before the first response");
+                    ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                        "commit_attribution_enabled": true,
+                    }))
                 }
                 1 => ResponseTemplate::new(401),
                 _ => ResponseTemplate::new(200).set_body_json(serde_json::json!({
@@ -132,6 +137,7 @@ async fn policy_resolution_retries_after_auth_refresh() {
         .await
         .expect("first settings request should start");
     set_auth(auth_manager.as_ref(), "workspace-456").await;
+    auth_updated.send(()).expect("release first response");
 
     assert!(
         resolve

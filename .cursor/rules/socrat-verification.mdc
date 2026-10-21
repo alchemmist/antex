@@ -1,0 +1,19 @@
+---
+description: Run Antex verification on socrat-0 before treating a change as done
+alwaysApply: true
+---
+
+# Verification on socrat-0
+
+For any Antex code change, run the full gate on host `socrat-0` before saying the change works, committing, or cutting a release. Do not use the local Mac install or a local `cargo`/`just` run as that proof.
+
+On `socrat-0`, in the existing Antex checkout and bwrap test environment:
+
+- Formatter: `cargo fmt --check` for Rust changes. Run `just fmt-check` when its extra tools are available.
+- Linter: `just clippy --workspace --all-targets --tests -- -D warnings`.
+- Tests: `just test --offline --locked --retries 0`.
+- Build: `cargo build -p antex-cli --bin antex --offline --locked`.
+
+Use one pipeline at a time, with `RUST_MIN_STACK=16777216` and `CARGO_BUILD_JOBS=8`. If the suite is red, fix it and rerun the failed stage. A test that fails only under full-suite load may be retried once on its own; say so if that is the only miss.
+
+Commit and `make release-patch` only after this gate is green and, when the change is user-visible, the binary built on `socrat-0` has been run against the affected behavior.

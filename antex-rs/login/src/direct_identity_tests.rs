@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used)]
+
 use super::*;
 use pretty_assertions::assert_eq;
 
@@ -6,13 +8,15 @@ fn installation_identity_is_stable_concurrent_and_not_shared_between_homes() {
     let first = tempfile::tempdir().unwrap();
     let second = tempfile::tempdir().unwrap();
     let results = std::thread::scope(|scope| {
-        let workers: Vec<_> = (0..8)
-            .map(|_| scope.spawn(|| agent_host_id(first.path()).unwrap()))
-            .collect();
-        workers
-            .into_iter()
-            .map(|worker| worker.join().unwrap())
-            .collect::<Vec<_>>()
+        let mut workers = Vec::with_capacity(8);
+        for _ in 0..8 {
+            workers.push(scope.spawn(|| agent_host_id(first.path()).unwrap()));
+        }
+        let mut results = Vec::with_capacity(workers.len());
+        for worker in workers {
+            results.push(worker.join().unwrap());
+        }
+        results
     });
     assert!(results.iter().all(|id| id == &results[0]));
     assert_eq!(agent_host_id(first.path()).unwrap(), results[0]);

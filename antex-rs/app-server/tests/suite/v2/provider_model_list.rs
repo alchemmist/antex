@@ -143,8 +143,10 @@ async fn openai_catalog_requires_its_own_login() -> Result<()> {
     Ok(())
 }
 
+#[test_case::test_case("Local")]
+#[test_case::test_case("Cursor subscription")]
 #[tokio::test]
-async fn provider_catalog_groups_effort_suffixes() -> Result<()> {
+async fn provider_catalog_groups_effort_suffixes(provider_name: &str) -> Result<()> {
     let server = MockServer::start().await;
     let home = tempfile::tempdir()?;
     std::fs::write(
@@ -153,7 +155,7 @@ async fn provider_catalog_groups_effort_suffixes() -> Result<()> {
             r#"
 model_provider = "local"
 [model_providers.local]
-name = "Local"
+name = "{provider_name}"
 base_url = "{}/v1"
 "#,
             server.uri()
@@ -199,26 +201,42 @@ base_url = "{}/v1"
                     .map(|effort| effort.reasoning_effort.clone())
                     .collect::<Vec<_>>(),
                 model.default_reasoning_effort.clone(),
+                model
+                    .service_tiers
+                    .iter()
+                    .map(|tier| tier.id.as_str())
+                    .collect::<Vec<_>>(),
             )
         })
         .collect();
-    assert_eq!(
-        listed,
-        vec![
-            ("composer-2.5-fast", Vec::new(), ReasoningEffort::None),
-            ("gpt-6-astra", Vec::new(), ReasoningEffort::None),
-            (
-                "grok-4.7",
-                vec![ReasoningEffort::Low, ReasoningEffort::High],
-                ReasoningEffort::Low
-            ),
-            (
-                "grok-4.7-fast",
-                vec![ReasoningEffort::Low],
-                ReasoningEffort::Low
-            ),
-        ]
-    );
+    let mut expected = vec![
+        (
+            "composer-2.5-fast",
+            Vec::new(),
+            ReasoningEffort::None,
+            Vec::new(),
+        ),
+        ("gpt-6-astra", Vec::new(), ReasoningEffort::None, Vec::new()),
+        (
+            "grok-4.7",
+            vec![ReasoningEffort::Low, ReasoningEffort::High],
+            ReasoningEffort::Low,
+            if provider_name == "Cursor subscription" {
+                vec!["priority"]
+            } else {
+                Vec::new()
+            },
+        ),
+    ];
+    if provider_name != "Cursor subscription" {
+        expected.push((
+            "grok-4.7-fast",
+            vec![ReasoningEffort::Low],
+            ReasoningEffort::Low,
+            Vec::new(),
+        ));
+    }
+    assert_eq!(listed, expected);
     Ok(())
 }
 

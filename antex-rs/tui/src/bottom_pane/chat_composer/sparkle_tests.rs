@@ -206,7 +206,7 @@ fn sparkle_fades_without_adding_dots_and_finishes_by_fifteen_seconds() {
             cell.fg,
             if cell.bg == Color::Reset {
                 let (r, g, b) = crate::terminal_palette::default_bg().expect("test background");
-                Color::Rgb(r, g, b)
+                crate::terminal_palette::rgb_color((r, g, b))
             } else {
                 cell.bg
             },

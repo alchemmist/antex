@@ -9,10 +9,10 @@ fn retained_animation_ticks_track_frames_and_finish_once() {
     let motion = StartupMascotMotion::new(requester);
     let first_display = Instant::now() + Duration::from_secs(60);
     let handed_off = motion.clone();
-    for index in 0..FRAME_SEQUENCE.len() {
+    for (index, frame) in FRAME_SEQUENCE.iter().copied().enumerate() {
         let now = first_display + FRAME_TICK * u32::try_from(index).unwrap();
         let tick = handed_off.animation_tick_at(now);
-        assert_eq!(tick, Some(FRAME_SEQUENCE[index] as u64));
+        assert_eq!(tick, Some(frame as u64));
         assert!(
             requests.try_recv().is_ok(),
             "cache lookup must request the next frame"
@@ -20,7 +20,7 @@ fn retained_animation_ticks_track_frames_and_finish_once() {
         // Reusing a cached frame must still leave an animation wakeup pending.
         assert_eq!(handed_off.animation_tick_at(now), tick);
         assert!(requests.try_recv().is_ok());
-        assert_eq!(motion.current_frame_at(now), FRAME_SEQUENCE[index]);
+        assert_eq!(motion.current_frame_at(now), frame);
         assert!(requests.try_recv().is_ok());
     }
     let finished = first_display + FRAME_TICK * u32::try_from(FRAME_SEQUENCE.len()).unwrap();

@@ -88,6 +88,7 @@ use async_channel::Sender;
 
 use antex_protocol::ThreadId;
 use antex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
+use antex_protocol::config_types::ServiceTier;
 use antex_protocol::config_types::Verbosity as VerbosityConfig;
 use antex_protocol::models::ResponseItem;
 use antex_protocol::openai_models::ModelInfo;
@@ -888,6 +889,26 @@ impl ModelClient {
         request_telemetry
     }
 
+    fn cursor_fast_model(
+        provider_name: &str,
+        model: &str,
+        service_tier: Option<String>,
+    ) -> (String, Option<String>) {
+        let fast = provider_name == "Cursor subscription"
+            && service_tier.as_deref().is_some_and(|tier| {
+                ServiceTier::from_request_value(tier) == Some(ServiceTier::Fast)
+            });
+        if !fast {
+            return (model.to_string(), service_tier);
+        }
+        let model = if model.ends_with("-fast") {
+            model.to_string()
+        } else {
+            format!("{model}-fast")
+        };
+        (model, /*service_tier*/ None)
+    }
+
     fn build_reasoning(
         &self,
         model_info: &ModelInfo,
@@ -1012,6 +1033,11 @@ impl ModelClient {
             prompt.output_schema_strict,
         );
         let prompt_cache_key = Some(self.prompt_cache_key(responses_metadata));
+        let (model_slug, service_tier) = Self::cursor_fast_model(
+            &self.state.provider.info().name,
+            &model_info.slug,
+            service_tier,
+        );
         let service_tier = model_info
             .service_tier_for_request(service_tier)
             .filter(|tier| {
@@ -1030,7 +1056,7 @@ impl ModelClient {
         }
         let client_metadata = responses_metadata.client_metadata(include_internal);
         let request = ResponsesApiRequest {
-            model: model_info.slug.clone(),
+            model: model_slug,
             input,
             tools,
             tool_choice: "auto".to_string(),

@@ -782,12 +782,6 @@ impl MultiSelectPickerBuilder {
         self
     }
 
-    /// Requires a nonempty selection to confirm without restricting cancellation.
-    pub fn require_selection(mut self) -> Self {
-        self.require_selection = true;
-        self
-    }
-
     /// Sets a callback invoked when the user confirms their selection (Enter).
     ///
     /// The callback receives a list of IDs for all enabled items.

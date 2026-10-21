@@ -1,4 +1,5 @@
 use super::*;
+#[cfg(test)]
 use crate::status::format_tokens_compact;
 
 const IMPLEMENTATION_REQUESTS: &[&str] = &[
@@ -48,6 +49,7 @@ impl ChatWidget {
 
     // Keep the upstream explicit picker available without automatically interrupting
     // the fork's compact plan flow when a proposed plan finishes streaming.
+    #[cfg(test)]
     pub(crate) fn open_plan_implementation_prompt(&mut self) {
         let default_mask = collaboration_modes::default_mode_mask(self.model_catalog.as_ref());
         let context_usage_label = self.plan_implementation_context_usage_label();
@@ -62,6 +64,7 @@ impl ChatWidget {
         });
     }
 
+    #[cfg(test)]
     pub(super) fn plan_implementation_context_usage_label(&self) -> Option<String> {
         let info = self.token_info.as_ref()?;
         let percent = self.context_remaining_percent(info);

@@ -4,10 +4,12 @@ pub(crate) mod config;
 pub mod manager;
 pub mod model_info;
 pub mod model_presets;
+mod provider_catalog;
 pub mod test_support;
 
 pub use antex_protocol::auth::AuthMode;
 pub use config::ModelsManagerConfig;
+pub use provider_catalog::provider_catalog_models;
 
 /// Load the bundled model catalog shipped with `antex-models-manager`.
 pub fn bundled_models_response()

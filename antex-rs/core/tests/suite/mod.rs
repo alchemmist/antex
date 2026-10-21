@@ -76,6 +76,8 @@ mod compact_resume_fork;
 mod context_annotations;
 mod context_inspection;
 mod current_time_reminder;
+#[path = "cursor_fast_tests.rs"]
+mod cursor_fast;
 mod cyber_access_program;
 mod cyber_exec_policy;
 mod daybreak_access;

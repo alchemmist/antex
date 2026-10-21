@@ -871,6 +871,8 @@ fn ensure_success_response(response: &Value) -> Result<(), IdeContextError> {
 
 #[cfg(all(test, unix))]
 mod tests {
+    #![allow(clippy::expect_used)]
+
     use super::*;
     use std::os::unix::fs::DirBuilderExt;
     use std::os::unix::fs::PermissionsExt;

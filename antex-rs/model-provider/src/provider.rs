@@ -476,9 +476,10 @@ impl ConfiguredModelProvider {
                 OpenAiModelsManager::new_with_cache(cache, endpoint, auth_manager)
             }
         };
-        match &self.info.model_catalog_url {
-            Some(_) => Arc::new(manager.with_provider_catalog()),
-            None => Arc::new(manager),
+        if self.info.model_catalog_url.is_some() || self.info.name == "Cursor subscription" {
+            Arc::new(manager.with_provider_catalog())
+        } else {
+            Arc::new(manager)
         }
     }
 }
