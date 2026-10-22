@@ -55,3 +55,25 @@ fn eliza_replays_plaintext_agents_without_old_discovery_metadata() -> Result<(),
     assert!(ChatRequest::new(json!({"model":"test","input":[{"type":"agent_message","content":[{"type":"encrypted_content","encrypted_content":"opaque"}]}]})).is_err());
     Ok(())
 }
+
+#[test]
+fn eliza_places_system_messages_before_conversation_history() -> Result<(), ApiError> {
+    let request = ChatRequest::new(json!({"model":"test","tools":[],"input":[
+        {"type":"message","role":"user","content":[{"type":"input_text","text":"Earlier user message"}]},
+        {"type":"message","role":"developer","content":[{"type":"input_text","text":"First instruction"}]},
+        {"type":"message","role":"assistant","content":[{"type":"output_text","text":"Earlier answer"}]},
+        {"type":"message","role":"system","content":[{"type":"input_text","text":"Second instruction"}]},
+        {"type":"message","role":"user","content":[{"type":"input_text","text":"Current user message"}]}
+    ]}))?;
+
+    assert_eq!(
+        request.body["messages"],
+        json!([
+            {"role":"system","content":"First instruction\n\nSecond instruction"},
+            {"role":"user","content":"Earlier user message"},
+            {"role":"assistant","content":"Earlier answer"},
+            {"role":"user","content":"Current user message"}
+        ])
+    );
+    Ok(())
+}

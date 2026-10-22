@@ -106,6 +106,19 @@ impl ChatRequest {
                 _ => return Err(invalid("unsupported history item; start a new conversation")),
             }
         }
+        let (system_messages, mut conversation_messages): (Vec<_>, Vec<_>) = messages
+            .into_iter()
+            .partition(|message| message["role"] == "system");
+        let mut messages = Vec::with_capacity(system_messages.len() + conversation_messages.len());
+        if !system_messages.is_empty() {
+            let content = system_messages
+                .iter()
+                .filter_map(|message| message["content"].as_str())
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            messages.push(json!({"role":"system","content":content}));
+        }
+        messages.append(&mut conversation_messages);
         let mut body = json!({"model":request["model"],"messages":messages,"stream":false});
         if !functions.is_empty() {
             body["tools"] = json!(functions);
