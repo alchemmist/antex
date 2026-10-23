@@ -79,6 +79,7 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":12,"cached_input
         },
         AgentExecutionContext {
             default_model: None,
+            model_provider: Some("litellm".to_string()),
             default_cwd: None,
             default_timeout_seconds: None,
             antex_exe: &fake_antex,
@@ -108,6 +109,7 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":12,"cached_input
         .expect("read nested codex args");
     assert!(args.contains("model_reasoning_effort=\"low\""));
     assert!(args.contains("developer_instructions=\"Never weaken quality gates.\""));
+    assert!(args.contains("model_provider=\"litellm\""));
     assert!(!args.lines().any(|argument| argument == "--sandbox"));
     assert!(args.lines().any(|argument| argument == "--approve-for-me"));
     let guard = tokio::fs::read_to_string(fake_antex.with_extension("guard"))

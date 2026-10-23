@@ -69,6 +69,7 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_
             source: "test".to_string(),
         },
         Map::new(),
+        None,
     )
     .await
     .expect("create run");
@@ -80,6 +81,7 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_
             run,
             workspace: temp.path().to_path_buf(),
             antex_exe: fake_antex,
+            model_provider: None,
         },
         control_rx,
         update_tx,
@@ -171,6 +173,7 @@ def run(ctx):
             source: "test".to_string(),
         },
         Map::new(),
+        None,
     )
     .await
     .expect("create run");
@@ -180,6 +183,7 @@ def run(ctx):
         run,
         workspace: temp.path().to_path_buf(),
         antex_exe: temp.path().join("unused-codex"),
+        model_provider: None,
     };
     let task = tokio::spawn(run_workflow(request, control_rx, update_tx));
 
@@ -213,6 +217,7 @@ def run(ctx):
             run: paused,
             workspace: temp.path().to_path_buf(),
             antex_exe: temp.path().join("unused-codex"),
+            model_provider: None,
         },
         control_rx,
         update_tx,

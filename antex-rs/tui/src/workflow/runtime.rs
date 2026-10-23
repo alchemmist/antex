@@ -68,6 +68,7 @@ struct Runtime {
     run: StoredWorkflowRun,
     workspace: PathBuf,
     antex_exe: PathBuf,
+    model_provider: Option<String>,
     control: watch::Receiver<WorkflowControl>,
     updates: mpsc::UnboundedSender<WorkflowUpdate>,
     agent_calls: u32,
@@ -81,12 +82,20 @@ impl Runtime {
         control: watch::Receiver<WorkflowControl>,
         updates: mpsc::UnboundedSender<WorkflowUpdate>,
     ) -> Self {
-        let agent_calls = request.run.agent_calls;
-        let shell_calls = request.run.shell_calls;
+        let WorkflowRunRequest {
+            run,
+            workspace,
+            antex_exe,
+            model_provider,
+        } = request;
+        let model_provider = model_provider.or_else(|| run.model_provider.clone());
+        let agent_calls = run.agent_calls;
+        let shell_calls = run.shell_calls;
         Self {
-            run: request.run,
-            workspace: request.workspace,
-            antex_exe: request.antex_exe,
+            run,
+            workspace,
+            antex_exe,
+            model_provider,
             control,
             updates,
             agent_calls,
@@ -339,12 +348,14 @@ impl Runtime {
         let mut tasks = JoinSet::new();
         let (activity_tx, mut activity_rx) = mpsc::unbounded_channel::<AgentActivity>();
         let total = requests.len();
+        let model_provider = self.model_provider.clone();
         for (index, request) in requests.into_iter().enumerate() {
             let semaphore = semaphore.clone();
             let antex_exe = self.antex_exe.clone();
             let workspace = self.workspace.clone();
             let control = self.control.clone();
             let default_model = default_model.clone();
+            let model_provider = model_provider.clone();
             let default_cwd = default_cwd.clone();
             let activity_tx = activity_tx.clone();
             tasks.spawn(async move {
@@ -356,6 +367,7 @@ impl Runtime {
                     request,
                     AgentExecutionContext {
                         default_model,
+                        model_provider,
                         default_cwd,
                         default_timeout_seconds,
                         antex_exe: &antex_exe,

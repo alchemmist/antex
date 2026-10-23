@@ -18,7 +18,7 @@ async fn creates_checkpoints_and_lists_resumable_runs() {
     let mut params = Map::new();
     params.insert("scope".to_string(), json!("src"));
 
-    let mut run = create_run(temp.path(), definition, params.clone())
+    let mut run = create_run(temp.path(), definition, params.clone(), None)
         .await
         .expect("create run");
     run.checkpoint(json!({"completed": 7}))

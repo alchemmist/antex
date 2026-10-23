@@ -49,6 +49,8 @@ pub(crate) struct StoredWorkflowRun {
     pub(crate) status: WorkflowRunStatus,
     pub(crate) params: Map<String, Value>,
     #[serde(default)]
+    pub(crate) model_provider: Option<String>,
+    #[serde(default)]
     pub(crate) state: Value,
     #[serde(default)]
     pub(crate) error: Option<String>,
@@ -135,6 +137,7 @@ pub(crate) async fn create_run(
     codex_home: &Path,
     definition: WorkflowDefinition,
     params: Map<String, Value>,
+    model_provider: Option<String>,
 ) -> Result<StoredWorkflowRun, String> {
     let now = Utc::now();
     let run_id = format!(
@@ -157,6 +160,7 @@ pub(crate) async fn create_run(
         updated_at: now,
         status: WorkflowRunStatus::Running,
         params,
+        model_provider,
         state: Value::Object(Map::new()),
         error: None,
         agent_calls: 0,

@@ -145,6 +145,7 @@ impl App {
             self.config.codex_home.as_path(),
             configuration.definition,
             configuration.params,
+            Some(self.config.model_provider_id.clone()),
         )
         .await
         {
@@ -220,6 +221,10 @@ impl App {
             }
         };
         let run_id = run.run_id.clone();
+        let model_provider = run
+            .model_provider
+            .clone()
+            .or_else(|| Some(self.config.model_provider_id.clone()));
         let (control_tx, control_rx) = watch::channel(WorkflowControl::Run);
         let (update_tx, mut update_rx) = mpsc::unbounded_channel::<WorkflowUpdate>();
         let app_event_tx = self.app_event_tx.clone();
@@ -232,6 +237,7 @@ impl App {
             run,
             workspace: self.config.cwd.to_path_buf(),
             antex_exe,
+            model_provider,
         };
         tokio::spawn(run_workflow(request, control_rx, update_tx));
         self.workflow_state.active = Some(ActiveWorkflow {

@@ -16,6 +16,7 @@ pub(crate) struct WorkflowRunRequest {
     pub(crate) run: StoredWorkflowRun,
     pub(crate) workspace: PathBuf,
     pub(crate) antex_exe: PathBuf,
+    pub(crate) model_provider: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]

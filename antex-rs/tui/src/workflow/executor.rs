@@ -89,6 +89,7 @@ pub(super) struct AgentActivity {
 
 pub(super) struct AgentExecutionContext<'a> {
     pub(super) default_model: Option<String>,
+    pub(super) model_provider: Option<String>,
     pub(super) default_cwd: Option<String>,
     pub(super) default_timeout_seconds: Option<u64>,
     pub(super) antex_exe: &'a Path,
@@ -181,6 +182,7 @@ pub(super) async fn execute_agent(
 ) -> Result<AgentResult, String> {
     let AgentExecutionContext {
         default_model,
+        model_provider,
         default_cwd,
         default_timeout_seconds,
         antex_exe,
@@ -226,6 +228,15 @@ pub(super) async fn execute_agent(
         && !model.trim().is_empty()
     {
         command.arg("--model").arg(model);
+    }
+    if let Some(model_provider) = model_provider
+        .as_deref()
+        .filter(|provider| !provider.trim().is_empty())
+    {
+        command.arg("-c").arg(format!(
+            "model_provider={}",
+            toml::Value::String(model_provider.to_string())
+        ));
     }
     if let Some(reasoning_effort) = request
         .reasoning_effort
