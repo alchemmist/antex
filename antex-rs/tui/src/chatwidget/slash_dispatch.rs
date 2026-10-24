@@ -173,6 +173,23 @@ impl ChatWidget {
         if !self.ensure_side_command_allowed_outside_review(cmd) {
             return;
         }
+        if cmd == SlashCommand::Compact
+            && source == SlashCommandDispatchSource::Live
+            && self.is_user_turn_pending_or_running()
+        {
+            self.queue_user_message_with_options_and_source(
+                UserMessage::from("/compact"),
+                QueuedInputAction::ParseSlash,
+                Vec::new(),
+                UserMessageSource::Prompt,
+            );
+            self.add_info_message(
+                "Queued /compact; it will run when the current task finishes.".to_string(),
+                None,
+            );
+            self.request_redraw();
+            return;
+        }
         if self.slash_command_blocked_by_active_task(cmd, source) {
             let message = format!(
                 "'/{}' is disabled while a task is in progress.",
