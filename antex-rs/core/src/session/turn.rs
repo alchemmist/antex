@@ -425,6 +425,7 @@ pub(crate) async fn run_turn(
 
     let mut next_step_context = Some(first_step_context);
     let mut guardian_budget_compacted = false;
+    let mut context_overflow_compactions = 0;
     loop {
         // Note that pending_input would be something like a message the user
         // submitted through the UI while the model was running. Though the UI
@@ -547,6 +548,7 @@ pub(crate) async fn run_turn(
         match sampling_request_result {
             Ok((sampling_request_output, sampling_request_input)) => {
                 guardian_budget_compacted = false;
+                context_overflow_compactions = 0;
                 let SamplingRequestResult {
                     needs_follow_up: model_needs_follow_up,
                     last_agent_message: sampling_request_last_agent_message,
@@ -760,6 +762,39 @@ pub(crate) async fn run_turn(
                     }
                     break;
                 }
+                continue;
+            }
+            Err(err)
+                if matches!(err.details(), CodexErrorDetails::ContextWindowExceeded)
+                    && context_overflow_compactions < 3
+                    && step_context
+                        .settings
+                        .model_info
+                        .used_fallback_model_metadata
+                    && turn_context
+                        .provider
+                        .info()
+                        .name
+                        .to_ascii_lowercase()
+                        .contains("litellm")
+                    && sess
+                        .services
+                        .thread_extension_data
+                        .get::<crate::guardian::ExhaustedReviewBudget>()
+                        .is_none() =>
+            {
+                context_overflow_compactions += 1;
+                sess.set_total_tokens_full(&turn_context).await;
+                run_auto_compact(
+                    &sess,
+                    Arc::clone(&step_context),
+                    Arc::clone(&step_context),
+                    &mut client_session,
+                    CompactionReason::ContextLimit,
+                    CompactionPhase::MidTurn,
+                )
+                .await?;
+                can_drain_pending_input = false;
                 continue;
             }
             Err(err)
